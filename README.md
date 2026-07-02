@@ -1,4 +1,4 @@
-# igvf_tf_chrombpnet
+# IGVF TF ChromBPNet
 
 ChromBPNet pipeline for the IGVF TF collaboration. Trains bias-factorised deep learning
 models on ATAC-seq pseudobulks from IGVF datasets to learn sequence-based chromatin
