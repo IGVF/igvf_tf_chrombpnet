@@ -21,11 +21,13 @@ mkdir -p "${data_path}"
 
 for dataset in "${datasets[@]}"; do
     echo "Processing peaks for ${dataset}..."
-    # Remove peaks overlapping (slopped) blacklist
+    # Remove peaks overlapping (slopped) blacklist.
+    # Uses ${blacklist_slop} if the dataset_config defines it; otherwise falls back
+    # to the legacy location next to the genome for backward compatibility.
     bedtools intersect \
         -v \
         -a "${DATASET_DIR}/data/peaks/${dataset}_${peak_type}_peaks.bed" \
-        -b "${genome_path}/blacklist_slop.bed" \
+        -b "${blacklist_slop:-${genome_path}/blacklist_slop.bed}" \
         > "${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.bed"
 
     # Convert to narrowPeak format; summit = midpoint of peak

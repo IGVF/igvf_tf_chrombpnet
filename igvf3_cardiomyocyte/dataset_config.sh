@@ -15,13 +15,15 @@ folds=( "0" "1" "2" "3" "4" )
 # Input data
 # Verify fragment file naming matches: ${dataset}_fragments.tsv.gz
 fragments_path="${DATASET_DIR}/data/fragments"
-folds_dir="/oak/stanford/groups/engreitz/Users/opushkar/igvf_tf_collab/folds"
+folds_dir="${SCRIPT_DIR}/../folds"   # cross-validation folds shipped with this repo
 
-# Reference genome files
-genome_path="/oak/stanford/groups/engreitz/Users/opushkar/igvf_tf_collab/genome"
-genome_fa="${genome_path}/hg38.fa"
-chrom_sizes="${genome_path}/hg38.chrom.sizes"
-blacklist="${genome_path}/blacklist.bed.gz"
+# Reference genome files — shared lab copies under $OAK/engreitz/Data
+# (re)fetch/verify with scripts/bash/download_references.sh
+genome_path="/oak/stanford/groups/engreitz/Data/hg38"
+genome_fa="${genome_path}/Sequence/GCA_000001405.15_GRCh38_no_alt_analysis_set.fna"
+chrom_sizes="${genome_path}/Sequence/chrom_sizes/IGVF.DACC.GRCh38.chrom.sizes.tsv"
+blacklist="${genome_path}/blacklist/blacklist.bed.gz"
+blacklist_slop="${genome_path}/blacklist/blacklist_slop.bed.gz"   # blacklist ±1057bp (half the 2114bp window)
 
 # Bias model configuration (steps 03-04)
 bias_factors=( "0.5" "0.6" "0.7" "0.8" )
