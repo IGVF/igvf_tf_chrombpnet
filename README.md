@@ -23,6 +23,8 @@ See [`pipeline/README.md`](pipeline/README.md) for full documentation.
 
 ```
 pipeline/               Pipeline scripts (steps 00–04.0) and shared config
+scripts/bash/           Utilities (download_references.sh: one-time shared-reference setup)
+envs/                   Conda environment specs (chrombpnet, finemo, motif_compendium)
 folds/                  5-fold cross-validation chromosome splits
 igvf3_cardiomyocyte/    Example dataset folder (data not included)
   dataset_config.sh       Dataset-specific parameters
@@ -30,6 +32,25 @@ igvf3_cardiomyocyte/    Example dataset folder (data not included)
   data/peaks/             Peak files go here (*.bed)
   results/                Model outputs written here by pipeline
 ```
+
+---
+
+## Setup (one-time per cluster)
+
+```bash
+# 1. Recreate the conda environments from the pinned specs
+conda env create -f envs/chrombpnet.yml
+conda env create -f envs/finemo.yml
+conda env create -f envs/motif_compendium.yml
+
+# 2. Fetch the shared genome / chrom.sizes / blacklist / MotifCompendium references
+#    into the lab Data/ folder (idempotent; verifies existing files)
+ml biology samtools bedtools
+bash scripts/bash/download_references.sh
+```
+
+Reference paths (genome, blacklist, motif DB) are set in `pipeline/config.sh` and each
+`dataset_config.sh` and point at the shared `$OAK/engreitz/Data` copies by default.
 
 ---
 

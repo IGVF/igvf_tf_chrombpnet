@@ -38,14 +38,14 @@ modisco_compiled_dir="${compendium_dir}/modisco_compiled"
 finemo_unified_dir="${results_path}/finemo_unified"
 
 # MotifCompendium reference database in MEME format (used by step 11)
-# Download from: https://github.com/kundajelab/MotifCompendium
-ref_db_meme="/oak/stanford/groups/engreitz/Users/opushkar/MotifCompendium/pipeline/data/MotifCompendium-Database-Human.meme.txt"
+# Shared lab copy (canonical kundajelab/MotifCompendium build); (re)fetch via scripts/bash/download_references.sh
+ref_db_meme="/oak/stanford/groups/engreitz/Data/motif/MotifCompendium-Database-Human.meme.txt"
 
 # Algorithm parameters
 finemo_alpha="0.8" # Fi-NeMo hit-calling threshold (lower = more hits)
 motif_compendium_threshold="0.95" # Leiden clustering similarity cutoff (step 11)
 
-# Conda environments
+# Conda environments (recreate from the pinned specs: conda env create -f envs/<name>.yml)
 CONDA_INIT="/home/groups/engreitz/Software/anaconda3/etc/profile.d/conda.sh"
 CONDA_ENV="/home/groups/engreitz/Users/opushkar/.conda/envs/chrombpnet"
 finemo_conda="/home/groups/engreitz/Users/opushkar/.conda/envs/finemo"
