@@ -34,6 +34,7 @@ full_model_dir_selected="${full_model_dir}" # alias kept for script compatibilit
 predictions_dir="${results_path}/predictions"
 averaged_dir="${results_path}/contrib_scores"
 compendium_dir="${results_path}/compendium"
+log_dir="${results_path}/logs"
 modisco_compiled_dir="${compendium_dir}/modisco_compiled"
 finemo_unified_dir="${results_path}/finemo_unified"
 

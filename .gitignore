@@ -32,22 +32,6 @@ results/
 # Archive
 archive/
 
-# Pipeline scripts beyond 04.0 (not in scope of this repo)
-pipeline/04.1.*
-pipeline/05.*
-pipeline/06.*
-pipeline/07.*
-pipeline/08.*
-pipeline/09.*
-pipeline/10.*
-pipeline/11.*
-pipeline/qc_datasets.*
-pipeline/average_contrib_scores.py
-pipeline/contribs_to_bigwig.py
-pipeline/motif_compendium.py
-pipeline/predict_and_avg.py
-pipeline/qc_full_model.py
-
 # Misc
 fragment_counts.txt
 *.ipynb

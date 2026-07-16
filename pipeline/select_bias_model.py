@@ -78,7 +78,7 @@ BIAS_COLORS = {
     "07": "#DD8452",
     "08": "#55A868",
     "09": "#C44E52",
-    "1": "#728FCE"
+    "1": "#728FCE",
 }
 STATUS_COLORS = {"pass": "#2ca02c", "warn": "#ff7f0e", "fail": "#d62728"}
 
@@ -97,11 +97,7 @@ def load_metrics(
     rows = []
     for bias in biases:
         bias_dir = (
-            core_path
-            / dataset
-            / "results"
-            / "bias_models"
-            / f"bias_model_{bias}"
+            core_path / dataset / "results" / "bias_models" / f"bias_model_{bias}"
         )
         for fold in folds:
             tag = f"{dataset}_{peak_type}_fold_{fold}"
@@ -164,11 +160,27 @@ def select_best(group: pd.DataFrame) -> str:
     return group["bias"].iloc[0]
 
 
-def build_selection_table(df: pd.DataFrame) -> pd.DataFrame:
-    """One row per fold: the selected bias model and its metrics."""
+def build_selection_table(
+    df: pd.DataFrame, overrides: dict[str, str] | None = None
+) -> pd.DataFrame:
+    """One row per fold: the selected bias model and its metrics.
+
+    overrides: {fold_str: bias_str} from dataset_config.sh fold_bias_suffix.
+    Folds present in overrides use that bias directly; others use automated selection.
+    """
     records = []
     for fold, grp in df.groupby("fold"):
-        best = select_best(grp)
+        fold_str = str(fold)
+        if overrides and fold_str in overrides:
+            best = overrides[fold_str]
+            if best not in grp["bias"].values:
+                print(
+                    f"  [WARNING] Override bias '{best}' for fold {fold} not in "
+                    f"evaluated biases {list(grp['bias'].unique())} — falling back to auto-select."
+                )
+                best = select_best(grp)
+        else:
+            best = select_best(grp)
         row = grp.set_index("bias").loc[best].to_dict()
         row["fold"] = fold
         row["selected_bias"] = best
@@ -181,9 +193,7 @@ def build_selection_table(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # %%
-def build_comparison_table(
-    df: pd.DataFrame, selection: pd.DataFrame
-) -> pd.DataFrame:
+def build_comparison_table(df: pd.DataFrame, selection: pd.DataFrame) -> pd.DataFrame:
     """
     Wide-format comparison table: one row per fold, each bias model's key metrics
     as separate columns. Aids visual comparison across bias models for each fold.
@@ -365,9 +375,7 @@ def generate_explanation(
 
 
 # %%
-def plot_boxplot(
-    df: pd.DataFrame, selection: pd.DataFrame, out_stem: Path
-) -> None:
+def plot_boxplot(df: pd.DataFrame, selection: pd.DataFrame, out_stem: Path) -> None:
     """
     Major QC plot: distribution of nonpeaks Pearson r across folds per bias model.
     Nonpeaks Pearson r must be > 0 (ChromBPNet guideline).
@@ -441,17 +449,13 @@ def plot_boxplot(
             label="Other folds",
         ),
     ]
-    ax.legend(
-        handles=legend_elements, frameon=False, fontsize=8, loc="lower right"
-    )
+    ax.legend(handles=legend_elements, frameon=False, fontsize=8, loc="lower right")
 
     ax.set_xticks(range(len(biases)))
     ax.set_xticklabels([f"bias_{b}" for b in biases], fontsize=9)
     ax.set_xlabel("Bias model", fontsize=10)
     ax.set_ylabel("Pearson r (nonpeaks)", fontsize=10)
-    ax.set_title(
-        "Bias model fit on non-peak regions\n(should be > 0)", fontsize=10
-    )
+    ax.set_title("Bias model fit on non-peak regions\n(should be > 0)", fontsize=10)
 
     fig.tight_layout()
     for ext in ("pdf", "png"):
@@ -469,9 +473,7 @@ def plot_boxplot(
 
 
 # %%
-def plot_boxplot_by_fold(
-    df: pd.DataFrame, out_stem: Path
-) -> None:
+def plot_boxplot_by_fold(df: pd.DataFrame, out_stem: Path) -> None:
     """
     Companion to plot_boxplot: folds on X axis, bias models as colored points.
     Shows how all bias models compare within each fold.
@@ -513,9 +515,13 @@ def plot_boxplot_by_fold(
 
     legend_elements = [
         mlines.Line2D(
-            [0], [0], marker="o", color="w",
+            [0],
+            [0],
+            marker="o",
+            color="w",
             markerfacecolor=BIAS_COLORS.get(b, "gray"),
-            markersize=7, label=f"bias_{b}",
+            markersize=7,
+            label=f"bias_{b}",
         )
         for b in biases
     ]
@@ -570,9 +576,7 @@ METRIC_CONFIG = [
 ]
 
 
-def plot_metrics(
-    df: pd.DataFrame, selection: pd.DataFrame, out_stem: Path
-) -> None:
+def plot_metrics(df: pd.DataFrame, selection: pd.DataFrame, out_stem: Path) -> None:
     """4-panel grouped bar chart: all key metrics across folds, coloured by bias model."""
     folds = sorted(df["fold"].unique())
     biases = sorted(df["bias"].unique())
@@ -584,9 +588,7 @@ def plot_metrics(
     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
     axes = axes.flatten()
 
-    for ax, (metric, ylabel, thresh1, direction, thresh2) in zip(
-        axes, METRIC_CONFIG
-    ):
+    for ax, (metric, ylabel, thresh1, direction, thresh2) in zip(axes, METRIC_CONFIG):
         for i, bias in enumerate(biases):
             vals = [
                 df[(df["bias"] == bias) & (df["fold"] == f)][metric].values
@@ -632,9 +634,7 @@ def plot_metrics(
             if fold not in selection.index:
                 continue
             best_bias = selection.loc[fold, "selected_bias"]
-            val = df[(df["bias"] == best_bias) & (df["fold"] == fold)][
-                metric
-            ].values
+            val = df[(df["bias"] == best_bias) & (df["fold"] == fold)][metric].values
             if len(val):
                 bi = biases.index(best_bias)
                 xpos = fi + (bi - n_bias / 2 + 0.5) * w
@@ -693,9 +693,7 @@ def plot_selection_heatmap(
         "": "lightgray",
     }
 
-    fig, ax = plt.subplots(
-        figsize=(len(biases) * 2.8 + 1, len(folds) * 1.4 + 1.5)
-    )
+    fig, ax = plt.subplots(figsize=(len(biases) * 2.8 + 1, len(folds) * 1.4 + 1.5))
 
     for ri, fold in enumerate(folds):
         for ci, bias in enumerate(biases):
@@ -741,10 +739,7 @@ def plot_selection_heatmap(
                     fontsize=7.5,
                 )
 
-            if (
-                fold in selection.index
-                and selection.loc[fold, "selected_bias"] == bias
-            ):
+            if fold in selection.index and selection.loc[fold, "selected_bias"] == bias:
                 outline = mpatches.FancyBboxPatch(
                     (ci + 0.02, ri + 0.02),
                     0.96,
@@ -793,9 +788,7 @@ def plot_selection_heatmap(
             alpha=0.5,
             label="WARN  (pk_r in [-0.5, -0.3])",
         ),
-        mpatches.Patch(
-            color=color_map["fail"], alpha=0.5, label="FAIL  (pk_r < -0.5)"
-        ),
+        mpatches.Patch(color=color_map["fail"], alpha=0.5, label="FAIL  (pk_r < -0.5)"),
         mpatches.Patch(
             facecolor="none",
             linewidth=2,
@@ -822,6 +815,140 @@ def plot_selection_heatmap(
     for ext in ("pdf", "png"):
         fig.savefig(out_stem.with_suffix(f".{ext}"))
     plt.close(fig)
+    print(f"Saved: {out_stem}.pdf/.png")
+
+
+# ── scatter plot: peaks vs nonpeaks pearsonr ──────────────────────────────────
+
+
+# %%
+def plot_pearsonr_scatter(
+    df: pd.DataFrame, selection: pd.DataFrame, out_stem: Path
+) -> None:
+    """
+    Scatter plot of peaks Pearson r (x) vs nonpeaks Pearson r (y).
+    Each point is one (bias, fold) pair, coloured by bias model.
+    Selected (fold, bias) pairs are outlined in navy.
+    Threshold lines mark ChromBPNet pass/warn/fail boundaries.
+    """
+    biases = sorted(df["bias"].unique())
+    selected_pairs = {
+        (str(row["fold"]), row["selected_bias"])
+        for _, row in selection.reset_index().iterrows()
+    }
+
+    fig, ax = plt.subplots(1, 1, figsize=(5, 5))
+
+    for bias in biases:
+        grp = df[df["bias"] == bias]
+        color = BIAS_COLORS.get(bias, "gray")
+        for _, row in grp.iterrows():
+            is_sel = (str(row["fold"]), bias) in selected_pairs
+            ax.scatter(
+                row["peaks_pearsonr"],
+                row["nonpeaks_pearsonr"],
+                color=color,
+                s=55,
+                zorder=4 if is_sel else 3,
+                edgecolors="navy" if is_sel else "none",
+                linewidth=1.5 if is_sel else 0,
+            )
+            ax.text(
+                row["peaks_pearsonr"] + 0.003,
+                row["nonpeaks_pearsonr"],
+                f"f{row['fold']}",
+                fontsize=7,
+                va="center",
+                color="black",
+            )
+
+    ax.axhline(
+        NONPEAKS_PEARSONR_PASS,
+        color="black",
+        lw=0.8,
+        ls="--",
+        alpha=0.5,
+        label="nonpeaks threshold (0)",
+    )
+    ax.axvline(
+        PEAKS_PEARSONR_WARN,
+        color="#ff7f0e",
+        lw=0.8,
+        ls="--",
+        alpha=0.7,
+        label="peaks warn (-0.3)",
+    )
+    ax.axvline(
+        PEAKS_PEARSONR_FAIL,
+        color="#d62728",
+        lw=0.8,
+        ls=":",
+        alpha=0.7,
+        label="peaks fail (-0.5)",
+    )
+
+    legend_bias = [
+        mlines.Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="w",
+            markerfacecolor=BIAS_COLORS.get(b, "gray"),
+            markersize=7,
+            label=f"bias_{b}",
+        )
+        for b in biases
+    ]
+    legend_sel = mlines.Line2D(
+        [0],
+        [0],
+        marker="o",
+        color="w",
+        markerfacecolor="gray",
+        markersize=8,
+        markeredgecolor="navy",
+        markeredgewidth=1.5,
+        label="Selected per fold",
+    )
+    legend_thresh = [
+        mlines.Line2D(
+            [0], [0], color="black", lw=0.8, ls="--", label="nonpeaks threshold (0)"
+        ),
+        mlines.Line2D(
+            [0], [0], color="#ff7f0e", lw=0.8, ls="--", label="peaks warn (-0.3)"
+        ),
+        mlines.Line2D(
+            [0], [0], color="#d62728", lw=0.8, ls=":", label="peaks fail (-0.5)"
+        ),
+    ]
+    ax.legend(
+        handles=legend_bias + [legend_sel] + legend_thresh,
+        frameon=False,
+        fontsize=8,
+        loc="upper left",
+    )
+
+    ax.set_xlabel("Pearson r (peaks)", fontsize=10)
+    ax.set_ylabel("Pearson r (nonpeaks)", fontsize=10)
+    ax.set_title("Bias model counts fit\npeaks vs nonpeaks Pearson r", fontsize=10)
+
+    n = len(df)
+    ax.text(
+        0.97, 0.97, f"n={n}", transform=ax.transAxes, fontsize=8, ha="right", va="top"
+    )
+
+    fig.tight_layout()
+    for ext in ("pdf", "png"):
+        fig.savefig(out_stem.with_suffix(f".{ext}"))
+    plt.close(fig)
+
+    out_data = df[["bias", "fold", "peaks_pearsonr", "nonpeaks_pearsonr"]].copy()
+    out_data["selected"] = out_data.apply(
+        lambda r: (str(r["fold"]), r["bias"]) in selected_pairs, axis=1
+    )
+    out_data.to_csv(
+        out_stem.parent / (out_stem.name + "_data.tsv"), sep="\t", index=False
+    )
     print(f"Saved: {out_stem}.pdf/.png")
 
 
@@ -863,9 +990,7 @@ def print_summary(selection: pd.DataFrame) -> None:
 
 # %%
 def parse_args():
-    p = argparse.ArgumentParser(
-        description="Select ChromBPNet bias model per fold"
-    )
+    p = argparse.ArgumentParser(description="Select ChromBPNet bias model per fold")
     p.add_argument("--core-path", required=True, help="Project root directory")
     p.add_argument("--biases", nargs="+", default=["05", "06", "07", "08"])
     p.add_argument("--folds", nargs="+", default=["0", "1", "2", "3", "4"])
@@ -881,6 +1006,16 @@ def parse_args():
         help="Output directory (default: <core-path>/results/plots/bias_model_selection/<dataset>)",
     )
     p.add_argument("--save-plots", action="store_true", default=True)
+    p.add_argument(
+        "--fold-bias",
+        nargs="*",
+        metavar="FOLD:BIAS",
+        default=[],
+        help=(
+            "Override automated selection for specific folds with values from "
+            "dataset_config.sh. Format: fold:bias, e.g. --fold-bias 0:07 4:07."
+        ),
+    )
     return p.parse_args()
 
 
@@ -909,7 +1044,14 @@ def main():
         print("No metrics found. Check that bias models have been evaluated.")
         return
 
-    selection = build_selection_table(df)
+    overrides = {}
+    for item in args.fold_bias or []:
+        fold, bias = item.split(":")
+        overrides[fold] = bias.lstrip("_")
+    if overrides:
+        print(f"Applying fold-bias overrides from dataset_config.sh: {overrides}")
+
+    selection = build_selection_table(df, overrides=overrides or None)
     comparison = build_comparison_table(df, selection)
 
     df.to_csv(out_dir / "all_bias_metrics.tsv", sep="\t", index=False)
@@ -927,9 +1069,8 @@ def main():
         plot_boxplot(df, selection, out_dir / "bias_model_pearsonr_boxplot")
         plot_boxplot_by_fold(df, out_dir / "bias_model_pearsonr_boxplot_by_fold")
         plot_metrics(df, selection, out_dir / "bias_model_metrics")
-        plot_selection_heatmap(
-            df, selection, out_dir / "bias_model_selection_heatmap"
-        )
+        plot_selection_heatmap(df, selection, out_dir / "bias_model_selection_heatmap")
+        plot_pearsonr_scatter(df, selection, out_dir / "bias_model_pearsonr_scatter")
 
     print_summary(selection)
     print(f"All outputs in: {out_dir}/")
