@@ -3,6 +3,10 @@
 #SBATCH --mem=128G
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:2
+# Pin to GPUs the loaded cuda/11.5 supports (compute capability <= 8.6:
+# Volta/Turing/Ampere). Excludes Ada (GPU_CC 8.9) and Hopper H100/H200 (9.0),
+# which cuda 11.5 cannot drive efficiently.
+#SBATCH --constraint="GPU_CC:7.0|GPU_CC:7.5|GPU_CC:8.0|GPU_CC:8.6"
 #SBATCH --time=2-0
 #SBATCH --partition=gpu,owners
 #SBATCH --array=0-4

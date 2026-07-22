@@ -88,17 +88,23 @@ STATUS_COLORS = {"pass": "#2ca02c", "warn": "#ff7f0e", "fail": "#d62728"}
 
 # %%
 def load_metrics(
-    core_path: Path,
     biases: list[str],
     dataset: str,
     peak_type: str,
     folds: list[str],
+    bias_models_dir: Path | None = None,
+    core_path: Path | None = None,
 ) -> pd.DataFrame:
+    # Root holding the per-bias model directories (bias_model_<bias>/). Prefer an
+    # explicit bias_models_dir; otherwise fall back to the legacy layout
+    # <core_path>/<dataset>/results/bias_models for backward compatibility.
+    if bias_models_dir is None:
+        if core_path is None:
+            raise ValueError("load_metrics: provide bias_models_dir or core_path")
+        bias_models_dir = core_path / dataset / "results" / "bias_models"
     rows = []
     for bias in biases:
-        bias_dir = (
-            core_path / dataset / "results" / "bias_models" / f"bias_model_{bias}"
-        )
+        bias_dir = bias_models_dir / f"bias_model_{bias}"
         for fold in folds:
             tag = f"{dataset}_{peak_type}_fold_{fold}"
             path = bias_dir / tag / "evaluation" / f"{tag}_bias_metrics.json"
@@ -991,7 +997,18 @@ def print_summary(selection: pd.DataFrame) -> None:
 # %%
 def parse_args():
     p = argparse.ArgumentParser(description="Select ChromBPNet bias model per fold")
-    p.add_argument("--core-path", required=True, help="Project root directory")
+    p.add_argument(
+        "--bias-models-dir",
+        default=None,
+        help="Path to the results/bias_models directory (holds bias_model_<bias>/). "
+             "Preferred; decouples from the <core-path>/<dataset>/results layout.",
+    )
+    p.add_argument(
+        "--core-path",
+        default=None,
+        help="Legacy: project root; metrics read from "
+             "<core-path>/<dataset>/results/bias_models. Ignored if --bias-models-dir is set.",
+    )
     p.add_argument("--biases", nargs="+", default=["05", "06", "07", "08"])
     p.add_argument("--folds", nargs="+", default=["0", "1", "2", "3", "4"])
     p.add_argument(
@@ -1021,19 +1038,28 @@ def parse_args():
 
 def main():
     args = parse_args()
-    out_dir = (
-        Path(args.out_dir)
-        if args.out_dir
-        else Path(args.core_path)
-        / "results"
-        / "plots"
-        / "bias_model_selection"
-        / args.dataset
-    )
+
+    # Resolve the bias_models root: explicit --bias-models-dir preferred, else the
+    # legacy <core-path>/<dataset>/results/bias_models layout.
+    if args.bias_models_dir:
+        bias_models_dir = Path(args.bias_models_dir)
+    elif args.core_path:
+        bias_models_dir = Path(args.core_path) / args.dataset / "results" / "bias_models"
+    else:
+        raise SystemExit("ERROR: provide --bias-models-dir (preferred) or --core-path")
+
+    # Output dir: explicit --out-dir; else next to the bias_models dir (under results/);
+    # else the legacy core-path default for backward compatibility.
+    if args.out_dir:
+        out_dir = Path(args.out_dir)
+    elif args.bias_models_dir:
+        out_dir = bias_models_dir.parent / "plots" / "bias_model_selection" / args.dataset
+    else:
+        out_dir = Path(args.core_path) / "results" / "plots" / "bias_model_selection" / args.dataset
     out_dir.mkdir(parents=True, exist_ok=True)
 
     df = load_metrics(
-        core_path=Path(args.core_path),
+        bias_models_dir=bias_models_dir,
         biases=args.biases,
         dataset=args.dataset,
         peak_type=args.peak_type,

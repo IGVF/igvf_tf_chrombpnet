@@ -1,6 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=preprocess_peaks
-#SBATCH --mem=100G
+# bedtools intersect streams the peaks and loads only the small blacklist, so
+# memory is tiny and peak-count-independent (~22 MB observed).
+#SBATCH --mem=2G
 #SBATCH --time=6:00:00
 #SBATCH --partition=normal,engreitz
 #SBATCH --output=%x_%j.log
