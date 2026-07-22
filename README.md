@@ -1,5 +1,8 @@
 # IGVF TF ChromBPNet
 
+> [!NOTE]
+> **This is the actively maintained repository for the project.**
+
 ChromBPNet pipeline for the IGVF TF collaboration. Trains bias-factorised deep learning
 models on ATAC-seq pseudobulks from IGVF datasets to learn sequence-based chromatin
 accessibility and discover TF binding motifs.
