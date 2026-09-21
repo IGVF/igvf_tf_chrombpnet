@@ -71,7 +71,7 @@ metadata_start "00.1.prepare_signal"
 metadata_inputs+=( "signal=${signal_path}" "genome=${genome_fa}" "chrom_sizes=${chrom_sizes}" )
 metadata_outputs+=( "prepared_bigwig=${prepared_dir}/data_unstranded.bw" )
 metadata_params+=( "signal_type=${signal_type}" "assay=${assay}" )
-require_input "${signal_path}" 00.copy_and_prepare_data.sh
+require_input "${signal_path}" 00.0.copy_and_prepare_data.sh
 require_input "${genome_fa}"   scripts/bash/download_references.sh
 require_input "${chrom_sizes}" scripts/bash/download_references.sh
 preflight_check

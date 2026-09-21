@@ -458,7 +458,7 @@ lines += [
     "NEXT STEPS",
     "-" * 40,
     "  1. Decide on merge strategy (iPSC line mixing vs same-line only).",
-    "  2. Update 00.copy_and_prepare_data.sh for merged fragments and peaks.",
+    "  2. Update 00.0.copy_and_prepare_data.sh for merged fragments and peaks.",
     "  3. Re-run 01-02 preprocessing on merged datasets.",
     "  4. Re-run 03 bias sweep.",
 ]

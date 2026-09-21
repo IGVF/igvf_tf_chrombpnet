@@ -20,8 +20,8 @@ rules for adding a step.
 Four top-level roles: `workflows/` orchestrates, `src/` does one job per file,
 `lib/` is shared code, and `<dataset>/` is configuration.
 
-The repo is checked out **as the collaboration root**: `09.cross_dataset_compendium.sh`
-and `10.run_finemo_unified.sh` resolve per-dataset results under `${REPO_ROOT}` and
+The repo is checked out **as the collaboration root**: `09.0.cross_dataset_compendium.sh`
+and `10.0.run_finemo_unified.sh` resolve per-dataset results under `${REPO_ROOT}` and
 expect `<dataset>/results/...` as siblings of `workflows/`. Only
 `igvf3_cardiomyocyte/` is tracked (its `dataset_config.sh` plus `.gitkeep`s); the
 other three dataset directories exist on the cluster only.
@@ -86,8 +86,8 @@ runs, so they cannot read a variable. Override at submit time.
 Steps declare inputs with the step that produces them and stop before doing work:
 
 ```bash
-require_input "${peaks_file}"     01.preprocess_peaks.sh
-require_input "${negatives_file}" 02.preprocess_nonpeaks.sh
+require_input "${peaks_file}"     01.0.preprocess_peaks.sh
+require_input "${negatives_file}" 02.0.preprocess_nonpeaks.sh
 preflight_check
 ```
 
@@ -125,9 +125,9 @@ derived output paths live in `config.sh`.
 
 | Script | Array index | Needs `DATASET_DIR` |
 |---|---|---|
-| `00.copy_and_prepare_data.sh` | — (loops internally) | no (hardcoded paths) |
-| `01.preprocess_peaks.sh` | — | yes |
-| `02.preprocess_nonpeaks.sh` | — | yes |
+| `00.0.copy_and_prepare_data.sh` | — (loops internally) | no (hardcoded paths) |
+| `01.0.preprocess_peaks.sh` | — | yes |
+| `02.0.preprocess_nonpeaks.sh` | — | yes |
 | `03.0.train_bias_model.sh` | `fold_idx * n_factors + factor_idx` | yes |
 | `03.1.select_bias.sh` | no SBATCH header — run with `bash` | yes |
 | `03.2.qc_selected_bias.sh` | fold | yes |
@@ -135,14 +135,14 @@ derived output paths live in `config.sh`.
 | `04.1.qc_run_full_model.sh` | — | yes |
 | `04.2.qc_combined_boxplot.sh` | — | no (hardcoded `CORE_PATH`) |
 | `04.3.generate_predictions.sh` | dataset | yes |
-| `05.get_contrib_scores.sh` | fold | yes |
-| `06.average_contrib_scores.sh` | dataset | yes |
-| `07.contribs_to_bigwig.sh` | dataset | yes |
-| `08.run_modisco.sh` | dataset | yes |
-| `09.cross_dataset_compendium.sh` | — | no (hardcoded `h5_map`) |
-| `_10.motif_compendium.sh` | — | yes |
-| `10.run_finemo_unified.sh` | dataset | yes |
-| `11.postprocess_finemo.sh` | dataset | yes |
+| `05.0.get_contrib_scores.sh` | fold | yes |
+| `06.0.average_contrib_scores.sh` | dataset | yes |
+| `07.0.contribs_to_bigwig.sh` | dataset | yes |
+| `08.0.run_modisco.sh` | dataset | yes |
+| `09.0.cross_dataset_compendium.sh` | — | no (hardcoded `h5_map`) |
+| `deprecated/motif_compendium.sh` | — | yes |
+| `10.0.run_finemo_unified.sh` | dataset | yes |
+| `11.0.postprocess_finemo.sh` | dataset | yes |
 | `qc_datasets.sh` | — | no (sets a dummy one) |
 
 All step scripts live in `workflows/SLURM/`. The Python they call lives in `src/`
@@ -183,7 +183,7 @@ conda env create -f envs/chrombpnet.yml     # once per cluster
 bash scripts/bash/download_references.sh    # once per cluster
 
 export DATASET_DIR=/path/to/igvf3_cardiomyocyte
-cd workflows/SLURM && sbatch 01.preprocess_peaks.sh
+cd workflows/SLURM && sbatch 01.0.preprocess_peaks.sh
 ```
 
 ### Environments
@@ -280,23 +280,18 @@ none of them execute pipeline logic. Don't claim a step was verified beyond that
   job through `sbatch --export=ALL`.
 
 ## Gotchas
-- **Two scripts share the `04.2.` prefix**: `04.2.qc_combined_boxplot.sh` and
-  `04.3.generate_predictions.sh`. They are unrelated (cross-dataset QC vs per-dataset
-  prediction bigwigs) and the numbering collision is real, not a typo in one of them.
 
-- **Stale step numbers are still scattered through headers and docstrings.** `_10`
-  ends with "Next step: sbatch 11.run_finemo_unified.sh"; `10` credits the averaged
-  scores to "step 07" (they come from 06). Python docstrings in `src/` still open with
-  their old prefixes (`04.0.select_bias_model.py`, `05.qc_full_model.py`,
-  `08.contribs_to_bigwig.py`, `10.predict_and_avg.py`, `11.motif_compendium.py`).
-  Only the path references the move broke were corrected; the numbering was left
-  alone. Treat any step number in a comment as unreliable — the filename is
-  authoritative, and the table above is the only correct map.
+- **Step files are `NN.M.name.sh`, uniformly, so `ls` order is execution order.**
+  That uniformity is the point: when some steps were `NN.` and others `NN.M.`,
+  `00.1.prepare_signal.sh` sorted *above* `00.copy_and_prepare_data.sh`, and the
+  listing misrepresented the order things run in. Keep the `.M` even when a stage
+  has only one step. `workflows/SLURM/deprecated/` is outside the sequence.
 
-- **`_10.motif_compendium.sh` is superseded, deliberately.** `a249519` renamed it with
+
+- **`deprecated/motif_compendium.sh` is superseded, deliberately.** `a249519` renamed it with
   the underscore to mark it as "not part of the main numbered sequence": it builds a
   *per-dataset* compendium into `${modisco_compiled_dir}`, while
-  `09.cross_dataset_compendium.sh` pools all four datasets, and `10.run_finemo_unified.sh`
+  `09.0.cross_dataset_compendium.sh` pools all four datasets, and `10.0.run_finemo_unified.sh`
   explicitly reads `09`'s output. Don't renumber it back in.
 
 - **Untracked `dataset_config.sh` copies on the cluster still set `folds_dir`.**
@@ -310,8 +305,8 @@ none of them execute pipeline logic. Don't claim a step was verified beyond that
 - **Absolute `opushkar` paths remain in four places**: the three conda envs and
   `ref_db_meme` in `lib/bash/common.sh`, `CORE_PATH` in `04.2.qc_combined_boxplot.sh`
   (now `${CORE_PATH:-...}`, so it can be overridden at submit time), `core_path` in
-  `src/qc_datasets.py`, and `out_path` in `00.copy_and_prepare_data.sh`. They are no
-  longer duplicated — `09.cross_dataset_compendium.sh` used to re-declare four of them
+  `src/qc_datasets.py`, and `out_path` in `00.0.copy_and_prepare_data.sh`. They are no
+  longer duplicated — `09.0.cross_dataset_compendium.sh` used to re-declare four of them
   "mirroring config.sh" and now sources `common.sh`.
 
 - **The endothelial dataset is named two ways and laid out differently.**
@@ -332,8 +327,8 @@ none of them execute pipeline logic. Don't claim a step was verified beyond that
 - **Steps 06/07/08 run `profile`; steps 09/10 run `counts`.** `score_types=("profile")`
   in 06, 07 and 08 is deliberate — counts was already computed and is left out so
   reruns don't touch it (the helpers also skip an existing output). But
-  `09.cross_dataset_compendium.sh` hardcodes `modisco_counts_results.h5` and
-  `10.run_finemo_unified.sh` hardcodes `_average_shaps.counts.h5`, so the compendium
+  `09.0.cross_dataset_compendium.sh` hardcodes `modisco_counts_results.h5` and
+  `10.0.run_finemo_unified.sh` hardcodes `_average_shaps.counts.h5`, so the compendium
   and Fi-NeMo consume counts only. Adding `"counts"` back to `score_types` is safe;
   the reverse — assuming the downstream steps follow `score_types` — is not.
 
@@ -343,7 +338,7 @@ none of them execute pipeline logic. Don't claim a step was verified beyond that
   the same cuda/cudnn modules with no constraint. If a GPU step fails oddly on
   `owners`, that's the first thing to check.
 
-- **`08.run_modisco.sh` is CPU-only on `engreitz` with `--qos=high_p`, on purpose.**
+- **`08.0.run_modisco.sh` is CPU-only on `engreitz` with `--qos=high_p`, on purpose.**
   tfmodisco-lite doesn't use a GPU, and the default QOS caps walltime at 2 days for
   this account regardless of the partition ceiling; `high_p` (7-day MaxWall) is what
   actually gets the longer runs some datasets need. Don't "fix" it back to `gpu`.
@@ -403,7 +398,7 @@ none of them execute pipeline logic. Don't claim a step was verified beyond that
   are what make the *resolvable* sources work; don't remove either.
 
 - **Two `# shellcheck disable=SC2218` directives are working around a shellcheck
-  0.11.0 false positive** (`09.cross_dataset_compendium.sh`,
+  0.11.0 false positive** (`09.0.cross_dataset_compendium.sh`,
   `scripts/bash/download_references.sh`). Both functions are defined before use;
   verified by hand. Retest without them when shellcheck is next upgraded.
 

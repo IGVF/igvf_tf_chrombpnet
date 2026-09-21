@@ -9,7 +9,7 @@
 #SBATCH --output=%x_%j.log
 #SBATCH --error=%x_%j.log
 
-# 08.run_modisco.sh
+# 08.0.run_modisco.sh
 # Purpose: Run TF-MoDISco on fold-averaged contribution scores (step 06/07).
 #          One SLURM array job per dataset; produces ONE modisco result per
 #          dataset per score type (rather than one per fold), which is then
@@ -38,9 +38,9 @@
 #
 # Usage:
 #   export DATASET_DIR=/path/to/igvf_tf_collab/<dataset>
-#   sbatch 08.run_modisco.sh            # dataset 0
+#   sbatch 08.0.run_modisco.sh            # dataset 0
 #
-# Prerequisites: 06.average_contrib_scores.sh must have completed.
+# Prerequisites: 06.0.average_contrib_scores.sh must have completed.
 
 # --- bootstrap: locate the repo root (identical block in every workflow step) --
 # sbatch copies the submitted script to a node-local spool dir, so BASH_SOURCE
@@ -82,7 +82,7 @@ load_render_modules
 
 activate_env "${CONDA_ENV}"
 
-metadata_start "08.run_modisco"
+metadata_start "08.0.run_modisco"
 metadata_params+=( "dataset=${dataset}" )
 
 metadata_tools+=( "$(tool_version modisco modisco --version)" )

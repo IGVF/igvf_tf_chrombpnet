@@ -9,7 +9,7 @@
 #SBATCH --error=%x_%j.log
 
 # =============================================================================
-# 06.average_contrib_scores.sh
+# 06.0.average_contrib_scores.sh
 # Purpose: Average DeepLIFT contribution scores across all 5 folds for
 #          each dataset. One SLURM array job per dataset.
 #
@@ -30,10 +30,10 @@
 #
 # Usage:
 #   export DATASET_DIR=/path/to/igvf_tf_collab/<dataset>
-#   sbatch 06.average_contrib_scores.sh            # all datasets (array 0-4)
-#   sbatch --array=0 06.average_contrib_scores.sh  # dataset 0 only
+#   sbatch 06.0.average_contrib_scores.sh            # all datasets (array 0-4)
+#   sbatch --array=0 06.0.average_contrib_scores.sh  # dataset 0 only
 #
-# Prerequisites: 05.get_contrib_scores.sh must have completed for all folds.
+# Prerequisites: 05.0.get_contrib_scores.sh must have completed for all folds.
 # =============================================================================
 
 # --- bootstrap: locate the repo root (identical block in every workflow step) --
@@ -72,7 +72,7 @@ mkdir -p "${out_dir}" "${log_dir}"
 
 activate_env "${CONDA_ENV}"
 
-metadata_start "06.average_contrib_scores"
+metadata_start "06.0.average_contrib_scores"
 metadata_params+=( "dataset=${dataset}" )
 
 metadata_tools+=( "$(tool_version chrombpnet chrombpnet --version)" )

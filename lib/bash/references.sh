@@ -17,7 +17,7 @@
 #
 #   export REFERENCE_ROOT=/scratch/$USER/Data
 #   bash scripts/bash/download_references.sh          # fetch into that root
-#   cd workflows/SLURM && sbatch 01.preprocess_peaks.sh   # read from it
+#   cd workflows/SLURM && sbatch 01.0.preprocess_peaks.sh   # read from it
 #
 # A single dataset that needs a different genome can still override any variable
 # below in its own dataset_config.sh, which config.sh sources afterwards.

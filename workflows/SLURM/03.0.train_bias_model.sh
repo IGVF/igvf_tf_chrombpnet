@@ -94,9 +94,9 @@ model_file="${out_dir}/models/${file_prefix}_bias.h5"
 
 
 metadata_inputs+=( "signal=${signal_file}" "peaks=${peaks_file}" "negatives=${negatives_file}" "fold_json=${fold_json}" )
-require_input "${signal_file}" 00.copy_and_prepare_data.sh
-require_input "${peaks_file}" 01.preprocess_peaks.sh
-require_input "${negatives_file}" 02.preprocess_nonpeaks.sh
+require_input "${signal_file}" 00.0.copy_and_prepare_data.sh
+require_input "${peaks_file}" 01.0.preprocess_peaks.sh
+require_input "${negatives_file}" 02.0.preprocess_nonpeaks.sh
 require_input "${fold_json}"
 preflight_check
 

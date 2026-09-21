@@ -242,7 +242,7 @@ def test_heterogeneous_records_union_into_one_duckdb_table(tmp_path, sample):
     duckdb = pytest.importorskip("duckdb")
     meta_dir = tmp_path / "meta"
 
-    with metadata.record("01.preprocess_peaks", dataset="ds", out_dir=meta_dir) as md:
+    with metadata.record("01.0.preprocess_peaks", dataset="ds", out_dir=meta_dir) as md:
         md.add_param("input_window", 2114)
         md.add_output("narrowpeak", sample)
     with metadata.record("00.filter_fragments", dataset="ds", out_dir=meta_dir) as md:
@@ -254,7 +254,7 @@ def test_heterogeneous_records_union_into_one_duckdb_table(tmp_path, sample):
     src = f"read_json_auto('{meta_dir}/**/*.json', union_by_name=true)"
 
     steps = con.sql(f"SELECT step FROM {src} ORDER BY step").fetchall()
-    assert steps == [("00.filter_fragments",), ("01.preprocess_peaks",)]
+    assert steps == [("00.filter_fragments",), ("01.0.preprocess_peaks",)]
 
     # outputs unnest to one row per produced file, with its checksum
     files = con.sql(

@@ -8,7 +8,7 @@
 #SBATCH --output=%x_%j.log
 #SBATCH --error=%x_%j.log
 
-# 01.preprocess_peaks.sh
+# 01.0.preprocess_peaks.sh
 # Purpose: Remove blacklisted regions from peak files and reformat to
 #          narrowPeak for chrombpnet (summit = midpoint of peak).
 #
@@ -45,7 +45,7 @@ set -euo pipefail
 
 mkdir -p "${data_path}"
 
-metadata_start "01.preprocess_peaks"
+metadata_start "01.0.preprocess_peaks"
 
 
 for dataset in "${datasets[@]}"; do
@@ -74,4 +74,4 @@ metadata_tools+=( "$(tool_version python python --version)" )
     metadata_params+=( "peak_type=${peak_type}" "input_window=${chrombpnet_input_window}" )
 done
 
-echo "Done: 01.preprocess_peaks.sh"
+echo "Done: 01.0.preprocess_peaks.sh"

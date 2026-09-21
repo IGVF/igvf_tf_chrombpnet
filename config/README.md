@@ -12,7 +12,7 @@ config/
 
 ```bash
 export DATASET=igvf3_cardiomyocyte     # -> config/igvf3_cardiomyocyte/config.yaml
-cd workflows/SLURM && sbatch 01.preprocess_peaks.sh
+cd workflows/SLURM && sbatch 01.0.preprocess_peaks.sh
 ```
 
 Or point at a file anywhere: `export DATASET_CONFIG=/path/to/config.yaml`.
@@ -82,5 +82,5 @@ our code runs, so they cannot read a variable. Override at submit time:
 sbatch --partition=mypartition --account=myaccount 04.0.train_full_model.sh
 ```
 
-`00.copy_and_prepare_data.sh` is an explicit staging **template** with source
+`00.0.copy_and_prepare_data.sh` is an explicit staging **template** with source
 paths at the top; it is the one step you edit rather than configure.

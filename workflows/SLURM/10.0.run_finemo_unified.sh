@@ -9,7 +9,7 @@
 #SBATCH --output=%x_%j.log
 #SBATCH --error=%x_%j.log
 
-# 10.run_finemo_unified.sh
+# 10.0.run_finemo_unified.sh
 # Purpose: Call motif hits using the unified (compendium) MoDISco H5.
 #          Uses modisco_compiled.h5 built in step 09 and fold-averaged
 #          contribution scores (step 07) so that a single hit set per
@@ -27,9 +27,9 @@
 #   finemo_report/                    – HTML report
 #
 # Usage:
-#   sbatch 10.run_finemo_unified.sh            # dataset 0
-#   sbatch 10.run_finemo_unified.sh            # all datasets (array 0-4)
-#   sbatch --array=0 10.run_finemo_unified.sh   # dataset 0 only (override with --array=0 if needed)
+#   sbatch 10.0.run_finemo_unified.sh            # dataset 0
+#   sbatch 10.0.run_finemo_unified.sh            # all datasets (array 0-4)
+#   sbatch --array=0 10.0.run_finemo_unified.sh   # dataset 0 only (override with --array=0 if needed)
 #
 # Prerequisites: steps 06 and 09 must have completed.
 #   Requires the 'finemo' conda environment.
@@ -63,11 +63,11 @@ source "${REPO_ROOT}/lib/bash/config.sh" || exit 1
 dataset="${datasets[${SLURM_ARRAY_TASK_ID}]}"
 [[ -z "${dataset}" ]] && { echo "No dataset at array index ${SLURM_ARRAY_TASK_ID}, exiting."; exit 0; }
 
-# Use the cross-dataset compendium built by 09.cross_dataset_compendium.sh,
+# Use the cross-dataset compendium built by 09.0.cross_dataset_compendium.sh,
 # not the per-dataset one in ${modisco_compiled_dir}.
 compiled_h5="${REPO_ROOT}/results/compendium/modisco_compiled/modisco_compiled.h5"
 if [[ ! -f "${compiled_h5}" ]]; then
-    echo "ERROR: ${compiled_h5} not found. Run 09.cross_dataset_compendium.sh first." >&2
+    echo "ERROR: ${compiled_h5} not found. Run 09.0.cross_dataset_compendium.sh first." >&2
     exit 1
 fi
 
@@ -78,7 +78,7 @@ ml cudnn/8.6.0.163
 ml biology samtools
 
 
-metadata_start "10.run_finemo_unified"
+metadata_start "10.0.run_finemo_unified"
 
 
 
@@ -93,12 +93,12 @@ counts_h5="${averaged_dir}/${dataset}/${dataset}_average_shaps.counts.h5"
 peaks_file="${full_model_dir_selected}/${dataset}_${peak_type}_fold_${folds[0]}/interpretation/interpretation.interpreted_regions.bed"
 
 if [[ ! -f "${counts_h5}" ]]; then
-    echo "ERROR: ${counts_h5} not found. Run 06.average_contrib_scores.sh first." >&2
+    echo "ERROR: ${counts_h5} not found. Run 06.0.average_contrib_scores.sh first." >&2
     exit 1
 fi
 
 if [[ ! -f "${peaks_file}" ]]; then
-    echo "ERROR: ${peaks_file} not found. Run 05.get_contrib_scores.sh first." >&2
+    echo "ERROR: ${peaks_file} not found. Run 05.0.get_contrib_scores.sh first." >&2
     exit 1
 fi
 
@@ -107,9 +107,9 @@ hits_file="${out_dir}/hits.bed.gz"
 
 
 metadata_inputs+=( "counts_h5=${counts_h5}" "compiled_h5=${compiled_h5}" "peaks=${peaks_file}" )
-require_input "${counts_h5}" 06.average_contrib_scores.sh
-require_input "${compiled_h5}" 09.cross_dataset_compendium.sh
-require_input "${peaks_file}" 05.get_contrib_scores.sh
+require_input "${counts_h5}" 06.0.average_contrib_scores.sh
+require_input "${compiled_h5}" 09.0.cross_dataset_compendium.sh
+require_input "${peaks_file}" 05.0.get_contrib_scores.sh
 preflight_check
 
 activate_env "${finemo_conda}"

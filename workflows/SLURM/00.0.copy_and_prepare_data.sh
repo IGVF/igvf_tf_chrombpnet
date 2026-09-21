@@ -8,7 +8,7 @@
 #SBATCH --output=%x_%j.log
 #SBATCH --error=%x_%j.log
 
-# 00.copy_and_prepare_data.sh
+# 00.0.copy_and_prepare_data.sh
 # Purpose: stage one dataset's inputs into the paths its config declares, then
 #   filter the fragments to the main chromosomes.
 #
@@ -51,7 +51,7 @@ export REPO_ROOT
 # shellcheck source=lib/bash/common.sh
 source "${REPO_ROOT}/lib/bash/common.sh" || exit 1
 
-metadata_start "00.copy_and_prepare_data"
+metadata_start "00.0.copy_and_prepare_data"
 
 # ── Edit these two for your data ──────────────────────────────────────────────
 # Where the unstaged inputs currently live. Everything else is derived from

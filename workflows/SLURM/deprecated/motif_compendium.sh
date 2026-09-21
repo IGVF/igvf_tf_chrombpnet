@@ -1,4 +1,13 @@
 #!/bin/bash
+# SUPERSEDED — not part of the numbered sequence, and not run by the pipeline.
+#
+# This builds a PER-DATASET motif compendium. 09.0.cross_dataset_compendium.sh
+# replaced it by pooling all datasets, and 10.0.run_finemo_unified.sh reads that
+# cross-dataset output. Kept for reference only; the step numbers in the header
+# below are the ones it had when it was live and are not updated.
+#
+# It previously lived at workflows/SLURM/_10.motif_compendium.sh, where the "_"
+# was meant to mark it as out-of-sequence but only made it sort above step 00.
 #SBATCH --job-name=motif_compendium
 #SBATCH --mem=64G
 #SBATCH --cpus-per-task=16
@@ -23,7 +32,7 @@
 #   modisco_compendium_meta.tsv  – per-motif TF annotations (MotifCompendium-Database-Human) + cluster IDs
 #   modisco_config.tsv           – dataset → H5 path mapping (for reference)
 #
-# Prerequisites: 08.run_modisco.sh must have completed.
+# Prerequisites: 08.0.run_modisco.sh must have completed.
 #   Requires the 'motif_compendium' conda environment:
 #     mamba create -n motif_compendium python=3.10
 #     pip install MotifCompendium
@@ -85,7 +94,7 @@ fi
 # Run MotifCompendium clustering + annotation
 activate_env "${motif_compendium_conda}"
 
-metadata_start "_10.motif_compendium"
+metadata_start "deprecated/motif_compendium"
 metadata_inputs+=( "config_tsv=${config_tsv}" "ref_db=${ref_db_meme}" )
 metadata_outputs+=( "compiled_h5=${modisco_compiled_dir}/modisco_compiled.h5" )
 metadata_params+=( "threshold=${motif_compendium_threshold}" )

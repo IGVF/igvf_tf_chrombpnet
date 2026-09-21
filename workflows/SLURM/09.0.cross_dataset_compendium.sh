@@ -9,7 +9,7 @@
 #SBATCH --output=%x_%j.log
 #SBATCH --error=%x_%j.log
 
-# 09.cross_dataset_compendium.sh
+# 09.0.cross_dataset_compendium.sh
 # Purpose: Build a single non-redundant motif compendium by pooling MoDISco
 #          results across all four datasets in this collaboration:
 #            igvf3_cardiomyocyte, igvf6_definitive_endoderm,
@@ -29,7 +29,7 @@
 # Prerequisites: step 08 must have completed for all four datasets.
 #
 # Usage:
-#   cd workflows/SLURM && sbatch 09.cross_dataset_compendium.sh
+#   cd workflows/SLURM && sbatch 09.0.cross_dataset_compendium.sh
 
 # --- bootstrap: locate the repo root (identical block in every workflow step) --
 # sbatch copies the submitted script to a node-local spool dir, so BASH_SOURCE
@@ -92,14 +92,14 @@ n_found=$(grep -c "^[^#]" "${config_tsv}" || true)
 echo "[$(date)] Config TSV: ${config_tsv} (${n_found}/4 datasets)"
 
 if [[ "${n_found}" -eq 0 ]]; then
-    echo "ERROR: no MoDISco H5s found. Run 08.run_modisco.sh for each dataset first." >&2
+    echo "ERROR: no MoDISco H5s found. Run 08.0.run_modisco.sh for each dataset first." >&2
     exit 1
 fi
 
 # Run MotifCompendium clustering + annotation
 activate_env "${motif_compendium_conda}"
 
-metadata_start "09.cross_dataset_compendium"
+metadata_start "09.0.cross_dataset_compendium"
 metadata_inputs+=( "config_tsv=${config_tsv}" "ref_db=${ref_db_meme}" )
 metadata_outputs+=( "compiled_h5=${out_dir}/modisco_compiled.h5" "meme=${out_dir}/modisco_compendium.meme" "meta_tsv=${out_dir}/modisco_compendium_meta.tsv" )
 metadata_params+=( "threshold=${motif_compendium_threshold}" )

@@ -8,7 +8,7 @@
 #SBATCH --output=%x_%j.log
 #SBATCH --error=%x_%j.log
 
-# 07.contribs_to_bigwig.sh
+# 07.0.contribs_to_bigwig.sh
 # Purpose: Convert the fold-averaged contribution score H5 (from step 06)
 #          into a bigwig for each dataset. One SLURM array job per dataset.
 #
@@ -22,10 +22,10 @@
 #
 # Usage:
 #   export DATASET_DIR=/path/to/igvf_tf_collab/<dataset>
-#   sbatch 07.contribs_to_bigwig.sh            # all datasets (array 0-4)
-#   sbatch --array=0 07.contribs_to_bigwig.sh  # d0 only
+#   sbatch 07.0.contribs_to_bigwig.sh            # all datasets (array 0-4)
+#   sbatch --array=0 07.0.contribs_to_bigwig.sh  # d0 only
 #
-# Prerequisites: 06.average_contrib_scores.sh must have completed.
+# Prerequisites: 06.0.average_contrib_scores.sh must have completed.
 
 # --- bootstrap: locate the repo root (identical block in every workflow step) --
 # sbatch copies the submitted script to a node-local spool dir, so BASH_SOURCE
@@ -59,7 +59,7 @@ dataset="${datasets[${SLURM_ARRAY_TASK_ID}]}"
 score_types=("profile")  # counts bigwig already exists; add "counts" here to redo/extend
 
 
-metadata_start "07.contribs_to_bigwig"
+metadata_start "07.0.contribs_to_bigwig"
 
 
 # Use fold 0's interpreted regions — identical across folds (same peaks input)
@@ -67,7 +67,7 @@ regions_file="${full_model_dir}/${dataset}_${peak_type}_fold_0/interpretation/in
 
 
 metadata_inputs+=( "regions=${regions_file}" )
-require_input "${regions_file}" 05.get_contrib_scores.sh
+require_input "${regions_file}" 05.0.get_contrib_scores.sh
 preflight_check
 
 activate_env "${CONDA_ENV}"
@@ -84,7 +84,7 @@ for score_type in "${score_types[@]}"; do
 
     if [[ ! -f "${h5_file}" ]]; then
         echo "[${dataset} ${score_type}] Averaged H5 not found: ${h5_file}" >&2
-        echo "  Run 06.average_contrib_scores.sh first." >&2
+        echo "  Run 06.0.average_contrib_scores.sh first." >&2
         exit 1
     fi
 

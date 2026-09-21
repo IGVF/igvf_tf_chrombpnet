@@ -97,7 +97,7 @@ def slop(ranges: pr.PyRanges, bp: int, chromsizes: dict[str, int]) -> pr.PyRange
 def to_narrowpeak(peaks: pr.PyRanges) -> pd.DataFrame:
     """Build the 10-column narrowPeak chrombpnet consumes, summit at the midpoint.
 
-    Replaces the awk in the old ``01.preprocess_peaks.sh``:
+    Replaces the awk in the old ``01.0.preprocess_peaks.sh``:
 
         summit = int(($3-$2)/2); print $1,$2,$3,"peak_"NR,0,".",0,-1,-1,summit
 

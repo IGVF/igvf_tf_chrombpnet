@@ -8,7 +8,7 @@
 #SBATCH --output=%x_%j.log
 #SBATCH --error=%x_%j.log
 
-# 11.postprocess_finemo.sh
+# 11.0.postprocess_finemo.sh
 # Purpose: Generate the Fi-NeMo report for a dataset's unified hit calls:
 #            finemo report - compute per-motif instance-CWM vs input-CWM
 #                             similarity (cwm_similarity in motif_report.tsv)
@@ -23,9 +23,9 @@
 #
 # Usage (DATASET_DIR must be exported):
 #   cd workflows/SLURM
-#   DATASET_DIR=/path/to/igvf3_cardiomyocyte sbatch 11.postprocess_finemo.sh
+#   DATASET_DIR=/path/to/igvf3_cardiomyocyte sbatch 11.0.postprocess_finemo.sh
 #
-# Prerequisites: 10.run_finemo_unified.sh must have completed for this dataset.
+# Prerequisites: 10.0.run_finemo_unified.sh must have completed for this dataset.
 
 # --- bootstrap: locate the repo root (identical block in every workflow step) --
 # sbatch copies the submitted script to a node-local spool dir, so BASH_SOURCE
@@ -67,22 +67,22 @@ if [[ -f "${report_dir}/motif_report.tsv" ]]; then
 fi
 
 if [[ ! -f "${hits_tsv}" ]]; then
-    echo "ERROR: ${hits_tsv} not found. Run 10.run_finemo_unified.sh first." >&2
+    echo "ERROR: ${hits_tsv} not found. Run 10.0.run_finemo_unified.sh first." >&2
     exit 1
 fi
 
 if [[ ! -f "${finemo_npz}" ]]; then
-    echo "ERROR: ${finemo_npz} not found. Run 10.run_finemo_unified.sh first." >&2
+    echo "ERROR: ${finemo_npz} not found. Run 10.0.run_finemo_unified.sh first." >&2
     exit 1
 fi
 
 ml biology samtools
 
 
-metadata_start "11.postprocess_finemo"
+metadata_start "11.0.postprocess_finemo"
 metadata_inputs+=( "hits_tsv=${hits_tsv}" "npz=${finemo_npz}" )
-require_input "${hits_tsv}" 10.run_finemo_unified.sh
-require_input "${finemo_npz}" 10.run_finemo_unified.sh
+require_input "${hits_tsv}" 10.0.run_finemo_unified.sh
+require_input "${finemo_npz}" 10.0.run_finemo_unified.sh
 preflight_check
 
 activate_env "${finemo_conda}"

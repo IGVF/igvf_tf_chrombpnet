@@ -71,8 +71,8 @@ Reference paths (genome, blacklist, motif DB) are set in `lib/bash/common.sh` an
 ## Quick start
 
 Most steps run per dataset — set `DATASET_DIR` before submitting.
-Steps 04.2.qc_combined_boxplot, 09 and qc_datasets process all datasets internally and
-do not need `DATASET_DIR`.
+Steps 04.2, 09.0 and qc_datasets span all datasets and need no `DATASET`.
+Every step is `NN.M.name.sh`, so listing order is execution order.
 
 **Submit from `workflows/SLURM/`.** The steps locate the repo by walking up from the
 directory you ran `sbatch` in; set `REPO_ROOT` to submit from anywhere else.
@@ -85,23 +85,24 @@ a few seconds, not a queued GPU job. `bash status.sh` shows the whole picture.
 export DATASET=igvf3_cardiomyocyte   # picks config/igvf3_cardiomyocyte/
 cd workflows/SLURM
 
-sbatch 00.copy_and_prepare_data.sh
-sbatch 01.preprocess_peaks.sh
-sbatch 02.preprocess_nonpeaks.sh
+sbatch 00.0.copy_and_prepare_data.sh   # optional: only if data needs staging
+sbatch 00.1.prepare_signal.sh          # CPU: converts reads once so GPU jobs skip it
+sbatch 01.0.preprocess_peaks.sh
+sbatch 02.0.preprocess_nonpeaks.sh
 sbatch 03.0.train_bias_model.sh
-bash   03.1.select_bias.sh          # not a batch job; update fold_bias_suffix in dataset_config.sh after
+bash   03.1.select_bias.sh             # not a batch job; copy the winners into config.yaml after
 sbatch 03.2.qc_selected_bias.sh
 sbatch 04.0.train_full_model.sh
 sbatch 04.1.qc_run_full_model.sh
-sbatch 04.2.qc_combined_boxplot.sh  # no DATASET_DIR needed; run once all datasets complete 04.1
+sbatch 04.2.qc_combined_boxplot.sh     # no DATASET needed; run once all datasets finish 04.1
 sbatch 04.3.generate_predictions.sh
-sbatch 05.get_contrib_scores.sh
-sbatch 06.average_contrib_scores.sh
-sbatch 07.contribs_to_bigwig.sh
-sbatch 08.run_modisco.sh
-sbatch 09.cross_dataset_compendium.sh  # no DATASET_DIR needed; run once all datasets complete 08
-sbatch 10.run_finemo_unified.sh
-sbatch 11.postprocess_finemo.sh
+sbatch 05.0.get_contrib_scores.sh
+sbatch 06.0.average_contrib_scores.sh
+sbatch 07.0.contribs_to_bigwig.sh
+sbatch 08.0.run_modisco.sh
+sbatch 09.0.cross_dataset_compendium.sh  # no DATASET needed; run once all datasets finish 08
+sbatch 10.0.run_finemo_unified.sh
+sbatch 11.0.postprocess_finemo.sh
 ```
 
 All shared parameters (conda envs, references, algorithm thresholds) are in

@@ -9,7 +9,7 @@
 #SBATCH --output=%x_%j.log
 #SBATCH --error=%x_%j.log
 
-# 05.get_contrib_scores.sh
+# 05.0.get_contrib_scores.sh
 # Purpose: Compute DeepLIFT contribution scores for each dataset x fold using the
 #          bias-corrected chrombpnet_nobias model. One SLURM array job per fold;
 #          each job processes all datasets.
@@ -19,8 +19,8 @@
 #
 # Usage:
 #   export DATASET_DIR=/path/to/igvf_tf_collab/<dataset>
-#   sbatch 05.get_contrib_scores.sh            # all folds (array 0-4)
-#   sbatch --array=0 05.get_contrib_scores.sh  # fold 0 only
+#   sbatch 05.0.get_contrib_scores.sh            # all folds (array 0-4)
+#   sbatch --array=0 05.0.get_contrib_scores.sh  # fold 0 only
 #
 # Prerequisites: 04.0.train_full_model.sh must have completed.
 
@@ -57,7 +57,7 @@ load_gpu_modules
 
 activate_env "${CONDA_ENV}"
 
-metadata_start "05.get_contrib_scores"
+metadata_start "05.0.get_contrib_scores"
 metadata_params+=( "fold=${fold}" )
 
 metadata_tools+=( "$(tool_version chrombpnet chrombpnet --version)" )

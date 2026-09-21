@@ -6,7 +6,7 @@
 #SBATCH --output=%x_%j.log
 #SBATCH --error=%x_%j.log
 
-# 02.preprocess_nonpeaks.sh
+# 02.0.preprocess_nonpeaks.sh
 # Purpose: Generate GC-matched negative (non-peak) regions for each
 #          dataset x fold combination using 'chrombpnet prep nonpeaks'.
 #
@@ -38,7 +38,7 @@ export REPO_ROOT
 source "${REPO_ROOT}/lib/bash/config.sh" || exit 1
 
 
-metadata_start "02.preprocess_nonpeaks"
+metadata_start "02.0.preprocess_nonpeaks"
 
 
 set -euo pipefail
@@ -50,7 +50,7 @@ for dataset in "${datasets[@]}"; do
 
 
 metadata_inputs+=( "peaks=${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak" "genome=${genome_fa}" "chrom_sizes=${chrom_sizes}" "blacklist=${blacklist}" "fold_json=${folds_dir}/fold_${fold}.json" )
-require_input "${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak" 01.preprocess_peaks.sh
+require_input "${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak" 01.0.preprocess_peaks.sh
 require_input "${genome_fa}" scripts/bash/download_references.sh
 require_input "${chrom_sizes}" scripts/bash/download_references.sh
 require_input "${blacklist}" scripts/bash/download_references.sh
@@ -79,4 +79,4 @@ metadata_params+=( "fold=${fold}" "peak_type=${peak_type}" )
     done
 done
 
-echo "Done: 02.preprocess_nonpeaks.sh"
+echo "Done: 02.0.preprocess_nonpeaks.sh"
