@@ -17,14 +17,21 @@
 # <dataset>/data/ convention; that convention is gone, so the copy was pure
 # duplication of a multi-GB file.)
 #
-# Three things, each skipped when unnecessary:
+# What it does:
 #   1. filter reads to the main chromosomes AND count Tn5 cut sites, in a
 #      single pass over the file
 #   2. write the bigwig the training steps reuse
 #
-# No chrombpnet, and no genome FASTA: the pileup is numpy + pybigtools, and the
-# Tn5 shift comes from plus_shift/minus_shift in the config. Only auto-detecting
-# the shift needs sequence, and then only a one-off.
+# It imports no chrombpnet: the pileup is numpy + pybigtools.
+#
+# The genome FASTA is needed ONLY to auto-detect the Tn5 shift, which reads the
+# sequence around each cut site and compares it to reference Tn5 bias matrices
+# -- it cannot be done without sequence. The pileup itself never reads any.
+# So:
+#   plus_shift/minus_shift set in config.yaml -> no detection, no FASTA read
+#   either of them unset                      -> detection runs, ${genome_fa}
+#                                                is required
+# Detection is a one-off: run it once, write the answer into config.yaml.
 #
 # chrombpnet train / pipeline / bias train all begin with:
 #   enzyme-shift auto-detection (samples reads, compares to a reference motif)
