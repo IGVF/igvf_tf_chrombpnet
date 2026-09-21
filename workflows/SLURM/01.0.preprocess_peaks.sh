@@ -64,8 +64,8 @@ for dataset in "${datasets[@]}"; do
     metadata_inputs+=( "blacklist=${blacklist}" )
     metadata_inputs+=( "chrom_sizes=${chrom_sizes}" )
     require_input "${regions}" ""
-    require_input "${blacklist}" scripts/bash/download_references.sh
-require_input "${chrom_sizes}" scripts/bash/download_references.sh
+    require_input "${blacklist}" "cli.py download-references"
+require_input "${chrom_sizes}" "cli.py download-references"
 preflight_check
 
 activate_env "${preprocess_conda}"

@@ -59,8 +59,7 @@ conda env create -f envs/motif_compendium.yml
 
 # 2. Fetch the shared genome / chrom.sizes / blacklist / MotifCompendium references
 #    into the lab Data/ folder (idempotent; verifies existing files)
-ml biology samtools
-bash scripts/bash/download_references.sh
+pixi run -e qc python src/cli.py download-references
 ```
 
 Reference paths (genome, blacklist, motif DB) are set in `lib/bash/common.sh` and each

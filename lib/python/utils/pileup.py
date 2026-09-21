@@ -63,6 +63,23 @@ def cut_positions(
     return np.concatenate([plus, minus])
 
 
+def cut_positions_stranded(starts, ends, is_reverse, plus_delta, minus_delta):
+    """Cut sites for reads that each carry their OWN strand (a BAM).
+
+    Fragments and BAMs differ here, and it is easy to get wrong.
+    ``fragment_to_tagalign_stream`` emits every fragment TWICE, once as ``+``
+    and once as ``-``, so a fragment yields two cuts. ``bedtools bamtobed``
+    emits each read ONCE with its actual strand, so a read yields one:
+
+        + read -> start + plus_delta
+        - read -> end + minus_delta - 1
+    """
+    starts = np.asarray(starts, dtype=np.int64)
+    ends = np.asarray(ends, dtype=np.int64)
+    is_reverse = np.asarray(is_reverse, dtype=bool)
+    return np.where(is_reverse, ends + minus_delta - 1, starts + plus_delta)
+
+
 def pileup_runs(cuts: np.ndarray, chrom_length: int):
     """Count cuts per base and return the non-zero runs as (starts, ends, values).
 
@@ -114,6 +131,51 @@ def _iter_fragment_chunks(path, all_columns: bool, chunk_rows: int = CHUNK_ROWS)
     if not all_columns:
         kwargs["usecols"] = [0, 1, 2]
     yield from pd.read_csv(path, **kwargs)
+
+
+def collect_cuts_bam(
+    bam_path,
+    chrom_sizes: dict[str, int],
+    plus_delta,
+    minus_delta,
+):
+    """Cut sites straight from a BAM, replacing `bedtools bamtobed`.
+
+    One cut per mapped read, at its own strand's 5' end -- matching what
+    bamtobed emits and what chrombpnet would therefore have piled up. Unmapped
+    reads are skipped, as bamtobed skips them.
+    """
+    import pysam  # noqa: PLC0415  # only needed for BAM input
+
+    per_chrom: dict[str, list[np.ndarray]] = {}
+    skipped: dict[str, int] = {}
+    kept = 0
+    buf: dict[str, list[tuple[int, int, bool]]] = {}
+
+    with pysam.AlignmentFile(str(bam_path), "rb") as bam:
+        for read in bam.fetch(until_eof=True):
+            if read.is_unmapped:
+                continue
+            chrom = read.reference_name
+            if chrom not in chrom_sizes:
+                skipped[chrom] = skipped.get(chrom, 0) + 1
+                continue
+            buf.setdefault(chrom, []).append(
+                (read.reference_start, read.reference_end, read.is_reverse)
+            )
+            kept += 1
+
+    for chrom, rows in buf.items():
+        arr = np.array(rows, dtype=object)
+        per_chrom[chrom] = cut_positions_stranded(
+            np.array([r[0] for r in rows], dtype=np.int64),
+            np.array([r[1] for r in rows], dtype=np.int64),
+            np.array([r[2] for r in rows], dtype=bool),
+            plus_delta,
+            minus_delta,
+        )
+        del arr
+    return per_chrom, skipped, kept
 
 
 def collect_cuts(

@@ -65,6 +65,25 @@ filter_main_chroms: true
 plus_shift: 0
 minus_shift: 0
 
+# ── Shared references ─────────────────────────────────────────────────────────
+# Where the genome, chrom.sizes, blacklist and motif DB live. This is also where
+# `cli.py download-references` installs them, so one path both fetches and reads.
+#
+#   pixi run -e qc python src/cli.py download-references --dataset my_dataset
+#
+# Defaults to $REFERENCE_ROOT, then the lab copy. Set it here to make the config
+# self-contained, or leave it out and use the environment variable.
+# reference_root: /path/to/Data
+#
+# Individual files are derived from reference_root and rarely need setting. Any
+# of them can be overridden for this dataset alone -- e.g. a mouse sample in a
+# human project, or a genome that is not the IGVF build:
+# genome_fa:        /path/to/genome.fa
+# chrom_sizes:      /path/to/genome.chrom.sizes
+# chrom_sizes_main: /path/to/genome.chrom.sizes.main.tsv
+# blacklist:        /path/to/blacklist.bed.gz
+# ref_db_meme:      /path/to/motifs.meme.txt
+
 # Everything the pipeline writes goes under here.
 output_dir: "/path/to/results"
 

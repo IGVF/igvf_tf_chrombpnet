@@ -65,15 +65,15 @@ description = "bash -n + shellcheck over every workflow step and bash lib"
 cmd = """
 bash -c '
 set -e
-for f in workflows/SLURM/*.sh lib/bash/*.sh scripts/bash/*.sh; do bash -n "$f"; done
+for f in workflows/SLURM/*.sh lib/bash/*.sh; do bash -n "$f"; done
 echo "bash -n: OK"
-shellcheck -S warning workflows/SLURM/*.sh lib/bash/*.sh scripts/bash/*.sh
+shellcheck -S warning workflows/SLURM/*.sh lib/bash/*.sh
 '
 """
 
 [tasks.check-py]
 description = "byte-compile every Python file (no cluster imports needed)"
-cmd = "python -m compileall -q lib/python src scripts/python"
+cmd = "python -m compileall -q lib/python src"
 
 [tasks.test]
 description = "pytest (needs the qc env: pyranges1, Python >= 3.12)"

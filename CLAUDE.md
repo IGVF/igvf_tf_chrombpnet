@@ -50,9 +50,9 @@ other three dataset directories exist on the cluster only.
 - `folds/fold_{0..4}.json` — the 5-fold chromosome splits (`train`/`valid`/`test`),
   shipped with the repo and passed to chrombpnet as `-fl`.
 - `envs/{chrombpnet,finemo,motif_compendium}.yml` — fully pinned conda exports.
-- `scripts/bash/download_references.sh` — one-time, idempotent fetch of genome /
+- ``cli.py download-references`` — one-time, idempotent fetch of genome /
   chrom.sizes / blacklist / MotifCompendium into the shared lab `Data/` folder.
-- `scripts/python/detect_tn5_shift.py` — vendored from scPrinter (Ruochi Zhang),
+- `lib/python/utils/shift.py` — vendored from scPrinter (Ruochi Zhang),
   not wired into any pipeline step.
 - `<dataset>/dataset_config.sh` — per-dataset parameters, sourced by `config.sh`.
 
@@ -180,7 +180,7 @@ On the cluster, nothing uses pixi:
 
 ```bash
 conda env create -f envs/chrombpnet.yml     # once per cluster
-bash scripts/bash/download_references.sh    # once per cluster
+bash `cli.py download-references`    # once per cluster
 
 export DATASET_DIR=/path/to/igvf3_cardiomyocyte
 cd workflows/SLURM && sbatch 01.0.preprocess_peaks.sh
@@ -399,7 +399,7 @@ none of them execute pipeline logic. Don't claim a step was verified beyond that
 
 - **Two `# shellcheck disable=SC2218` directives are working around a shellcheck
   0.11.0 false positive** (`09.0.cross_dataset_compendium.sh`,
-  `scripts/bash/download_references.sh`). Both functions are defined before use;
+  ``cli.py download-references``). Both functions are defined before use;
   verified by hand. Retest without them when shellcheck is next upgraded.
 
 - **`ruff format` has been applied to `lib/python` and `src`.** The first run

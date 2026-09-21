@@ -76,9 +76,9 @@ model_file="${out_dir}/models/${file_prefix}_bias.h5"
 
 metadata_inputs+=( "bias_model=${model_file}" "genome=${genome_fa}" "fold_json=${fold_json}" )
 require_input "${model_file}" 03.0.train_bias_model.sh
-require_input "${genome_fa}" scripts/bash/download_references.sh
+require_input "${genome_fa}" "cli.py download-references"
 require_input "${fold_json}"
-require_input "${chrom_sizes}" scripts/bash/download_references.sh
+require_input "${chrom_sizes}" "cli.py download-references"
 preflight_check
 
 load_gpu_modules

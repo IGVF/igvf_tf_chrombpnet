@@ -201,3 +201,30 @@ def test_shipped_configs_name_themselves_after_their_folder():
     """
     for path in REPO_CONFIGS:
         assert config.load(path)["dataset_name"] == path.parent.name, path
+
+
+# ── references can come from the config ──────────────────────────────────────
+
+
+def test_reference_root_is_optional_in_a_config():
+    """Absent means fall back to $REFERENCE_ROOT, which is the documented default."""
+    for path in REPO_CONFIGS:
+        assert "reference_root" not in config.load(path) or config.load(path)["reference_root"]
+
+
+def test_a_config_may_override_individual_reference_files():
+    r = config.resolve(
+        {
+            "dataset_name": "d",
+            "signal_path": "x.bam",
+            "genome_fa": "/mm10/genome.fa",
+            "blacklist": "/mm10/blacklist.bed.gz",
+        }
+    )
+    assert r["genome_fa"] == "/mm10/genome.fa"
+    assert r["blacklist"] == "/mm10/blacklist.bed.gz"
+
+
+def test_reference_root_reaches_the_shell_export():
+    shell = config.to_shell(config.resolve({"dataset_name": "d", "reference_root": "/refs"}))
+    assert "reference_root=/refs" in shell

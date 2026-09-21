@@ -78,8 +78,8 @@ metadata_start "04.0.train_full_model"
 metadata_inputs+=( "bias_model=${bias_model}" )
 require_input "${bias_model}" 03.0.train_bias_model.sh
 require_input "${signal_path}" 00.0.prepare_signal.sh
-require_input "${genome_fa}"   scripts/bash/download_references.sh
-require_input "${chrom_sizes}" scripts/bash/download_references.sh
+require_input "${genome_fa}"   "cli.py download-references"
+require_input "${chrom_sizes}" "cli.py download-references"
 require_input "${folds_dir}/fold_${fold}.json" ""
 for _ds in "${datasets[@]}"; do
     require_input "${data_path}/${_ds}_${peak_type}_peaks_no_blacklist.narrowPeak" 01.0.preprocess_peaks.sh

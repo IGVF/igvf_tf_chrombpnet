@@ -43,7 +43,7 @@ data_root="${DATASET_ROOT:-${REPO_ROOT}}"
 
 # ── Shared references ─────────────────────────────────────────────────────────
 # Genome, chrom.sizes, blacklist and the motif DB all come from one place, shared
-# with scripts/bash/download_references.sh so the writer and the readers cannot
+# with `cli.py download-references` so the writer and the readers cannot
 # disagree. Override the root with REFERENCE_ROOT; see that file.
 # shellcheck source=./references.sh
 source "${REPO_ROOT}/lib/bash/references.sh" || return 1

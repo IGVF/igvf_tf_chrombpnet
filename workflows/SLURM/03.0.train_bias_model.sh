@@ -98,8 +98,8 @@ require_input "${signal_file}" 00.0.prepare_signal.sh
 require_input "${peaks_file}" 01.0.preprocess_peaks.sh
 require_input "${negatives_file}" 02.0.preprocess_nonpeaks.sh
 require_input "${fold_json}"
-require_input "${genome_fa}"   scripts/bash/download_references.sh
-require_input "${chrom_sizes}" scripts/bash/download_references.sh
+require_input "${genome_fa}"   "cli.py download-references"
+require_input "${chrom_sizes}" "cli.py download-references"
 preflight_check
 
 load_gpu_modules

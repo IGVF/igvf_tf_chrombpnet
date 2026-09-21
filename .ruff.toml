@@ -7,7 +7,7 @@
 line-length = 100
 indent-width = 4
 
-# scripts/python/detect_tn5_shift.py is vendored verbatim from scPrinter
+# lib/python/utils/shift.py is vendored verbatim from scPrinter
 # (Ruochi Zhang, buenrostrolab/scPrinter). Linting it would mean editing code we
 # do not own; changes belong upstream. It is still byte-compiled by "pixi run
 # check-py". NOTE: ruff does find a real latent bug in it -- F821 on

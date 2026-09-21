@@ -378,7 +378,9 @@ def prepare_bigwig(
                     "--minus-shift and no FASTA is needed."
                 )
             logger.info("detecting the Tn5 shift already present in the reads")
-            plus_shift, minus_shift = shift.detect_shift_raw(signal_path, genome)
+            plus_shift, minus_shift = shift.detect_shift_raw(
+                signal_path, genome, signal_type=signal_type
+            )
         logger.info("shift in the reads: %+d/%+d", plus_shift, minus_shift)
 
         # Adjust from the detected shift to chrombpnet's target: +4/-4 (ATAC),
@@ -393,9 +395,18 @@ def prepare_bigwig(
         # ── 2. pileup: ours, not chrombpnet's two external sorts ─────────────
         chromsizes = intervals.read_chromsizes(chrom_sizes)
         logger.info("filtering to the main chromosomes and counting cut sites (one pass)")
-        cuts, skipped, kept = pileup.collect_cuts(
-            signal_path, chromsizes, plus_delta, minus_delta, write_filtered=write_filtered
-        )
+        if signal_type == "bam":
+            # One cut per mapped read at its own strand's 5' end, as
+            # `bedtools bamtobed` would emit; --write-filtered does not apply.
+            if write_filtered:
+                raise click.UsageError("--write-filtered applies to fragments/tagalign, not BAM")
+            cuts, skipped, kept = pileup.collect_cuts_bam(
+                signal_path, chromsizes, plus_delta, minus_delta
+            )
+        else:
+            cuts, skipped, kept = pileup.collect_cuts(
+                signal_path, chromsizes, plus_delta, minus_delta, write_filtered=write_filtered
+            )
         md.add_param("reads_kept", kept)
         if write_filtered:
             md.add_output("filtered_reads", write_filtered)
@@ -432,6 +443,58 @@ def prepare_bigwig(
         md.add_output("bigwig", bw)
         md.add_output("sidecar", out / "prepared_bigwig.json")
         logger.info("-> %s  (pass --prepared-bigwig %s to the training steps)", bw, out)
+
+
+# ── download-references ───────────────────────────────────────────────────────
+
+
+@cli.command("download-references")
+@click.option(
+    "--reference-root",
+    default=None,
+    type=click.Path(file_okay=False),
+    help="Where to install  [default: $REFERENCE_ROOT]",
+)
+@click.option("--metadata-dir", default=None, type=click.Path(file_okay=False))
+@verbose_opt
+@quiet_opt
+def download_references(dataset, reference_root, metadata_dir, verbose, quiet):
+    """Fetch the shared genome, chrom.sizes, blacklist and motif DB.
+
+    Run once per cluster. Idempotent: files already present are left alone, and
+    the genome is checked against the md5 IGVF publishes.
+
+    Replaces `cli.py download-references`. Needs no curl and no samtools:
+    downloads go through urllib and the FASTA index through pysam. The paths it
+    writes come from utils.references, the same module the pipeline reads them
+    from, so the two cannot disagree.
+    """
+    _setup_logging(verbose, quiet)
+    if reference_root is None and dataset:
+        reference_root = cfg.load(REPO_ROOT / "config" / dataset / "config.yaml").get(
+            "reference_root"
+        )
+    ref = references.layout(reference_root)
+    meta_dir = metadata_dir or (Path(ref["REFERENCE_ROOT"]) / "metadata")
+
+    with metadata.record("download_references", out_dir=meta_dir) as md:
+        md.add_param("reference_root", ref["REFERENCE_ROOT"])
+        md.add_param("genome_accession", ref["genome_accession"])
+        md.add_param("blacklist_accession", ref["blacklist_accession"])
+        try:
+            references.fetch_all(reference_root, log=logger.info)
+        except RuntimeError as exc:
+            raise click.ClickException(str(exc)) from exc
+        for role in (
+            "genome_fa",
+            "chrom_sizes",
+            "chrom_sizes_main",
+            "blacklist",
+            "ref_db_meme",
+        ):
+            md.add_output(role, ref[role])
+        md.add_output("chrom_sizes_main_sidecar", ref["chrom_sizes_main"] + ".json")
+        md.add_param("main_chromosomes", ",".join(references.main_chromosomes()))
 
 
 # ── config ────────────────────────────────────────────────────────────────────

@@ -58,7 +58,7 @@
 #   cd workflows/SLURM && sbatch 00.0.prepare_signal.sh
 #
 # Prerequisites: signal_path in config.yaml must exist, and references must be
-#   installed (scripts/bash/download_references.sh). This step is the first
+#   installed (`cli.py download-references`). This step is the first
 #   thing to run for a dataset.
 
 # --- bootstrap: locate the repo root (identical block in every workflow step) --
@@ -94,15 +94,20 @@ metadata_start "00.0.prepare_signal"
 metadata_inputs+=( "signal=${signal_path}" "genome=${genome_fa}" "chrom_sizes=${chrom_sizes}" )
 metadata_outputs+=( "prepared_bigwig=${prepared_dir}/data_unstranded.bw" )
 metadata_params+=( "signal_type=${signal_type}" "assay=${assay}" )
+# The pileup drops cut sites on contigs absent from the chrom.sizes it is
+# given, so the MAIN-chromosome one makes the filter implicit. Fall back to
+# the full file if an older reference install predates it.
+pileup_chrom_sizes="${chrom_sizes_main:-${chrom_sizes}}"
+
 require_input "${signal_path}" ""
 if [[ "${signal_type}" != "bigwig" ]]; then
     # chrom.sizes bounds the pileup, so it is always needed for reads.
-    require_input "${chrom_sizes}" scripts/bash/download_references.sh
+    require_input "${pileup_chrom_sizes}" "cli.py download-references"
     # The genome is needed ONLY to auto-detect the Tn5 shift, which reads
     # sequence around cut sites. With plus_shift/minus_shift in the config there
     # is nothing to detect and no FASTA is touched.
     if [[ -z "${plus_shift}" || -z "${minus_shift}" ]]; then
-        require_input "${genome_fa}" scripts/bash/download_references.sh
+        require_input "${genome_fa}" "cli.py download-references"
     fi
 fi
 preflight_check
@@ -122,10 +127,14 @@ if [[ -f "${prepared_dir}/data_unstranded.bw" && -f "${prepared_dir}/prepared_bi
 fi
 
 # ── the read path: filter and convert in ONE pass ────────────────────────────
-# Dropping rows on contigs absent from chrom.sizes IS the main-chromosome
-# filter, and the pileup reads every row anyway, so there is no separate filter
-# pass. --write-filtered additionally keeps those rows as a file, which is only
-# needed for the fallback where chrombpnet reads the reads itself; set
+# The pileup drops cut sites on contigs absent from the chrom.sizes it is given,
+# so handing it the MAIN-chromosome chrom.sizes makes the filter implicit --
+# there is no separate filtering pass at all. That file is derived at download
+# time from the union of folds/*.json, i.e. exactly the chromosomes anything
+# downstream trains on.
+#
+# --write-filtered additionally keeps the surviving rows as a file, which is
+# only needed for the fallback where chrombpnet reads the reads itself; set
 # filter_main_chroms: false to skip writing it and rewrite nothing.
 filtered_args=()
 if [[ "${filter_main_chroms:-true}" == "true" ]]; then
@@ -183,7 +192,7 @@ python "${src_dir}/cli.py" prepare-bigwig \
     --signal-path  "${signal_path}" \
     --signal-type  "${signal_type}" \
     --assay        "${assay}" \
-    --chrom-sizes  "${chrom_sizes}" \
+    --chrom-sizes  "${pileup_chrom_sizes}" \
     --out-dir      "${prepared_dir}" \
     --metadata-dir "${metadata_dir}"
 

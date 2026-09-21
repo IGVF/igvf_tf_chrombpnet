@@ -80,6 +80,18 @@ _config_shell="$("${_config_python}" "${REPO_ROOT}/lib/python/utils/config.py" e
     return 1
 }
 eval "${_config_shell}" || return 1
+
+# A config-supplied reference_root has to re-derive every reference path:
+# lib/bash/references.sh already ran, from the environment's REFERENCE_ROOT.
+# The config is then re-applied so that explicit per-file overrides in it
+# (genome_fa, blacklist, ...) still win over the re-derived defaults.
+if [[ -n "${reference_root}" && "${reference_root}" != "${REFERENCE_ROOT}" ]]; then
+    REFERENCE_ROOT="${reference_root}"
+    export REFERENCE_ROOT
+    # shellcheck source=./references.sh
+    source "${REPO_ROOT}/lib/bash/references.sh" || return 1
+    eval "${_config_shell}" || return 1
+fi
 unset _config_shell _config_python
 
 # ── Required inputs ───────────────────────────────────────────────────────────

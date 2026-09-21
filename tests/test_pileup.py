@@ -300,3 +300,115 @@ def test_shift_deltas_rejects_unknown_assay():
 
     with pytest.raises(ValueError, match="ATAC or DNASE"):
         sh.shift_deltas(0, 0, "CHIP")
+
+
+# ── BAM: one cut per read, at its OWN strand ────────────────────────────────
+
+
+def _make_bam(path, chrom_sizes, reads):
+    """reads: (chrom, start, length, is_reverse)."""
+    import pysam
+
+    header = {
+        "HD": {"VN": "1.6", "SO": "coordinate"},
+        "SQ": [{"SN": c, "LN": n} for c, n in chrom_sizes.items()],
+    }
+    with pysam.AlignmentFile(str(path), "wb", header=header) as out:
+        for i, (chrom, start, length, rev) in enumerate(reads):
+            a = pysam.AlignedSegment()
+            a.query_name = f"r{i}"
+            a.query_sequence = "A" * length
+            a.flag = 16 if rev else 0
+            a.reference_id = list(chrom_sizes).index(chrom)
+            a.reference_start = start
+            a.mapping_quality = 60
+            a.cigar = [(0, length)]
+            a.query_qualities = pysam.qualitystring_to_array("I" * length)
+            out.write(a)
+    pysam.index(str(path))
+    return path
+
+
+def test_bam_cut_is_per_read_strand(tmp_path):
+    """A BAM read gives ONE cut on its own strand; a fragment gives TWO."""
+    pytest.importorskip("pysam")
+    bam = _make_bam(
+        tmp_path / "r.bam", {"chr1": 1000}, [("chr1", 100, 100, False), ("chr1", 100, 100, True)]
+    )
+    cuts, skipped, kept = pileup.collect_cuts_bam(bam, {"chr1": 1000}, 4, -4)
+    assert kept == 2 and skipped == {}
+    assert sorted(cuts["chr1"].tolist()) == [104, 195]  # start+4 ; end-4-1
+
+
+@needs_tools
+def test_bam_matches_bedtools_bamtobed(tmp_path):
+    """The oracle for a BAM is `bedtools bamtobed`, which is what chrombpnet uses."""
+    pytest.importorskip("pysam")
+    CSB = {"chr1": 2000}
+    rng = np.random.default_rng(3)
+    reads = [
+        ("chr1", int(s), 60, bool(rng.integers(0, 2)))
+        for s in sorted(rng.integers(50, 1800, size=120))
+    ]
+    bam = _make_bam(tmp_path / "r.bam", CSB, reads)
+
+    # oracle: bamtobed | chrombpnet's awk+genomecov
+    bed = subprocess.run(
+        ["bedtools", "bamtobed", "-i", str(bam)], capture_output=True, text=True, check=True
+    ).stdout
+    cs = tmp_path / "cs"
+    cs.write_text("".join(f"{c}\t{n}\n" for c, n in CSB.items()))
+    bg = tmp_path / "o.bedGraph"
+    with open(bg, "w") as fh:
+        subprocess.run(
+            ["bash", "-c", _command().format(4, -4, str(cs))],
+            input=bed,
+            text=True,
+            stdout=fh,
+            check=True,
+        )
+    subprocess.run(["bedGraphToBigWig", str(bg), str(cs), str(tmp_path / "o.bw")], check=True)
+
+    cuts, _s, _k = pileup.collect_cuts_bam(bam, CSB, 4, -4)
+    pileup.write_bigwig(tmp_path / "u.bw", CSB, cuts)
+
+    import pyBigWig
+
+    a, b = pyBigWig.open(str(tmp_path / "o.bw")), pyBigWig.open(str(tmp_path / "u.bw"))
+    for c, n in CSB.items():
+        assert np.array_equal(
+            np.nan_to_num(np.array(a.values(c, 0, n))),
+            np.nan_to_num(np.array(b.values(c, 0, n))),
+        )
+
+
+def test_bam_skips_contigs_absent_from_chrom_sizes(tmp_path):
+    pytest.importorskip("pysam")
+    bam = _make_bam(
+        tmp_path / "r.bam",
+        {"chr1": 1000, "chrUn": 500},
+        [("chr1", 100, 50, False), ("chrUn", 100, 50, False)],
+    )
+    cuts, skipped, kept = pileup.collect_cuts_bam(bam, {"chr1": 1000}, 4, -4)
+    assert set(cuts) == {"chr1"} and skipped == {"chrUn": 1} and kept == 1
+
+
+# ── the main-chromosome chrom.sizes comes from the folds ────────────────────
+
+
+def test_main_chromosomes_come_from_the_folds():
+    from utils import references
+
+    main = references.main_chromosomes()
+    assert main[:3] == ["chr1", "chr2", "chr3"]
+    assert main[-2:] == ["chrX", "chrY"]
+    assert "chrM" not in main, "no fold mentions chrM, so it is not a main chromosome"
+    assert len(main) == 24
+
+
+def test_layout_exposes_a_main_chrom_sizes():
+    from utils import references
+
+    lay = references.layout("/tmp/refs")
+    assert lay["chrom_sizes_main"].endswith(".main.tsv")
+    assert lay["chrom_sizes_main"] != lay["chrom_sizes"]
