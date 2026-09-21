@@ -71,6 +71,10 @@ gpu_env
 peaks_file="${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
 
 metadata_inputs+=( "peaks=${peaks_file}" "genome=${genome_fa}" )
+require_input "${peaks_file}"  01.0.preprocess_peaks.sh
+require_input "${genome_fa}"   scripts/bash/download_references.sh
+require_input "${chrom_sizes}" scripts/bash/download_references.sh
+preflight_check
 metadata_params+=( "dataset=${dataset}" )
 out_dir="${predictions_dir}/${dataset}_${peak_type}"
 mkdir -p "${out_dir}"

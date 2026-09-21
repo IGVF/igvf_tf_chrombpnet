@@ -78,6 +78,7 @@ metadata_inputs+=( "bias_model=${model_file}" "genome=${genome_fa}" "fold_json=$
 require_input "${model_file}" 03.0.train_bias_model.sh
 require_input "${genome_fa}" scripts/bash/download_references.sh
 require_input "${fold_json}"
+require_input "${chrom_sizes}" scripts/bash/download_references.sh
 preflight_check
 
 load_gpu_modules

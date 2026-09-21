@@ -85,8 +85,15 @@ metadata_inputs+=( "signal=${signal_path}" "genome=${genome_fa}" "chrom_sizes=${
 metadata_outputs+=( "prepared_bigwig=${prepared_dir}/data_unstranded.bw" )
 metadata_params+=( "signal_type=${signal_type}" "assay=${assay}" )
 require_input "${signal_path}" ""
-require_input "${genome_fa}"   scripts/bash/download_references.sh
-require_input "${chrom_sizes}" scripts/bash/download_references.sh
+if [[ "${signal_type}" != "bigwig" ]]; then
+    # Only the read->bigwig conversion needs these, and a bigwig signal skips it.
+    #   genome_fa   : chrombpnet auto-detects the Tn5 shift by building PWMs from
+    #                 the sequence around cut sites (auto_shift_detect.compute_shift),
+    #                 and stream_filtered_tagaligns reads it too.
+    #   chrom_sizes : bedtools genomecov -g, and bedGraphToBigWig.
+    require_input "${genome_fa}"   scripts/bash/download_references.sh
+    require_input "${chrom_sizes}" scripts/bash/download_references.sh
+fi
 preflight_check
 
 # No `ml` here. The conversion shells out to bedtools and bedGraphToBigWig

@@ -77,6 +77,15 @@ fi
 metadata_start "04.0.train_full_model"
 metadata_inputs+=( "bias_model=${bias_model}" )
 require_input "${bias_model}" 03.0.train_bias_model.sh
+require_input "${signal_path}" 00.0.prepare_signal.sh
+require_input "${genome_fa}"   scripts/bash/download_references.sh
+require_input "${chrom_sizes}" scripts/bash/download_references.sh
+require_input "${folds_dir}/fold_${fold}.json" ""
+for _ds in "${datasets[@]}"; do
+    require_input "${data_path}/${_ds}_${peak_type}_peaks_no_blacklist.narrowPeak" 01.0.preprocess_peaks.sh
+    require_input "${data_path}/${_ds}/output_${peak_type}_fold_${fold}_negatives.bed" 02.0.preprocess_nonpeaks.sh
+done
+unset _ds
 preflight_check
 
 load_gpu_modules
@@ -104,14 +113,9 @@ for dataset in "${datasets[@]}"; do
     fi
 
     set_signal_args
-signal_file="${signal_path}"
     peaks_file="${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
     negatives_file="${data_path}/${dataset}/output_${peak_type}_fold_${fold}_negatives.bed"
     fold_json="${folds_dir}/fold_${fold}.json"
-
-    for f in "${signal_file}" "${peaks_file}" "${negatives_file}" "${fold_json}"; do
-        [[ -f "${f}" ]] || { echo "  [${dataset} fold ${fold}] Missing input: ${f}" >&2; exit 1; }
-    done
 
     rm -rf "${out_dir}"
     mkdir -p "${out_dir}"
