@@ -45,6 +45,11 @@ set -euo pipefail
 
 mkdir -p "${data_path}"
 
+# The SAME chrom.sizes the signal pileup used, so peaks and signal live on
+# the same contigs. A peak on a scaffold the bigwig does not cover would be
+# a training region with no data under it.
+peak_chrom_sizes="${chrom_sizes_main:-${chrom_sizes}}"
+
 metadata_start "01.0.preprocess_peaks"
 
 
@@ -56,16 +61,16 @@ for dataset in "${datasets[@]}"; do
     python "${src_dir}/cli.py" preprocess-peaks \
         --peaks        "${regions}" \
         --blacklist    "${blacklist}" \
-        --chrom-sizes  "${chrom_sizes}" \
+        --chrom-sizes  "${peak_chrom_sizes}" \
         --input-window "${chrombpnet_input_window}" \
         --out-dir      "${data_path}" \
         --prefix       "${dataset}_${peak_type}"
     metadata_inputs+=( "regions=${regions}" )
     metadata_inputs+=( "blacklist=${blacklist}" )
-    metadata_inputs+=( "chrom_sizes=${chrom_sizes}" )
+    metadata_inputs+=( "chrom_sizes=${peak_chrom_sizes}" )
     require_input "${regions}" ""
     require_input "${blacklist}" "cli.py download-references"
-require_input "${chrom_sizes}" "cli.py download-references"
+require_input "${peak_chrom_sizes}" "cli.py download-references"
 preflight_check
 
 activate_env "${preprocess_conda}"

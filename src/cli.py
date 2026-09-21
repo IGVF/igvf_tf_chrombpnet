@@ -173,6 +173,14 @@ def preprocess_peaks(
         bl = intervals.slop(bl, slop_bp, chromsizes)
         logger.info(f"blacklist extended +/-{slop_bp}bp (half the {input_window}bp window)")
 
+        # Keep peaks on the same contigs the signal covers. With the
+        # main-chromosome chrom.sizes this drops scaffolds and chrM, which the
+        # bigwig has no signal for.
+        peaks_pr, off_contig = intervals.restrict_to_chromosomes(peaks_pr, chromsizes)
+        if off_contig:
+            logger.warning("%d peak(s) dropped: on contigs absent from %s", off_contig, chrom_sizes)
+        md.add_param("peaks_off_contig", off_contig)
+
         kept = intervals.remove_blacklisted(peaks_pr, bl)
         md.add_param("peaks_in", len(peaks_pr))
         md.add_param("peaks_kept", len(kept))
@@ -180,6 +188,17 @@ def preprocess_peaks(
         logger.info(
             f"{len(peaks_pr) - len(kept)} peak(s) hit the slopped blacklist, {len(kept)} kept"
         )
+
+        # chrombpnet would drop these silently at contribs time; do it here so
+        # the peak set is stable from this step onward.
+        kept, overhanging = intervals.drop_windows_off_chromosome(kept, chromsizes, input_window)
+        if overhanging:
+            logger.warning(
+                "%d peak(s) dropped: their %dbp model window runs off a chromosome end",
+                overhanging,
+                input_window,
+            )
+        md.add_param("peaks_window_overhang", overhanging)
 
         if len(kept) == 0:
             raise click.ClickException(

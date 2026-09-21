@@ -94,6 +94,47 @@ def slop(ranges: pr.PyRanges, bp: int, chromsizes: dict[str, int]) -> pr.PyRange
     return ranges.extend_ranges(ext=bp).clip_ranges(chromsizes=chromsizes)
 
 
+def summit_offsets(peaks: pr.PyRanges):
+    """narrowPeak summit: the midpoint, as a floored offset from Start.
+
+    One definition, used both to write the summit column and to decide whether
+    a peak's model window fits on the chromosome -- those two must agree or the
+    window check tests a different position from the one chrombpnet reads.
+    """
+    return (peaks["End"] - peaks["Start"]) // 2
+
+
+def restrict_to_chromosomes(peaks: pr.PyRanges, chromsizes: dict[str, int]):
+    """Drop peaks on contigs absent from ``chromsizes``.
+
+    Handed the same main-chromosome chrom.sizes the signal pileup uses, this
+    keeps peaks and signal on the same contigs. Without it a peak can sit on a
+    scaffold the bigwig does not cover, and chrombpnet trains on a region with
+    no data under it.
+    """
+    keep = peaks["Chromosome"].astype(str).isin(set(chromsizes)).to_numpy()
+    return peaks[keep], int((~keep).sum())
+
+
+def drop_windows_off_chromosome(peaks: pr.PyRanges, chromsizes: dict[str, int], input_window: int):
+    """Drop peaks whose model input window runs past either chromosome end.
+
+    chrombpnet extracts ``input_window`` bases centred on ``start + summit``.
+    When that window overhangs, ``chrombpnet contribs_bw`` silently drops the
+    peak later -- which is why interpretation.interpreted_regions.bed has fewer
+    rows than the peak file it was given, and why steps 07/10 have to take
+    their regions from that file instead. Dropping them here instead makes the
+    peak set stable from step 01 onward, and counts them out loud.
+    """
+    half = input_window // 2
+    centre = (peaks["Start"] + summit_offsets(peaks)).to_numpy()
+    # PyRanges keeps Chromosome as a pandas Categorical, and mapping one yields
+    # a Categorical that cannot be compared with <=. Go through plain arrays.
+    lengths = peaks["Chromosome"].astype(str).map(chromsizes).to_numpy(dtype="int64")
+    fits = (centre - half >= 0) & (centre + half <= lengths)
+    return peaks[fits], int((~fits).sum())
+
+
 def to_narrowpeak(peaks: pr.PyRanges) -> pd.DataFrame:
     """Build the 10-column narrowPeak chrombpnet consumes, summit at the midpoint.
 
@@ -118,7 +159,7 @@ def to_narrowpeak(peaks: pr.PyRanges) -> pd.DataFrame:
     out["signal"] = 0
     out["pvalue"] = -1
     out["qvalue"] = -1
-    out["summit"] = (out["End"] - out["Start"]) // 2
+    out["summit"] = (out["End"] - out["Start"]) // 2  # see summit_offsets()
     return out[NARROWPEAK_OUT_COLUMNS]
 
 

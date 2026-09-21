@@ -195,3 +195,74 @@ def test_peak_beyond_the_window_survives():
     bl = ranges(("chr1", 50_000, 50_100))
     slopped = intervals.slop(bl, 2114 // 2, {"chr1": 100_000})
     assert len(intervals.remove_blacklisted(peaks, slopped)) == 1
+
+
+# ── peaks live on the same contigs as the signal ────────────────────────────
+
+
+def test_peaks_on_unlisted_contigs_are_dropped():
+    """Handed the main-chromosome chrom.sizes, this is the peak-side filter."""
+    peaks = ranges(("chr1", 100, 200), ("chrM", 10, 50), ("chrUn_GL1", 10, 50))
+    kept, dropped = intervals.restrict_to_chromosomes(peaks, {"chr1": 1000})
+    assert list(kept["Chromosome"]) == ["chr1"]
+    assert dropped == 2
+
+
+def test_restrict_keeps_everything_when_all_contigs_listed():
+    peaks = ranges(("chr1", 100, 200), ("chr2", 10, 50))
+    kept, dropped = intervals.restrict_to_chromosomes(peaks, {"chr1": 1000, "chr2": 1000})
+    assert len(kept) == 2 and dropped == 0
+
+
+# ── the model window has to fit on the chromosome ───────────────────────────
+
+
+def test_peak_whose_window_overhangs_the_start_is_dropped():
+    """chrombpnet would drop it silently at contribs time; drop it here instead."""
+    peaks = ranges(("chr1", 0, 100))  # summit 50, window [50-1057, 50+1057)
+    kept, dropped = intervals.drop_windows_off_chromosome(peaks, {"chr1": 100_000}, 2114)
+    assert len(kept) == 0 and dropped == 1
+
+
+def test_peak_whose_window_overhangs_the_end_is_dropped():
+    peaks = ranges(("chr1", 9_900, 10_000))  # centre 9950, +1057 > 10000
+    kept, dropped = intervals.drop_windows_off_chromosome(peaks, {"chr1": 10_000}, 2114)
+    assert len(kept) == 0 and dropped == 1
+
+
+def test_peak_with_room_on_both_sides_survives():
+    peaks = ranges(("chr1", 50_000, 50_200))
+    kept, dropped = intervals.drop_windows_off_chromosome(peaks, {"chr1": 100_000}, 2114)
+    assert len(kept) == 1 and dropped == 0
+
+
+def test_window_check_uses_the_same_summit_as_the_narrowpeak_column():
+    """If these disagree, the check tests a different base from the one read."""
+    peaks = ranges(("chr1", 100, 301))
+    assert list(intervals.summit_offsets(peaks)) == list(intervals.to_narrowpeak(peaks)["summit"])
+
+
+def test_window_boundary_is_inclusive_of_an_exactly_fitting_peak():
+    # centre at exactly 1057 -> window starts at 0, which fits
+    peaks = ranges(("chr1", 1_007, 1_107))  # summit 50 -> centre 1057
+    kept, dropped = intervals.drop_windows_off_chromosome(peaks, {"chr1": 100_000}, 2114)
+    assert len(kept) == 1 and dropped == 0
+
+
+def test_peak_filters_work_on_a_real_bed(tmp_path):
+    """pr.read_bed makes Chromosome a Categorical; a plain DataFrame does not.
+
+    The filters compared a mapped Categorical with <=, which raises. Unit tests
+    built from DataFrames missed it entirely, so this one goes through the file
+    reader the CLI actually uses.
+    """
+    bed = tmp_path / "p.bed"
+    bed.write_text("chr1\t1000\t1200\nchr1\t9000\t9100\nchrM\t10\t50\n")
+    peaks = intervals.read_bed(bed)
+    cs = {"chr1": 248_956_422}
+
+    kept, off = intervals.restrict_to_chromosomes(peaks, cs)
+    assert off == 1 and len(kept) == 2
+
+    fitted, over = intervals.drop_windows_off_chromosome(kept, cs, 2114)
+    assert over == 0 and len(fitted) == 2
