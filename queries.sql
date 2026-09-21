@@ -112,5 +112,35 @@ SELECT key, value, count(*) AS n, list(DISTINCT dataset) AS datasets
 FROM run_params WHERE step = '00.1.preprocess_peaks' AND key = 'input_window'
 GROUP BY key, value;
 
+
+-- ─── dataset triage, before spending GPU time ────────────────────────────────
+
+-- Rank datasets by how well signal separates peaks from their GC-matched
+-- background (02.0). This is the task ChromBPNet is trained on, so a value
+-- near 0.5 means the dataset has nothing to teach it. Read alongside
+-- tss_enrichment: low on both usually means the signal and the peaks came from
+-- different samples.
+WITH qc AS (
+    SELECT dataset, key, TRY_CAST(value AS DOUBLE) AS v
+    FROM run_params WHERE step = 'qc_signal'
+)
+SELECT dataset,
+       max(v) FILTER (key = 'auroc_peaks_vs_nonpeaks')            AS auroc,
+       max(v) FILTER (key = 'signal_enrichment_peak_over_nonpeak') AS enrichment,
+       max(v) FILTER (key = 'tss_enrichment')                      AS tsse,
+       max(v) FILTER (key = 'frac_peaks_zero_signal')              AS frac_empty_peaks,
+       max(v) FILTER (key = 'total_insertions')                    AS insertions
+FROM qc GROUP BY dataset ORDER BY auroc;
+
+-- The negatives that a given model was trained on are reproducible only from
+-- the seed AND the ChromBPNet version that consumed it.
+SELECT r.dataset, r.started_at, p.value AS seed, t.version AS chrombpnet
+FROM runs r
+JOIN run_params p ON p.run_id = r.run_id AND p.key = 'seed'
+LEFT JOIN (SELECT run_id, t.version FROM runs, UNNEST(tools) AS u(t)
+           WHERE t.name = 'chrombpnet') t ON t.run_id = r.run_id
+WHERE r.step = '01.0.preprocess_nonpeaks' ORDER BY r.started_at DESC;
+
+
 -- Export anything above as TSV (no second on-disk format needed):
 --   COPY (SELECT * FROM run_files) TO 'run_files.tsv' (HEADER, DELIMITER '\t');

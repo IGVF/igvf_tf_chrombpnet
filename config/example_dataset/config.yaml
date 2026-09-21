@@ -93,6 +93,15 @@ peak_type: all
 # Use ["0"] for a quick single-fold test run.
 folds: ["0", "1", "2", "3", "4"]
 
+# GC-matched negatives (01.0) and the QC that compares against them (02.0).
+# All four are ChromBPNet's own defaults; they are listed because the negatives
+# are training data, so the seed is what makes a run reproducible. Every run
+# records the values it used regardless of whether they are set here.
+# nonpeak_seed: 1234        # -s   passed to `chrombpnet prep nonpeaks`
+# neg_to_pos_ratio: 2       # -npr negatives per peak in train/valid (test is 1:1)
+# nonpeak_stride: 1000      # -st  genome-wide GC bin stride
+# qc_compare_window: 1000   # fixed window for the peak-vs-background comparison
+
 # Bias sweep (03.0). Positional: bias_factors[i] pairs with bias_suffixes_sweep[i].
 # The array is len(bias_sweep_folds) x len(bias_factors) GPU jobs; uncomment
 # bias_sweep_folds to pilot on fewer folds first. `cli.py config validate`

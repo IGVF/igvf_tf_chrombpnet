@@ -86,8 +86,8 @@ cd workflows/SLURM
 
 sbatch 00.0.prepare_signal.sh          # CPU: filter + convert once, so GPU jobs skip it
 sbatch 00.1.preprocess_peaks.sh
-sbatch 01.0.qc_signal_peaks.sh        # read this before spending GPU time
-sbatch 02.0.preprocess_nonpeaks.sh
+sbatch 01.0.preprocess_nonpeaks.sh    # GC-matched background, via chrombpnet
+sbatch 02.0.qc_signal_peaks.sh        # read this before spending GPU time
 sbatch 03.0.train_bias_model.sh
 bash   03.1.select_bias.sh             # not a batch job; copy the winners into config.yaml after
 sbatch 03.2.qc_selected_bias.sh

@@ -51,7 +51,21 @@ mkdir -p "${data_path}"
 peak_chrom_sizes="${chrom_sizes_main:-${chrom_sizes}}"
 
 metadata_start "00.1.preprocess_peaks"
+metadata_inputs+=( "regions=${regions}" )
+metadata_inputs+=( "blacklist=${blacklist}" )
+metadata_inputs+=( "chrom_sizes=${peak_chrom_sizes}" )
+metadata_params+=( "peak_type=${peak_type}" "input_window=${chrombpnet_input_window}" )
+for dataset in "${datasets[@]}"; do
+    metadata_outputs+=( "narrowpeak_${dataset}=${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak" )
+    metadata_outputs+=( "bed_${dataset}=${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.bed" )
+done
 
+require_input "${regions}" ""
+require_input "${blacklist}" "cli.py download-references"
+require_input "${peak_chrom_sizes}" "cli.py download-references"
+preflight_check
+
+activate_env "${preprocess_conda}"
 
 for dataset in "${datasets[@]}"; do
     echo "Processing peaks for ${dataset}..."
@@ -65,18 +79,6 @@ for dataset in "${datasets[@]}"; do
         --input-window "${chrombpnet_input_window}" \
         --out-dir      "${data_path}" \
         --prefix       "${dataset}_${peak_type}"
-    metadata_inputs+=( "regions=${regions}" )
-    metadata_inputs+=( "blacklist=${blacklist}" )
-    metadata_inputs+=( "chrom_sizes=${peak_chrom_sizes}" )
-    require_input "${regions}" ""
-    require_input "${blacklist}" "cli.py download-references"
-require_input "${peak_chrom_sizes}" "cli.py download-references"
-preflight_check
-
-activate_env "${preprocess_conda}"
-    metadata_outputs+=( "narrowpeak=${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak" )
-    metadata_outputs+=( "bed=${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.bed" )
-    metadata_params+=( "peak_type=${peak_type}" "input_window=${chrombpnet_input_window}" )
 done
 
 echo "Done: 00.1.preprocess_peaks.sh"

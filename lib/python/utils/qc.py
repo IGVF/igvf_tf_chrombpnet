@@ -1,9 +1,18 @@
 """QC on the signal and peaks that are about to be handed to ChromBPNet.
 
-Runs between 01 (peaks) and 02 (non-peaks), on the two artifacts that actually
-go into training: the prepared bigwig of Tn5 insertion counts and the filtered
-narrowPeak. QC'ing those rather than the upstream fragments means the numbers
-describe what the model will see, including every filter applied along the way.
+Runs after 01 (non-peaks) and before any GPU time, on the three artifacts that
+actually go into training: the prepared bigwig of Tn5 insertion counts, the
+filtered narrowPeak, and the GC-matched negatives. QC'ing those rather than the
+upstream fragments means the numbers describe what the model will see, after
+every filter.
+
+Two halves, and the second is why this runs after 01 rather than before it:
+
+- **individual** -- is the signal accessibility data, and does it agree with
+  the peaks? (TSS enrichment, profiles, depth, signal per peak)
+- **comparative** -- can signal tell a peak from its own GC-matched
+  background? That is precisely the question training poses, so asking it here
+  says whether the dataset is worth training on at all.
 
 Deliberately not SnapATAC2. That is a single-cell toolkit: ``metrics.tsse``
 wants an AnnData built by ``import_fragments`` and reports per-cell scores.
@@ -23,9 +32,12 @@ import numpy as np
 
 __all__ = [
     "aggregate_profile",
+    "auroc",
     "peak_signal_distribution",
+    "peak_vs_nonpeak_signal",
     "signal_summary",
     "tss_enrichment",
+    "window_totals",
 ]
 
 #: Profiles are averaged over at most this many regions. The aggregate shape
@@ -182,6 +194,131 @@ def signal_summary(bigwig):
         "n_chromosomes": len(chroms),
         "genome_bases": int(sum(chroms.values())),
     }
+
+
+# -- comparative: peaks against their own GC-matched background ---------------
+# The negatives from 01 are the other half of what ChromBPNet trains on. They
+# are matched to the peaks on GC and drawn from the same fold chromosomes, so
+# the ONE thing that should separate them is accessibility. If it does not, the
+# model has nothing to learn from this dataset and the GPU time is wasted --
+# which is the whole reason this QC runs before training rather than after.
+
+
+def _average_ranks(x: np.ndarray) -> np.ndarray:
+    """Ranks with ties averaged, like ``scipy.stats.rankdata``.
+
+    Written out rather than imported: ties are the common case here (peaks and
+    background alike are full of zero-signal windows, which all tie at 0) and
+    scipy is not installed in every environment this runs in.
+    """
+    order = np.argsort(x, kind="mergesort")
+    sx = x[order]
+    n = x.size
+    is_new = np.empty(n, dtype=bool)
+    is_new[0] = True
+    np.not_equal(sx[1:], sx[:-1], out=is_new[1:])
+    starts = np.flatnonzero(is_new)
+    ends = np.append(starts[1:], n) - 1
+    ranks = np.empty(n, dtype=np.float64)
+    ranks[order] = ((starts + ends) / 2.0 + 1.0)[np.cumsum(is_new) - 1]
+    return ranks
+
+
+def auroc(positive, negative) -> float | None:
+    """Probability a random positive outscores a random negative; ties count half.
+
+    The Mann-Whitney U form, so it stays exact under the heavy tying that
+    zero-signal windows produce.
+    """
+    positive = np.asarray(positive, dtype=np.float64)
+    negative = np.asarray(negative, dtype=np.float64)
+    if positive.size == 0 or negative.size == 0:
+        return None
+    ranks = _average_ranks(np.concatenate([positive, negative]))
+    n_pos, n_neg = positive.size, negative.size
+    u = ranks[:n_pos].sum() - n_pos * (n_pos + 1) / 2.0
+    return float(u / (n_pos * n_neg))
+
+
+def window_totals(
+    bigwig,
+    regions,
+    window: int,
+    kind: str = "narrowpeak",
+    max_regions: int = DEFAULT_MAX_REGIONS,
+    seed: int = 0,
+) -> np.ndarray:
+    """Total insertions in a FIXED ``window`` centred on each region's summit.
+
+    Fixed width is the point. :func:`peak_signal_distribution` sums each peak
+    over its own called width, which describes the peaks well but cannot
+    compare them to anything: the negatives are all ``inputlen`` wide, so a
+    300bp peak would lose to a background window on width alone. Here both
+    sides get the same number of bases, so what differs is signal density.
+
+    Both peaks and chrombpnet's negatives are 10-column BED with the summit
+    offset in column 10, so ``kind="narrowpeak"`` centres both correctly.
+    """
+    centres = _centres(regions, kind)
+    rng = np.random.default_rng(seed)
+    if len(centres) > max_regions:
+        idx = rng.choice(len(centres), size=max_regions, replace=False)
+        centres = [centres[i] for i in sorted(idx)]
+
+    half = window // 2
+    bw = _open(bigwig)
+    try:
+        totals = []
+        for chrom, centre in centres:
+            v = _values(bw, chrom, centre - half, centre + half)
+            if v is not None:  # drop, rather than zero, a window off the end
+                totals.append(float(v.sum()))
+    finally:
+        bw.close()
+    return np.asarray(totals, dtype=np.float64)
+
+
+def peak_vs_nonpeak_signal(bigwig, peaks, nonpeaks, window: int = 1000, **kw):
+    """How well signal alone separates peaks from their GC-matched background.
+
+    ``window`` defaults to 1000, ChromBPNet's OUTPUT window -- the span the
+    counts head is asked to predict -- so the separation measured here is the
+    same quantity the trained model gets scored on.
+
+    Returns ``(metrics, peak_totals, nonpeak_totals)``. The headline is
+    ``auroc_peaks_vs_nonpeaks``: 1.0 is perfect separation, 0.5 means signal
+    cannot tell a peak from background and there is nothing to train on.
+    """
+    pos = window_totals(bigwig, peaks, window, **kw)
+    neg = window_totals(bigwig, nonpeaks, window, **kw)
+    if pos.size == 0 or neg.size == 0:
+        return (
+            {"n_peaks_compared": int(pos.size), "n_nonpeaks_compared": int(neg.size)},
+            pos,
+            neg,
+        )
+
+    pos_median, neg_median = float(np.median(pos)), float(np.median(neg))
+    metrics = {
+        "compare_window": int(window),
+        "n_peaks_compared": int(pos.size),
+        "n_nonpeaks_compared": int(neg.size),
+        "peak_signal_mean": float(pos.mean()),
+        "peak_signal_median": pos_median,
+        "nonpeak_signal_mean": float(neg.mean()),
+        "nonpeak_signal_median": neg_median,
+        "signal_enrichment_peak_over_nonpeak": float(pos.mean() / neg.mean())
+        if neg.mean() > 0
+        else None,
+        "auroc_peaks_vs_nonpeaks": auroc(pos, neg),
+        # Background windows as accessible as a typical peak. A few percent is
+        # expected -- there is open chromatin outside called peaks -- but a
+        # large fraction means the peak calls left real signal behind.
+        "frac_nonpeaks_above_peak_median": float((neg >= pos_median).mean()),
+        "frac_nonpeaks_zero_signal": float((neg == 0).mean()),
+        "frac_peaks_below_nonpeak_median": float((pos <= neg_median).mean()),
+    }
+    return metrics, pos, neg
 
 
 def peak_width_summary(peaks):

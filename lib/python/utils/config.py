@@ -225,6 +225,19 @@ def resolve(config: dict) -> dict:
     out.setdefault("assay", "ATAC")
     out.setdefault("peak_type", "all")
 
+    # GC-matched negatives (01.0). These mirror `chrombpnet prep nonpeaks`
+    # defaults; they live here so a dataset can override them in config.yaml
+    # and so every run records the values it actually used -- the negatives are
+    # training data, and the seed is what makes them reproducible.
+    out.setdefault("nonpeak_seed", 1234)
+    out.setdefault("neg_to_pos_ratio", 2)
+    out.setdefault("nonpeak_stride", 1000)
+
+    # QC (02.0) compares peaks to negatives over one fixed window. 1000 is
+    # ChromBPNet's OUTPUT window -- the span its counts head predicts -- so the
+    # separation measured is the one the model gets scored on.
+    out.setdefault("qc_compare_window", 1000)
+
     if out.get("signal_path"):
         out["signal_type"] = signal_type_for(out["signal_path"])
         out["signal_is_prepared_bigwig"] = out["signal_type"] == "bigwig"

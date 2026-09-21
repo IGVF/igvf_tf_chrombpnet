@@ -87,7 +87,7 @@ Steps declare inputs with the step that produces them and stop before doing work
 
 ```bash
 require_input "${peaks_file}"     00.1.preprocess_peaks.sh
-require_input "${negatives_file}" 02.0.preprocess_nonpeaks.sh
+require_input "${negatives_file}" 01.0.preprocess_nonpeaks.sh
 preflight_check
 ```
 
@@ -127,8 +127,8 @@ derived output paths live in `config.sh`.
 |---|---|---|
 | `00.0.prepare_signal.sh` | — (loops internally) | no (hardcoded paths) |
 | `00.1.preprocess_peaks.sh` | — | yes |
-| `01.0.qc_signal_peaks.sh` | — | yes |
-| `02.0.preprocess_nonpeaks.sh` | — | yes |
+| `01.0.preprocess_nonpeaks.sh` | — | yes |
+| `02.0.qc_signal_peaks.sh` | — | yes |
 | `03.0.train_bias_model.sh` | `fold_idx * n_factors + factor_idx` | yes |
 | `03.1.select_bias.sh` | no SBATCH header — run with `bash` | yes |
 | `03.2.qc_selected_bias.sh` | fold | yes |
@@ -270,13 +270,43 @@ none of them execute pipeline logic. Don't claim a step was verified beyond that
     signal; the trap only survives SIGTERM.
   - Emission never fails a step, and `script_url` is misleading when `git.dirty`
     is true — filter on it. Query recipes are in `queries.sql`.
-- **QC runs on the artifacts, not the inputs.** `01.1` reads the prepared bigwig
-  and the filtered narrowPeak, so every number describes what ChromBPNet will
-  actually see after all filtering. It is advisory and never fails the pipeline;
-  the two numbers worth reading are `tss_enrichment` (near 1 means the signal is
-  not accessibility, or does not match the annotation) and
-  `frac_peaks_zero_signal` (peaks with no evidence under them, usually meaning
-  peaks and signal came from different samples).
+- **QC runs on the artifacts, not the inputs.** `02.0` reads the prepared
+  bigwig, the filtered narrowPeak and the negatives, so every number describes
+  what ChromBPNet will actually see after all filtering. It is advisory and
+  never fails the pipeline. Two halves:
+  - *individual* — `tss_enrichment` (near 1 means the signal is not
+    accessibility, or does not match the annotation) and
+    `frac_peaks_zero_signal` (peaks with no evidence under them, usually
+    meaning peaks and signal came from different samples).
+  - *comparative* — `auroc_peaks_vs_nonpeaks`, how well signal alone separates
+    peaks from their own GC-matched background. That is the task training
+    poses, so a value near 0.5 means no GPU time is worth spending. Both sides
+    are summed over one FIXED window (`qc_compare_window`, default 1000 =
+    ChromBPNet's output window) via `qc.window_totals`, because the negatives
+    are all 2114bp and summing peaks over their own called widths would decide
+    the comparison on peak-caller settings rather than on signal.
+- **QC comes after the negatives (02 after 01), not before.** The comparative
+  half needs the negatives to exist, so the order is
+  `00.0 signal → 00.1 peaks → 01.0 non-peaks → 02.0 QC → 03/04 GPU`. QC still
+  runs before anything expensive.
+- **`01.0` deliberately calls `chrombpnet prep nonpeaks` rather than a port.**
+  The negatives *are* training data — half of what every model in 03 and 04
+  sees — and they come out of a seeded Python RNG, so a reimplementation that
+  differed in the order it consumed `random` would silently change every model
+  and surface months later as unexplained metric drift. Contrast `00.0`, whose
+  bigwig is verifiable byte-for-byte against ChromBPNet's output, which is why
+  a faster path there is free. Consequences to know:
+  - ChromBPNet does `os.makedirs(prefix + "_auxiliary/", exist_ok=False)`, so a
+    killed job leaves that directory and every retry dies on `FileExistsError`
+    before doing any work. `01.0` clears a stale one before each fold.
+  - The genome-wide GC scan (~3M windows, pure Python) is redone per fold,
+    because the auxiliary directory is per-prefix. That is the cost of running
+    their code unchanged; it is CPU-only and paid once per dataset.
+  - It needs the FULL `chrom_sizes`, not `chrom_sizes_main`: the blacklist
+    carries non-main contigs and `bedtools slop` errors on a contig it cannot
+    find. The fold JSON already confines sampling to main chromosomes.
+  - It shells out to bedtools, so it activates `${CONDA_ENV}` (the chrombpnet
+    env), not `${preprocess_conda}`.
 - **Not SnapATAC2, deliberately.** `snapatac2.metrics.tsse` needs an AnnData from
   `import_fragments` and reports per-cell scores. This pipeline trains on
   pseudobulk, so a per-cell distribution does not answer "is this worth

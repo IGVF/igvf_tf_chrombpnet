@@ -530,7 +530,21 @@ def download_references(dataset, reference_root, metadata_dir, verbose, quiet):
     "--peaks",
     required=True,
     type=click.Path(exists=True, dir_okay=False),
-    help="Filtered narrowPeak (01.0 output).",
+    help="Filtered narrowPeak (00.1 output).",
+)
+@click.option(
+    "--negatives",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="GC-matched negatives BED (01.0 output). Enables the comparative QC.",
+)
+@click.option(
+    "--compare-window",
+    type=int,
+    default=1000,
+    show_default=True,
+    help="Fixed window, centred on each summit, for comparing peaks to negatives. "
+    "Defaults to ChromBPNet's output window, the span its counts head predicts.",
 )
 @click.option(
     "--tss",
@@ -558,7 +572,18 @@ def download_references(dataset, reference_root, metadata_dir, verbose, quiet):
 @verbose_opt
 @quiet_opt
 def qc_signal(
-    bigwig, peaks, tss, input_window, min_insertions, out_dir, prefix, metadata_dir, verbose, quiet
+    bigwig,
+    peaks,
+    negatives,
+    compare_window,
+    tss,
+    input_window,
+    min_insertions,
+    out_dir,
+    prefix,
+    metadata_dir,
+    verbose,
+    quiet,
 ):
     """QC the signal and peaks about to be handed to ChromBPNet.
 
@@ -566,8 +591,13 @@ def qc_signal(
     and the filtered narrowPeak -- so every number describes what the model
     sees, after all filtering.
 
+    With --negatives it also runs the comparative half: peaks against their own
+    GC-matched background, over a fixed window so the two are measured on equal
+    footing. That is the question training actually poses, asked before any GPU
+    time is spent on it.
+
     Writes <prefix>_signal_qc.json (all metrics), <prefix>_signal_qc.tsv (the
-    flat ones, for DuckDB alongside the run metadata) and two profile plots.
+    flat ones, for DuckDB alongside the run metadata) and the profile plots.
     """
     _setup_logging(verbose, quiet)
     import json as _json
@@ -583,6 +613,8 @@ def qc_signal(
     with metadata.record("qc_signal", dataset=prefix, out_dir=meta_dir) as md:
         md.add_input("bigwig", bigwig)
         md.add_input("peaks", peaks)
+        if negatives:
+            md.add_input("negatives", negatives)
         if tss:
             md.add_input("tss", tss)
 
@@ -612,6 +644,22 @@ def qc_signal(
             else None
         )
 
+        # ── comparative: peaks vs their GC-matched background ─────────────
+        neg_rows, neg_profile, cmp_metrics = None, None, {}
+        if negatives:
+            neg_rows = pd.read_csv(negatives, sep="\t", header=None, dtype={0: str}).values.tolist()
+            logger.info("%d negatives", len(neg_rows))
+            cmp_metrics, pos_totals, neg_totals = qc.peak_vs_nonpeak_signal(
+                bigwig, peak_rows, neg_rows, window=compare_window
+            )
+            metrics |= cmp_metrics
+            _o, neg_profile, neg_used = qc.aggregate_profile(
+                bigwig, neg_rows, flank=input_window // 2
+            )
+            metrics["n_nonpeaks_profiled"] = neg_used
+        else:
+            logger.warning("no --negatives given; skipping the peak vs background QC")
+
         tss_metrics = {}
         if tss:
             tss_rows = pd.read_csv(tss, sep="\t", header=None, dtype={0: str}).values.tolist()
@@ -629,6 +677,9 @@ def qc_signal(
             "frac_peaks_zero_signal",
             "peak_profile_centre_over_flank",
             "tss_enrichment",
+            "auroc_peaks_vs_nonpeaks",
+            "signal_enrichment_peak_over_nonpeak",
+            "frac_nonpeaks_above_peak_median",
         ):
             if metrics.get(key) is not None:
                 logger.info("  %-32s %s", key, metrics[key])
@@ -638,6 +689,15 @@ def qc_signal(
                 metrics.get("total_insertions", 0) / 1e6,
                 min_insertions / 1e6,
             )
+        auc = metrics.get("auroc_peaks_vs_nonpeaks")
+        if auc is not None and auc < 0.80:
+            logger.warning(
+                "signal separates peaks from GC-matched background with AUROC %.3f. "
+                "Below ~0.8 the peaks and the signal disagree, and ChromBPNet has "
+                "little to learn -- check they come from the same sample before "
+                "spending GPU time.",
+                auc,
+            )
         if metrics.get("frac_peaks_zero_signal", 0) > 0.01:
             logger.warning(
                 "%.1f%% of peaks have NO signal under them -- peaks and signal may "
@@ -646,7 +706,10 @@ def qc_signal(
             )
 
         json_out = out / f"{prefix}_signal_qc.json"
-        json_out.write_text(_json.dumps({**metrics, "tss": tss_metrics}, indent=2) + "\n")
+        json_out.write_text(
+            _json.dumps({**metrics, "tss": tss_metrics, "peaks_vs_nonpeaks": cmp_metrics}, indent=2)
+            + "\n"
+        )
         tsv_out = out / f"{prefix}_signal_qc.tsv"
         flat = {k: v for k, v in metrics.items() if not isinstance(v, list | dict)}
         pd.DataFrame([flat]).to_csv(tsv_out, sep="\t", index=False)
@@ -662,13 +725,55 @@ def qc_signal(
         from utils.palettes import OKABE_ITO
 
         fig, ax = plt.subplots(figsize=(4, 3))
-        ax.plot(offsets, profile, color=OKABE_ITO["blue"], lw=1.2)
-        ax.set_xlabel("distance from peak summit (bp)")
+        ax.plot(offsets, profile, color=OKABE_ITO["blue"], lw=1.2, label=f"peaks (n={used})")
+        if neg_profile is not None:
+            # Same axes on purpose: the gap between the two curves IS the
+            # signal ChromBPNet has to work with.
+            ax.plot(
+                offsets,
+                neg_profile,
+                color=OKABE_ITO["orange"],
+                lw=1.2,
+                label=f"GC-matched background (n={metrics['n_nonpeaks_profiled']})",
+            )
+            ax.legend(frameon=False, fontsize=7)
+        ax.set_xlabel("distance from summit (bp)")
         ax.set_ylabel("mean insertions per base")
         ax.set_title(f"{prefix}: signal at peaks (n={used})")
         plotting.save_fig(fig, out / f"{prefix}_profile_peaks")
         plt.close(fig)
         md.add_output("profile_peaks", out / f"{prefix}_profile_peaks.pdf")
+
+        if cmp_metrics.get("auroc_peaks_vs_nonpeaks") is not None:
+            import numpy as _np
+
+            fig, ax = plt.subplots(figsize=(4, 3))
+            bins = _np.histogram_bin_edges(
+                _np.log1p(_np.concatenate([pos_totals, neg_totals])), bins=60
+            )
+            ax.hist(
+                _np.log1p(neg_totals),
+                bins=bins,
+                color=OKABE_ITO["orange"],
+                alpha=0.65,
+                label="GC-matched background",
+            )
+            ax.hist(
+                _np.log1p(pos_totals),
+                bins=bins,
+                color=OKABE_ITO["blue"],
+                alpha=0.65,
+                label="peaks",
+            )
+            ax.set_xlabel(f"log1p(insertions in {compare_window}bp window)")
+            ax.set_ylabel("regions")
+            ax.set_title(
+                f"{prefix}: AUROC = {cmp_metrics['auroc_peaks_vs_nonpeaks']:.3f}",
+            )
+            ax.legend(frameon=False, fontsize=7)
+            plotting.save_fig(fig, out / f"{prefix}_peaks_vs_background")
+            plt.close(fig)
+            md.add_output("peaks_vs_background", out / f"{prefix}_peaks_vs_background.pdf")
 
         if tss_metrics.get("profile"):
             fig, ax = plt.subplots(figsize=(4, 3))

@@ -8,13 +8,15 @@
 #SBATCH --output=%x_%j.log
 #SBATCH --error=%x_%j.log
 
-# 01.0.qc_signal_peaks.sh
-# Purpose: QC the signal and peaks BEFORE committing GPU time to them.
+# 02.0.qc_signal_peaks.sh
+# Purpose: QC the signal, peaks and background BEFORE committing GPU time.
 #
-# Runs on the two artifacts training will actually use -- the prepared bigwig
-# from 00.0 and the filtered narrowPeak from 01.0 -- so the numbers describe
-# what ChromBPNet will see, after every filter. Reports:
+# Runs on the three artifacts training will actually use -- the prepared bigwig
+# from 00.0, the filtered narrowPeak from 00.1 and the GC-matched negatives
+# from 01.0 -- so the numbers describe what ChromBPNet will see, after every
+# filter. Two halves:
 #
+# Individual, "is this good data?"
 #   TSS enrichment          is this accessibility data at all?
 #   profile at peak summits does the signal agree with the peaks?
 #   peaks, widths, coverage how much is there
@@ -22,15 +24,29 @@
 #   fraction in peaks       signal-to-background for the model's regions
 #   total insertions        against the depth ChromBPNet needs
 #
+# Comparative, "is there anything to learn?" -- peaks against their own
+# GC-matched background, measured over one fixed window so the two sides get
+# the same number of bases:
+#   AUROC                   how well signal alone separates the two classes
+#   enrichment              mean signal at peaks over mean at background
+#   frac background >= peak median   background that looks as open as a peak
+#   overlaid profile + distribution plots
+#
+# The comparative half is why this step runs AFTER 01 rather than before it.
+# Separating peaks from GC-matched background is exactly the task ChromBPNet
+# is being trained on, so measuring it first says whether the dataset is worth
+# training on at all -- an AUROC near 0.5 means the peaks and the signal do not
+# agree, and no amount of GPU time will fix that.
+#
 # Nothing here fails the pipeline: it is advisory, and the point is to read it
-# before 02 and the GPU steps. A high fraction of zero-signal peaks or a TSS
-# enrichment near 1 means something is wrong with the inputs, not the model.
+# before the GPU steps in 03 and 04.
 #
 # Usage:
 #   export DATASET=<name>
-#   cd workflows/SLURM && sbatch 01.0.qc_signal_peaks.sh
+#   cd workflows/SLURM && sbatch 02.0.qc_signal_peaks.sh
 #
-# Prerequisites: 00.0.prepare_signal.sh and 00.1.preprocess_peaks.sh.
+# Prerequisites: 00.0.prepare_signal.sh, 00.1.preprocess_peaks.sh and
+#   01.0.preprocess_nonpeaks.sh.
 
 # --- bootstrap: locate the repo root (identical block in every workflow step) --
 # sbatch copies the submitted script to a node-local spool dir, so BASH_SOURCE
@@ -64,16 +80,25 @@ signal_bw="${data_path}/signal/data_unstranded.bw"
 peaks_np="${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
 qc_dir="${results_path}/plots/signal_qc"
 
-metadata_start "01.0.qc_signal_peaks"
-metadata_inputs+=( "bigwig=${signal_bw}" "peaks=${peaks_np}" )
+# One fold's negatives, not all five. Every fold draws from the same candidate
+# pool with the same GC matching, so the first is representative of the set;
+# QC'ing all five would repeat the same measurement on overlapping regions.
+qc_fold="${folds[0]}"
+negatives_bed="${data_path}/${dataset}/output_${peak_type}_fold_${qc_fold}_negatives.bed"
+
+metadata_start "02.0.qc_signal_peaks"
+metadata_inputs+=( "bigwig=${signal_bw}" "peaks=${peaks_np}" "negatives=${negatives_bed}" )
 metadata_outputs+=( "qc_json=${qc_dir}/${dataset}_signal_qc.json" )
 metadata_outputs+=( "qc_tsv=${qc_dir}/${dataset}_signal_qc.tsv" )
 metadata_outputs+=( "profile_peaks=${qc_dir}/${dataset}_profile_peaks.pdf" )
 metadata_outputs+=( "profile_tss=${qc_dir}/${dataset}_profile_tss.pdf" )
+metadata_outputs+=( "peaks_vs_background=${qc_dir}/${dataset}_peaks_vs_background.pdf" )
 metadata_params+=( "peak_type=${peak_type}" "input_window=${chrombpnet_input_window}" )
+metadata_params+=( "qc_fold=${qc_fold}" "compare_window=${qc_compare_window}" )
 [[ -n "${tss_bed}" && -f "${tss_bed}" ]] && metadata_inputs+=( "tss=${tss_bed}" )
-require_input "${signal_bw}" 00.0.prepare_signal.sh
-require_input "${peaks_np}"  00.1.preprocess_peaks.sh
+require_input "${signal_bw}"     00.0.prepare_signal.sh
+require_input "${peaks_np}"      00.1.preprocess_peaks.sh
+require_input "${negatives_bed}" 01.0.preprocess_nonpeaks.sh
 preflight_check
 
 activate_env "${preprocess_conda}"
@@ -91,12 +116,15 @@ fi
 mkdir -p "${qc_dir}"
 
 python "${src_dir}/cli.py" qc-signal \
-    --bigwig       "${signal_bw}" \
-    --peaks        "${peaks_np}" \
+    --bigwig         "${signal_bw}" \
+    --peaks          "${peaks_np}" \
+    --negatives      "${negatives_bed}" \
     "${tss_args[@]+"${tss_args[@]}"}" \
-    --input-window "${chrombpnet_input_window}" \
-    --out-dir      "${qc_dir}" \
-    --prefix       "${dataset}" \
-    --metadata-dir "${metadata_dir}"
+    --input-window   "${chrombpnet_input_window}" \
+    --compare-window "${qc_compare_window}" \
+    --out-dir        "${qc_dir}" \
+    --prefix         "${dataset}" \
+    --metadata-dir   "${metadata_dir}"
 
-echo "[$(date)] QC written to ${qc_dir}/ — read it before running 02 and the GPU steps."
+echo "[$(date)] QC written to ${qc_dir}/ — read it before the GPU steps in 03 and 04."
+echo "           Start with auroc_peaks_vs_nonpeaks in ${dataset}_signal_qc.tsv."

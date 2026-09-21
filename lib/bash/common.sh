@@ -223,7 +223,7 @@ set_signal_args() {
 # the run stops before doing work and prints the command to fix it.
 #
 #     require_input "${peaks_file}"     00.1.preprocess_peaks.sh
-#     require_input "${negatives_file}" 02.0.preprocess_nonpeaks.sh
+#     require_input "${negatives_file}" 01.0.preprocess_nonpeaks.sh
 #     preflight_check
 #
 # All missing inputs are reported together, not one per re-run: submitting a

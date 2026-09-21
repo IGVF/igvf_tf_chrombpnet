@@ -116,7 +116,7 @@ preflight_check
 # pybigtools (Rust), ~27x faster than chrombpnet's awk|sort|genomecov|sort|
 # bedGraphToBigWig on a 5M-fragment file, and verified interval-for-interval
 # identical against chrombpnet's own command in tests/test_pileup.py.
-# chrombpnet is still imported, for shift detection only.
+# chrombpnet is not imported at all: shift detection is utils/shift.py.
 activate_env "${CONDA_ENV}"
 
 mkdir -p "${prepared_dir}"
