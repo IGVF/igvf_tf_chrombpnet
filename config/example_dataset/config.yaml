@@ -27,7 +27,15 @@ assay: ATAC
 # the pipeline hands a prepared bigwig straight to training, which skips the
 # conversion entirely. It must already carry the Tn5 shift chrombpnet expects
 # (+4/-4 for ATAC) — an unshifted bigwig will train, and be subtly wrong.
+#
+# This file is never copied or modified. Point it at your data where it already
+# lives; 00.0 writes only derived files, under output_dir.
 signal_path: "/path/to/reads.fragments.tsv.gz"
+
+# Filter reads to chr1-22,X,Y,M before converting. Needed whenever the reads
+# carry scaffolds, because bedtools genomecov fails on contigs missing from
+# chrom.sizes. Set false if they are already clean, to skip a full pass.
+filter_main_chroms: true
 
 # Everything the pipeline writes goes under here.
 output_dir: "/path/to/results"

@@ -7,9 +7,21 @@
 #SBATCH --output=%x_%j.log
 #SBATCH --error=%x_%j.log
 
-# 00.1.prepare_signal.sh
-# Purpose: do on CPU, once, the work every GPU training task would otherwise
-#          repeat inside its own GPU allocation.
+# 00.0.prepare_signal.sh
+# Purpose: prepare this dataset's signal on CPU, once — everything the GPU
+#          training tasks would otherwise each redo inside a GPU allocation.
+#
+# Nothing is copied. `signal_path` and `regions` in the config point at your data
+# wherever it already lives; this step only writes DERIVED files, all under
+# ${output_dir}/preprocessing/signal/. (An earlier 00.0 copied inputs into a
+# <dataset>/data/ convention; that convention is gone, so the copy was pure
+# duplication of a multi-GB file.)
+#
+# Three things, each skipped when unnecessary:
+#   1. filter reads to the main chromosomes — bedtools genomecov, which the
+#      conversion below runs, fails on contigs absent from the chrom.sizes file
+#   2. normalise a BAM to tagAlign (what chrombpnet does internally anyway)
+#   3. build the bigwig the training steps reuse
 #
 # chrombpnet train / pipeline / bias train all begin with:
 #   enzyme-shift auto-detection (samples reads, compares to a reference motif)
@@ -33,10 +45,11 @@
 #
 # Usage:
 #   export DATASET=<name>
-#   cd workflows/SLURM && sbatch 00.1.prepare_signal.sh
+#   cd workflows/SLURM && sbatch 00.0.prepare_signal.sh
 #
-# Prerequisites: the signal file in config.yaml must exist, and references must
-#   be installed (scripts/bash/download_references.sh).
+# Prerequisites: signal_path in config.yaml must exist, and references must be
+#   installed (scripts/bash/download_references.sh). This step is the first
+#   thing to run for a dataset.
 
 # --- bootstrap: locate the repo root (identical block in every workflow step) --
 # sbatch copies the submitted script to a node-local spool dir, so BASH_SOURCE
@@ -67,11 +80,11 @@ source "${REPO_ROOT}/lib/bash/config.sh" || exit 1
 
 prepared_dir="${data_path}/signal"
 
-metadata_start "00.1.prepare_signal"
+metadata_start "00.0.prepare_signal"
 metadata_inputs+=( "signal=${signal_path}" "genome=${genome_fa}" "chrom_sizes=${chrom_sizes}" )
 metadata_outputs+=( "prepared_bigwig=${prepared_dir}/data_unstranded.bw" )
 metadata_params+=( "signal_type=${signal_type}" "assay=${assay}" )
-require_input "${signal_path}" 00.0.copy_and_prepare_data.sh
+require_input "${signal_path}" ""
 require_input "${genome_fa}"   scripts/bash/download_references.sh
 require_input "${chrom_sizes}" scripts/bash/download_references.sh
 preflight_check
@@ -86,6 +99,27 @@ mkdir -p "${prepared_dir}"
 if [[ -f "${prepared_dir}/data_unstranded.bw" && -f "${prepared_dir}/prepared_bigwig.json" ]]; then
     echo "[$(date)] Prepared bigwig already exists, skipping: ${prepared_dir}"
     exit 0
+fi
+
+# ── 1. main-chromosome filter ────────────────────────────────────────────────
+# Only for read-type signals, and only when asked. The conversion below runs
+# bedtools genomecov -g "${chrom_sizes}", which errors on any contig missing
+# from that file, so scaffold-carrying fragments must be filtered first.
+# Set filter_main_chroms: false in config.yaml if the reads are already clean.
+reads_for_conversion="${signal_path}"
+if [[ "${signal_type}" != "bigwig" && "${filter_main_chroms:-true}" == "true" ]]; then
+    filtered="${prepared_dir}/${dataset_name}_main_chrs.tsv.gz"
+    if [[ -f "${filtered}" ]]; then
+        echo "[$(date)] Main-chromosome filter already done: ${filtered}"
+    else
+        echo "[$(date)] Filtering ${signal_path} to the main chromosomes"
+        python "${src_dir}/cli.py" filter-fragments \
+            --input        "${signal_path}" \
+            --output       "${filtered}" \
+            --metadata-dir "${metadata_dir}"
+    fi
+    reads_for_conversion="${filtered}"
+    metadata_outputs+=( "filtered_reads=${filtered}" )
 fi
 
 if [[ "${signal_type}" == "bigwig" ]]; then
@@ -118,7 +152,7 @@ fi
 echo "[$(date)] Preparing signal on CPU (this is what the GPU jobs will skip)"
 
 python "${src_dir}/cli.py" prepare-bigwig \
-    --signal-path  "${signal_path}" \
+    --signal-path  "${reads_for_conversion}" \
     --signal-type  "${signal_type}" \
     --assay        "${assay}" \
     --genome       "${genome_fa}" \

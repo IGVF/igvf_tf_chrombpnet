@@ -85,8 +85,7 @@ a few seconds, not a queued GPU job. `bash status.sh` shows the whole picture.
 export DATASET=igvf3_cardiomyocyte   # picks config/igvf3_cardiomyocyte/
 cd workflows/SLURM
 
-sbatch 00.0.copy_and_prepare_data.sh   # optional: only if data needs staging
-sbatch 00.1.prepare_signal.sh          # CPU: converts reads once so GPU jobs skip it
+sbatch 00.0.prepare_signal.sh          # CPU: filter + convert once, so GPU jobs skip it
 sbatch 01.0.preprocess_peaks.sh
 sbatch 02.0.preprocess_nonpeaks.sh
 sbatch 03.0.train_bias_model.sh

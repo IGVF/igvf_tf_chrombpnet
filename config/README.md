@@ -82,5 +82,6 @@ our code runs, so they cannot read a variable. Override at submit time:
 sbatch --partition=mypartition --account=myaccount 04.0.train_full_model.sh
 ```
 
-`00.0.copy_and_prepare_data.sh` is an explicit staging **template** with source
-paths at the top; it is the one step you edit rather than configure.
+Nothing is copied: `regions` and `signal_path` point at your data where it
+already is, and `00.0.prepare_signal.sh` writes only derived files under
+`output_dir`.

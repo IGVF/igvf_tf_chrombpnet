@@ -59,8 +59,7 @@ report() {
     fi
 }
 
-report 00.0.copy_and_prepare_data    "${fragments_path}/${d}_atac_fragments_main_chrs.tsv.gz"
-report 00.1.prepare_signal         "${data_path}/signal/data_unstranded.bw"
+report 00.0.prepare_signal         "${data_path}/signal/data_unstranded.bw"
 report 01.0.preprocess_peaks         "${data_path}/${d}_${peak_type}_peaks_no_blacklist.narrowPeak"
 report 02.0.preprocess_nonpeaks      "${data_path}/${d}/output_${peak_type}_fold_${fold0}_negatives.bed"
 report 03.0.train_bias_model       "${results_path}/bias_models"

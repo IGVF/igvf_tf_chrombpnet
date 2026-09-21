@@ -477,7 +477,7 @@ def config_validate(dataset, path):
     )
     if parsed.get("signal_type") == "bam":
         click.echo(
-            "  note       : run 00.1.prepare_signal.sh to normalise the BAM to tagAlign once on CPU"
+            "  note       : run 00.0.prepare_signal.sh to normalise the BAM to tagAlign once on CPU"
         )
 
 

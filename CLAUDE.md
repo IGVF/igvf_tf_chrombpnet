@@ -125,7 +125,7 @@ derived output paths live in `config.sh`.
 
 | Script | Array index | Needs `DATASET_DIR` |
 |---|---|---|
-| `00.0.copy_and_prepare_data.sh` | — (loops internally) | no (hardcoded paths) |
+| `00.0.prepare_signal.sh` | — (loops internally) | no (hardcoded paths) |
 | `01.0.preprocess_peaks.sh` | — | yes |
 | `02.0.preprocess_nonpeaks.sh` | — | yes |
 | `03.0.train_bias_model.sh` | `fold_idx * n_factors + factor_idx` | yes |
@@ -283,8 +283,8 @@ none of them execute pipeline logic. Don't claim a step was verified beyond that
 
 - **Step files are `NN.M.name.sh`, uniformly, so `ls` order is execution order.**
   That uniformity is the point: when some steps were `NN.` and others `NN.M.`,
-  `00.1.prepare_signal.sh` sorted *above* `00.copy_and_prepare_data.sh`, and the
-  listing misrepresented the order things run in. Keep the `.M` even when a stage
+  a `00.1.` step sorted *above* the `00.` one, and the listing misrepresented
+  the order things run in. Keep the `.M` even when a stage
   has only one step. `workflows/SLURM/deprecated/` is outside the sequence.
 
 
@@ -305,7 +305,7 @@ none of them execute pipeline logic. Don't claim a step was verified beyond that
 - **Absolute `opushkar` paths remain in four places**: the three conda envs and
   `ref_db_meme` in `lib/bash/common.sh`, `CORE_PATH` in `04.2.qc_combined_boxplot.sh`
   (now `${CORE_PATH:-...}`, so it can be overridden at submit time), `core_path` in
-  `src/qc_datasets.py`, and `out_path` in `00.0.copy_and_prepare_data.sh`. They are no
+  `src/qc_datasets.py`, and `out_path` in `00.0.prepare_signal.sh`. They are no
   longer duplicated — `09.0.cross_dataset_compendium.sh` used to re-declare four of them
   "mirroring config.sh" and now sources `common.sh`.
 

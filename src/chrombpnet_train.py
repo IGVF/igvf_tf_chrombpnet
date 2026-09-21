@@ -124,7 +124,7 @@ def main() -> int:
                 # now try to read that bigwig as a fragment file -- silent garbage.
                 logger.error(
                     "the configured signal is a bigwig, so a valid prepared bigwig in %s "
-                    "is required and none matched. Re-run 00.1.prepare_signal.sh.",
+                    "is required and none matched. Re-run 00.0.prepare_signal.sh.",
                     prepared_dir,
                 )
                 return 1
