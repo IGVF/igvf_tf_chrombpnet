@@ -50,7 +50,7 @@ for dataset in "${datasets[@]}"; do
 
 
 metadata_inputs+=( "peaks=${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak" "genome=${genome_fa}" "chrom_sizes=${chrom_sizes}" "blacklist=${blacklist}" "fold_json=${folds_dir}/fold_${fold}.json" )
-require_input "${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak" 01.0.preprocess_peaks.sh
+require_input "${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak" 00.1.preprocess_peaks.sh
 require_input "${genome_fa}" "cli.py download-references"
 require_input "${chrom_sizes}" "cli.py download-references"
 require_input "${blacklist}" "cli.py download-references"

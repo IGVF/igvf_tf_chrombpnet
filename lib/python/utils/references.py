@@ -73,6 +73,11 @@ GENOME_ACCESSION = "IGVFFI0653VCGH"
 BLACKLIST_ACCESSION = "ENCFF356LFX"
 #: ChromBPNet's input window. The blacklist slop is half of it.
 CHROMBPNET_INPUT_WINDOW = 2114
+#: UCSC refGene for hg38. Used only to derive a TSS list for QC. Chosen over a
+#: full GENCODE GTF because it is ~9MB rather than ~50MB and needs no GTF
+#: parsing -- TSS is txStart on +, txEnd on -.
+REFGENE_URL = "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/database/refGene.txt.gz"
+
 MOTIF_DB_URL = (
     "https://raw.githubusercontent.com/kundajelab/MotifCompendium/main/"
     "pipeline/data/MotifCompendium-Database-Human.meme.txt"
@@ -153,6 +158,11 @@ def layout(reference_root=None) -> dict:
         "blacklist_slop": str(blacklist_dir / "blacklist_slop.bed.gz"),
         "ref_db_meme": str(motif_dir / "MotifCompendium-Database-Human.meme.txt"),
         "ref_db_meme_url": MOTIF_DB_URL,
+        "refgene_url": REFGENE_URL,
+        "refgene_raw": str(genome_path / "annotation" / "refGene.txt.gz"),
+        # Unique TSS positions, for the TSS-enrichment QC. Derived, not downloaded.
+        "tss_bed": str(genome_path / "annotation" / "refGene_tss_unique.bed"),
+        "annotation_dir": str(genome_path / "annotation"),
     }
 
 
@@ -228,7 +238,7 @@ def _relative_symlink(target, link, log=print) -> None:
 def fetch_all(reference_root=None, log=print) -> dict:
     """Install every shared reference. Idempotent: present files are left alone."""
     ref = layout(reference_root)
-    for key in ("sequence_dir", "chrom_sizes_dir", "blacklist_dir", "motif_dir"):
+    for key in ("sequence_dir", "chrom_sizes_dir", "blacklist_dir", "motif_dir", "annotation_dir"):
         Path(ref[key]).mkdir(parents=True, exist_ok=True)
     log(f"installing references under {ref['REFERENCE_ROOT']}")
 
@@ -324,6 +334,35 @@ def fetch_all(reference_root=None, log=print) -> dict:
     else:
         log("  downloading MotifCompendium reference DB")
         download(ref["ref_db_meme_url"], meme, log=log)
+
+    # 5. TSS list for QC, derived from refGene
+    tss = Path(ref["tss_bed"])
+    if tss.is_file() and tss.stat().st_size:
+        log("  TSS list present")
+    else:
+        rg = Path(ref["refgene_raw"])
+        if not (rg.is_file() and rg.stat().st_size):
+            log("  downloading refGene (for the TSS QC list)")
+            download(ref["refgene_url"], rg, log=log)
+        log("  deriving unique TSS positions from refGene")
+        wanted = set(main_chromosomes())
+        sites = set()
+        with gzip.open(rg, "rt") as fh:
+            for line in fh:
+                f = line.rstrip("\n").split("\t")
+                # refGene: bin name chrom strand txStart txEnd ...
+                if len(f) < 6:
+                    continue
+                chrom, strand, tx_start, tx_end = f[2], f[3], f[4], f[5]
+                if chrom not in wanted:
+                    continue
+                pos = int(tx_start) if strand == "+" else int(tx_end) - 1
+                sites.add((chrom, pos, strand))
+        if not sites:
+            raise RuntimeError(f"no TSS parsed from {rg}")
+        ordered = sorted(sites, key=lambda t: (t[0], t[1]))
+        tss.write_text("".join(f"{c}\t{p}\t{p + 1}\t.\t0\t{st}\n" for c, p, st in ordered))
+        log(f"  wrote {len(ordered)} unique TSS positions")
 
     log(f"done. references under {ref['REFERENCE_ROOT']}")
     return ref

@@ -1,7 +1,7 @@
 # ChromBPNet configuration — igvf3_cardiomyocyte
 #
 #   export DATASET=igvf3_cardiomyocyte
-#   cd workflows/SLURM && sbatch 01.0.preprocess_peaks.sh
+#   cd workflows/SLURM && sbatch 00.1.preprocess_peaks.sh
 #
 # This file is the whole configuration. Machine-specific paths (conda envs,
 # where the references live) are environment variables, not config — see

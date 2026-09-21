@@ -12,7 +12,7 @@ config/
 
 ```bash
 export DATASET=igvf3_cardiomyocyte     # -> config/igvf3_cardiomyocyte/config.yaml
-cd workflows/SLURM && sbatch 01.0.preprocess_peaks.sh
+cd workflows/SLURM && sbatch 00.1.preprocess_peaks.sh
 ```
 
 Or point at a file anywhere: `export DATASET_CONFIG=/path/to/config.yaml`.

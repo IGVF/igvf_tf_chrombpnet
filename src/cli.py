@@ -516,6 +516,177 @@ def download_references(dataset, reference_root, metadata_dir, verbose, quiet):
         md.add_param("main_chromosomes", ",".join(references.main_chromosomes()))
 
 
+# ── qc-signal ─────────────────────────────────────────────────────────────────
+
+
+@cli.command("qc-signal")
+@click.option(
+    "--bigwig",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Prepared signal bigwig (00.0 output).",
+)
+@click.option(
+    "--peaks",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Filtered narrowPeak (01.0 output).",
+)
+@click.option(
+    "--tss",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="TSS BED for the enrichment metric. Skipped if not given.",
+)
+@click.option(
+    "--input-window",
+    type=int,
+    default=2114,
+    show_default=True,
+    help="Profile spans +/- half this around peak summits.",
+)
+@click.option(
+    "--min-insertions",
+    type=int,
+    default=20_000_000,
+    show_default=True,
+    help="Depth below which ChromBPNet is unlikely to train well.",
+)
+@click.option("--out-dir", required=True, type=click.Path(file_okay=False))
+@click.option("--prefix", required=True)
+@click.option("--metadata-dir", default=None, type=click.Path(file_okay=False))
+@verbose_opt
+@quiet_opt
+def qc_signal(
+    bigwig, peaks, tss, input_window, min_insertions, out_dir, prefix, metadata_dir, verbose, quiet
+):
+    """QC the signal and peaks about to be handed to ChromBPNet.
+
+    Reads the two artifacts training will actually use -- the prepared bigwig
+    and the filtered narrowPeak -- so every number describes what the model
+    sees, after all filtering.
+
+    Writes <prefix>_signal_qc.json (all metrics), <prefix>_signal_qc.tsv (the
+    flat ones, for DuckDB alongside the run metadata) and two profile plots.
+    """
+    _setup_logging(verbose, quiet)
+    import json as _json
+
+    import pandas as pd
+
+    from utils import plotting, qc
+
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    meta_dir = metadata_dir or (out.parent / "metadata")
+
+    with metadata.record("qc_signal", dataset=prefix, out_dir=meta_dir) as md:
+        md.add_input("bigwig", bigwig)
+        md.add_input("peaks", peaks)
+        if tss:
+            md.add_input("tss", tss)
+
+        peak_rows = pd.read_csv(peaks, sep="\t", header=None, dtype={0: str}).values.tolist()
+        logger.info("%d peaks", len(peak_rows))
+
+        metrics = {"dataset": prefix}
+        metrics |= qc.signal_summary(bigwig)
+        metrics |= qc.peak_width_summary(peak_rows)
+        metrics |= qc.peak_signal_distribution(bigwig, peak_rows)
+
+        # Fraction of all insertions that land in peaks -- the FRiP of the
+        # signal chrombpnet sees, rather than of the original fragments.
+        if metrics.get("total_insertions"):
+            metrics["frac_insertions_in_peaks"] = (
+                metrics["insertions_in_peaks"] / metrics["total_insertions"]
+            )
+        metrics["enough_depth_for_chrombpnet"] = bool(
+            metrics.get("total_insertions", 0) >= min_insertions
+        )
+
+        offsets, profile, used = qc.aggregate_profile(bigwig, peak_rows, flank=input_window // 2)
+        metrics["n_peaks_profiled"] = used
+        metrics["peak_profile_centre_over_flank"] = (
+            float(profile[len(profile) // 2] / profile[:100].mean())
+            if used and profile[:100].mean() > 0
+            else None
+        )
+
+        tss_metrics = {}
+        if tss:
+            tss_rows = pd.read_csv(tss, sep="\t", header=None, dtype={0: str}).values.tolist()
+            tss_metrics = qc.tss_enrichment(bigwig, tss_rows)
+            metrics["tss_enrichment"] = tss_metrics.get("tss_enrichment")
+            metrics["n_tss_used"] = tss_metrics.get("n_tss_used")
+        else:
+            logger.warning("no --tss given; skipping TSS enrichment")
+
+        # ── report ────────────────────────────────────────────────────────
+        for key in (
+            "total_insertions",
+            "n_peaks",
+            "frac_insertions_in_peaks",
+            "frac_peaks_zero_signal",
+            "peak_profile_centre_over_flank",
+            "tss_enrichment",
+        ):
+            if metrics.get(key) is not None:
+                logger.info("  %-32s %s", key, metrics[key])
+        if not metrics["enough_depth_for_chrombpnet"]:
+            logger.warning(
+                "only %.1fM insertions; ChromBPNet usually needs >= %.0fM",
+                metrics.get("total_insertions", 0) / 1e6,
+                min_insertions / 1e6,
+            )
+        if metrics.get("frac_peaks_zero_signal", 0) > 0.01:
+            logger.warning(
+                "%.1f%% of peaks have NO signal under them -- peaks and signal may "
+                "not come from the same sample",
+                100 * metrics["frac_peaks_zero_signal"],
+            )
+
+        json_out = out / f"{prefix}_signal_qc.json"
+        json_out.write_text(_json.dumps({**metrics, "tss": tss_metrics}, indent=2) + "\n")
+        tsv_out = out / f"{prefix}_signal_qc.tsv"
+        flat = {k: v for k, v in metrics.items() if not isinstance(v, list | dict)}
+        pd.DataFrame([flat]).to_csv(tsv_out, sep="\t", index=False)
+        md.add_output("qc_json", json_out)
+        md.add_output("qc_tsv", tsv_out)
+        for k, v in flat.items():
+            md.add_param(k, v)
+
+        # ── plots ─────────────────────────────────────────────────────────
+        import matplotlib.pyplot as plt
+
+        plotting.apply_style(font_size=10)
+        from utils.palettes import OKABE_ITO
+
+        fig, ax = plt.subplots(figsize=(4, 3))
+        ax.plot(offsets, profile, color=OKABE_ITO["blue"], lw=1.2)
+        ax.set_xlabel("distance from peak summit (bp)")
+        ax.set_ylabel("mean insertions per base")
+        ax.set_title(f"{prefix}: signal at peaks (n={used})")
+        plotting.save_fig(fig, out / f"{prefix}_profile_peaks")
+        plt.close(fig)
+        md.add_output("profile_peaks", out / f"{prefix}_profile_peaks.pdf")
+
+        if tss_metrics.get("profile"):
+            fig, ax = plt.subplots(figsize=(4, 3))
+            ax.plot(
+                tss_metrics["profile_offsets"],
+                tss_metrics["profile"],
+                color=OKABE_ITO["vermillion"],
+                lw=1.2,
+            )
+            ax.axhline(1.0, color=OKABE_ITO["black"], lw=0.6, ls="--")
+            ax.set_xlabel("distance from TSS (bp)")
+            ax.set_ylabel("enrichment over flanks")
+            ax.set_title(f"{prefix}: TSS enrichment = {tss_metrics['tss_enrichment']:.1f}")
+            plotting.save_fig(fig, out / f"{prefix}_profile_tss")
+            plt.close(fig)
+            md.add_output("profile_tss", out / f"{prefix}_profile_tss.pdf")
+
+
 # ── config ────────────────────────────────────────────────────────────────────
 
 

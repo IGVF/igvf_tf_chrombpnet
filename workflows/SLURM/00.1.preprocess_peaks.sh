@@ -8,7 +8,7 @@
 #SBATCH --output=%x_%j.log
 #SBATCH --error=%x_%j.log
 
-# 01.0.preprocess_peaks.sh
+# 00.1.preprocess_peaks.sh
 # Purpose: Remove blacklisted regions from peak files and reformat to
 #          narrowPeak for chrombpnet (summit = midpoint of peak).
 #
@@ -50,7 +50,7 @@ mkdir -p "${data_path}"
 # a training region with no data under it.
 peak_chrom_sizes="${chrom_sizes_main:-${chrom_sizes}}"
 
-metadata_start "01.0.preprocess_peaks"
+metadata_start "00.1.preprocess_peaks"
 
 
 for dataset in "${datasets[@]}"; do
@@ -79,4 +79,4 @@ activate_env "${preprocess_conda}"
     metadata_params+=( "peak_type=${peak_type}" "input_window=${chrombpnet_input_window}" )
 done
 
-echo "Done: 01.0.preprocess_peaks.sh"
+echo "Done: 00.1.preprocess_peaks.sh"

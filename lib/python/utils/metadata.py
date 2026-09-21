@@ -34,7 +34,7 @@ from a file that was simply absent.
 
 Granularity
 -----------
-A numbered step name (``01.0.preprocess_peaks``) is one *sbatch job*, written by
+A numbered step name (``00.1.preprocess_peaks``) is one *sbatch job*, written by
 the EXIT trap in lib/bash/common.sh. An unnumbered one (``preprocess_peaks``) is
 one *tool invocation*, written by the Python script itself -- a job that loops
 over datasets produces one job record and several tool records. The names are

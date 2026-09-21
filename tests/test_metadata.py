@@ -242,10 +242,12 @@ def test_heterogeneous_records_union_into_one_duckdb_table(tmp_path, sample):
     duckdb = pytest.importorskip("duckdb")
     meta_dir = tmp_path / "meta"
 
-    with metadata.record("01.0.preprocess_peaks", dataset="ds", out_dir=meta_dir) as md:
+    # Neutral names: this test is about the union, not the pipeline's numbering,
+    # and it should not break when a step is renumbered.
+    with metadata.record("step_a", dataset="ds", out_dir=meta_dir) as md:
         md.add_param("input_window", 2114)
         md.add_output("narrowpeak", sample)
-    with metadata.record("00.filter_fragments", dataset="ds", out_dir=meta_dir) as md:
+    with metadata.record("step_b", dataset="ds", out_dir=meta_dir) as md:
         md.add_param("chroms", "chr1,chr2")  # a different param set entirely
         md.add_param("index", True)
         md.add_output("fragments", sample)
@@ -254,13 +256,13 @@ def test_heterogeneous_records_union_into_one_duckdb_table(tmp_path, sample):
     src = f"read_json_auto('{meta_dir}/**/*.json', union_by_name=true)"
 
     steps = con.sql(f"SELECT step FROM {src} ORDER BY step").fetchall()
-    assert steps == [("00.filter_fragments",), ("01.0.preprocess_peaks",)]
+    assert steps == [("step_a",), ("step_b",)]
 
     # outputs unnest to one row per produced file, with its checksum
     files = con.sql(
         f"SELECT step, o.role, o.md5 FROM {src}, UNNEST(outputs) AS t(o) ORDER BY step"
     ).fetchall()
-    assert [f[1] for f in files] == ["fragments", "narrowpeak"]
+    assert sorted(f[1] for f in files) == ["fragments", "narrowpeak"]
     assert all(f[2] == metadata.md5sum(sample) for f in files)
 
     # params stay queryable despite differing between the two steps

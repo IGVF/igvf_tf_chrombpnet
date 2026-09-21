@@ -86,7 +86,7 @@ runs, so they cannot read a variable. Override at submit time.
 Steps declare inputs with the step that produces them and stop before doing work:
 
 ```bash
-require_input "${peaks_file}"     01.0.preprocess_peaks.sh
+require_input "${peaks_file}"     00.1.preprocess_peaks.sh
 require_input "${negatives_file}" 02.0.preprocess_nonpeaks.sh
 preflight_check
 ```
@@ -126,7 +126,8 @@ derived output paths live in `config.sh`.
 | Script | Array index | Needs `DATASET_DIR` |
 |---|---|---|
 | `00.0.prepare_signal.sh` | — (loops internally) | no (hardcoded paths) |
-| `01.0.preprocess_peaks.sh` | — | yes |
+| `00.1.preprocess_peaks.sh` | — | yes |
+| `01.0.qc_signal_peaks.sh` | — | yes |
 | `02.0.preprocess_nonpeaks.sh` | — | yes |
 | `03.0.train_bias_model.sh` | `fold_idx * n_factors + factor_idx` | yes |
 | `03.1.select_bias.sh` | no SBATCH header — run with `bash` | yes |
@@ -183,7 +184,7 @@ conda env create -f envs/chrombpnet.yml     # once per cluster
 bash `cli.py download-references`    # once per cluster
 
 export DATASET_DIR=/path/to/igvf3_cardiomyocyte
-cd workflows/SLURM && sbatch 01.0.preprocess_peaks.sh
+cd workflows/SLURM && sbatch 00.1.preprocess_peaks.sh
 ```
 
 ### Environments
@@ -269,6 +270,19 @@ none of them execute pipeline logic. Don't claim a step was verified beyond that
     signal; the trap only survives SIGTERM.
   - Emission never fails a step, and `script_url` is misleading when `git.dirty`
     is true — filter on it. Query recipes are in `queries.sql`.
+- **QC runs on the artifacts, not the inputs.** `01.1` reads the prepared bigwig
+  and the filtered narrowPeak, so every number describes what ChromBPNet will
+  actually see after all filtering. It is advisory and never fails the pipeline;
+  the two numbers worth reading are `tss_enrichment` (near 1 means the signal is
+  not accessibility, or does not match the annotation) and
+  `frac_peaks_zero_signal` (peaks with no evidence under them, usually meaning
+  peaks and signal came from different samples).
+- **Not SnapATAC2, deliberately.** `snapatac2.metrics.tsse` needs an AnnData from
+  `import_fragments` and reports per-cell scores. This pipeline trains on
+  pseudobulk, so a per-cell distribution does not answer "is this worth
+  training on", and building a cell x bin matrix to reach the library aggregate
+  is a lot of machinery for one number. SnapATAC2 is the right tool for per-cell
+  QC *upstream* of pseudobulking — a different question.
 - **Use `logging`, never `print`.** `utils/log.py` configures it: scripts call
   `log.setup_from_args(args)` in `main()` and use a module-level
   `logger = log.get_logger(__name__)`; library modules in `utils/` only ever call

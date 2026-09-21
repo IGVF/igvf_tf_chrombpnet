@@ -48,7 +48,7 @@ def pair(text: str) -> tuple[str, str]:
 
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--step", required=True, help="Step name, e.g. 01.0.preprocess_peaks")
+    p.add_argument("--step", required=True, help="Step name, e.g. 00.1.preprocess_peaks")
     p.add_argument("--dataset", default=None)
     p.add_argument("--out-dir", required=True, help="Metadata directory (metadata_dir)")
     p.add_argument("--script", default=None, help="Step script, for the GitHub permalink")

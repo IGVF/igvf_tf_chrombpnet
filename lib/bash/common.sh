@@ -124,7 +124,7 @@ gpu_env() {
 #
 # In a step:
 #
-#     metadata_start "01.0.preprocess_peaks"   # names the step, installs the EXIT trap
+#     metadata_start "00.1.preprocess_peaks"   # names the step, installs the EXIT trap
 #     metadata_inputs+=( "peaks=${peaks_file}" )
 #     metadata_params+=( "fold=${fold}" )
 #     ... do the work ...
@@ -222,7 +222,7 @@ set_signal_args() {
 # A step declares what it needs and which step makes it; if anything is absent
 # the run stops before doing work and prints the command to fix it.
 #
-#     require_input "${peaks_file}"     01.0.preprocess_peaks.sh
+#     require_input "${peaks_file}"     00.1.preprocess_peaks.sh
 #     require_input "${negatives_file}" 02.0.preprocess_nonpeaks.sh
 #     preflight_check
 #

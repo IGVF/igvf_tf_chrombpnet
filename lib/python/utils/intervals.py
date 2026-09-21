@@ -138,7 +138,7 @@ def drop_windows_off_chromosome(peaks: pr.PyRanges, chromsizes: dict[str, int], 
 def to_narrowpeak(peaks: pr.PyRanges) -> pd.DataFrame:
     """Build the 10-column narrowPeak chrombpnet consumes, summit at the midpoint.
 
-    Replaces the awk in the old ``01.0.preprocess_peaks.sh``:
+    Replaces the awk in the old ``00.1.preprocess_peaks.sh``:
 
         summit = int(($3-$2)/2); print $1,$2,$3,"peak_"NR,0,".",0,-1,-1,summit
 

@@ -34,7 +34,7 @@ FROM runs, UNNEST(params) AS t(p);
 
 
 -- Step names have two granularities, deliberately:
---   '01.0.preprocess_peaks'  one sbatch job   (written by the EXIT trap)
+--   '00.1.preprocess_peaks'  one sbatch job   (written by the EXIT trap)
 --   'preprocess_peaks'     one tool call    (written by the Python script)
 -- A job that loops over datasets yields one job record and several tool records.
 CREATE OR REPLACE VIEW jobs  AS SELECT * FROM runs WHERE regexp_matches(step, '^[_0-9]');
@@ -109,7 +109,7 @@ ORDER BY step, t.name;
 
 -- Did every dataset run step 01 with the same input window?
 SELECT key, value, count(*) AS n, list(DISTINCT dataset) AS datasets
-FROM run_params WHERE step = '01.0.preprocess_peaks' AND key = 'input_window'
+FROM run_params WHERE step = '00.1.preprocess_peaks' AND key = 'input_window'
 GROUP BY key, value;
 
 -- Export anything above as TSV (no second on-disk format needed):
