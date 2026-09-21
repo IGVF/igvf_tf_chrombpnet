@@ -268,11 +268,28 @@ def filter_fragments(input_path, output_path, chroms, index, metadata_dir, verbo
     type=click.Path(file_okay=False),
     help="Prepared-bigwig directory, passed to --prepared-bigwig later.",
 )
+@click.option(
+    "--num-samples",
+    type=int,
+    default=10000,
+    show_default=True,
+    help="Reads sampled for Tn5 shift detection. This is chrombpnet's own default; "
+    "changing it makes the bigwig differ from what chrombpnet would have produced.",
+)
 @click.option("--metadata-dir", default=None, type=click.Path(file_okay=False))
 @verbose_opt
 @quiet_opt
 def prepare_bigwig(
-    signal_path, signal_type, assay, genome, chrom_sizes, out_dir, metadata_dir, verbose, quiet
+    signal_path,
+    signal_type,
+    assay,
+    genome,
+    chrom_sizes,
+    out_dir,
+    num_samples,
+    metadata_dir,
+    verbose,
+    quiet,
 ):
     """Do chrombpnet's reads->bigwig conversion once, on CPU.
 
@@ -287,6 +304,7 @@ def prepare_bigwig(
     """
     _setup_logging(verbose, quiet)
     import json as _json
+    import os
     from argparse import Namespace
     from importlib.metadata import version as dist_version
 
@@ -301,6 +319,7 @@ def prepare_bigwig(
         md.add_input("genome", genome)
         md.add_param("signal_type", signal_type)
         md.add_param("assay", assay)
+        md.add_param("num_samples", num_samples)
 
         args = Namespace(
             input_bam_file=signal_path if signal_type == "bam" else None,
@@ -312,11 +331,19 @@ def prepare_bigwig(
             output_prefix=str(out / "data"),
             plus_shift=None,
             minus_shift=None,
-            num_samples=100000,
+            # 10000 is chrombpnet 1.0.1's own default (parsers.py --num-samples
+            # and reads_to_bigwig.py agree). It must match: the shift is detected
+            # from this many sampled reads, and a prepared bigwig is only a
+            # faithful substitute if it was made the way chrombpnet would have.
+            num_samples=num_samples,
             ATAC_ref_path=None,
             DNASE_ref_path=None,
             bsort=False,
-            tmpdir=None,
+            # chrombpnet defaults to None (system /tmp). On a compute node the
+            # genome-scale `sort` can overrun /tmp, so prefer SLURM's node-local
+            # scratch when it exists. This only changes where sort spills, not
+            # the output.
+            tmpdir=os.environ.get("TMPDIR") or None,
             no_st=False,
         )
         logger.info(
