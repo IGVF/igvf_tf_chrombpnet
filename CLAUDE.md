@@ -5,7 +5,9 @@ ATAC-seq pseudobulks, averages contribution scores across 5 folds, and discovers
 motifs (TF-MoDISco → MotifCompendium → Fi-NeMo).
 
 **This is a SLURM pipeline, not a package.** There is no `pyproject.toml`, no
-installable module, no test suite and no CI. It is a numbered sequence of `sbatch`
+installable module and no CI. There *is* a test suite (`tests/`, `pixi run -e qc
+test`) covering the pure-Python helpers in `lib/python/utils` and the selection
+logic in `src/`; it never touches the cluster. It is a numbered sequence of `sbatch`
 scripts under `workflows/SLURM/` plus the Python they call, all of which assume
 Stanford Sherlock: `ml` modules, `/oak/stanford/groups/engreitz/...` data, and
 `/home/groups/engreitz/...` conda environments. Nothing here runs on a laptop except
@@ -167,6 +169,7 @@ pixi run lint            # ruff check
 pixi run fmt             # ruff format (fmt-check for a dry run)
 pixi run hooks-install   # enable the pre-commit hook
 pixi run hooks           # pre-commit run --all-files
+pixi run -e qc test      # pytest (needs the qc env: pyranges1, Python >= 3.12)
 
 pixi run -e qc python src/qc_full_model.py --help   # QC scripts import without the cluster
 ```
@@ -204,9 +207,13 @@ and `cupy` builds. The `envs/*.yml` files are full `conda env export` output and
 canonical. Don't "finish the migration" by moving them into `pixi.toml` — the point of
 pixi here is that `check-bash`/`check-py`/`lint` run on a laptop in seconds.
 
-There is still **nothing to run and nothing to assert against** — no tests exist.
-`bash -n`, `shellcheck`, `ruff` and `py_compile` are the whole verification story, and
-none of them execute pipeline logic. Don't claim a step was verified beyond that.
+**What the tests do and do not cover.** `tests/` asserts against the pure-Python
+helpers — intervals, pileup, config parsing, metadata, palettes, QC metrics,
+bias selection — several of them differentially, against bedtools or chrombpnet's
+own output. What they cannot touch is anything needing a GPU, chrombpnet, or
+cluster data: every `sbatch` step is verified only by `bash -n`, `shellcheck` and
+reading the tool's argument parser. **Don't claim a step ran when it didn't** —
+say which of the two kinds of verification a change actually got.
 
 ## Conventions
 - **Indentation: 4 spaces**, bash and Python alike; no tabs anywhere. Python style is
@@ -418,6 +425,21 @@ none of them execute pipeline logic. Don't claim a step was verified beyond that
   `dataset_config.sh`; `03.2` and `04.0` read that map and fail loudly if a fold is
   missing. The loop is intentionally not closed automatically — the plots are meant to
   be reviewed.
+
+- **`03.1` flags a winner at an end of the swept range** (`sweep_edge` in
+  `selected_bias_per_fold.tsv`, plus a log warning and a section in
+  `bias_selection_explanation.txt`). `select_best` answers "best of the factors
+  we tried"; it cannot see past the range it was given, and the metrics look
+  identical whether or not the real optimum lies outside. Note
+  `bias_factors: ["0.5", ...]` puts chrombpnet's recommended ATAC start at the
+  *floor* of the sweep, while its guidance when a bias model regresses TF motifs
+  is to *reduce* the factor — so the default grid can only move the wrong way.
+  Ordering is numeric, not lexical: `"10"` sorts before `"5"` as a string.
+
+- **Whether the bias factor needs sweeping per fold is an open question**, with
+  the mechanism, the decisive analysis and a decision rule fixed in advance in
+  `docs/bias-factor-per-fold.md`. The data to settle it is already on the
+  cluster and needs no GPU. Don't shrink the `03.0` grid before running it.
 
 - **`chrombpnet contribs_bw` silently drops peaks whose 2114 bp window runs off a
   chromosome end**, so the averaged H5 from 06 has fewer rows than

@@ -182,6 +182,44 @@ def select_best(group: pd.DataFrame) -> str:
     return group["bias"].iloc[0]
 
 
+def sweep_order(biases) -> list[str]:
+    """The swept biases from lowest threshold factor to highest.
+
+    Sorted numerically, not lexically. The labels are factor shorthands -- "05"
+    for 0.5, or "0.5" written out -- and a lexical sort puts "10" before "5".
+    Falls back to the order given when a label is not a number at all.
+    """
+    biases = [str(b) for b in biases]
+    try:
+        return sorted(biases, key=float)
+    except ValueError:
+        return list(biases)
+
+
+def sweep_edge(bias: str, biases) -> str:
+    """ "low", "high", or "" -- whether this bias is at an end of the swept range.
+
+    A winner at an end means the sweep may simply have been mis-centred: the
+    true optimum could lie outside it, and nothing in the metrics can tell the
+    difference between "best of those tried" and "best there is". ChromBPNet's
+    guidance runs in both directions -- raise the factor when the bias model
+    underfits, lower it when the model starts regressing TF motifs
+    (chrombpnet/helpers/generate_reports/make_html_bias.py) -- so either end is
+    worth knowing about.
+
+    A one-value sweep is both ends at once; it is reported as "low" since there
+    is nothing to compare against and the only useful action is to widen.
+    """
+    ordered = sweep_order(biases)
+    if len(ordered) < 2:
+        return "low" if str(bias) in ordered else ""
+    if str(bias) == ordered[0]:
+        return "low"
+    if str(bias) == ordered[-1]:
+        return "high"
+    return ""
+
+
 def build_selection_table(
     df: pd.DataFrame, overrides: dict[str, str] | None = None
 ) -> pd.DataFrame:
@@ -207,6 +245,9 @@ def build_selection_table(
         row["fold"] = fold
         row["selected_bias"] = best
         row["status"] = classify_row(grp.set_index("bias").loc[best])
+        # Carried into selected_bias_per_fold.tsv so the hand-off to
+        # fold_bias_suffix shows it, not just the plots.
+        row["sweep_edge"] = sweep_edge(best, df["bias"].unique())
         records.append(row)
     return pd.DataFrame(records).set_index("fold").sort_index()
 
@@ -394,6 +435,31 @@ def generate_explanation(
             f"  ✗ FAIL: {len(fail_folds)} fold(s) failed threshold: {fail_folds}",
             "    These folds require retraining with a higher --bias_threshold_factor.",
         ]
+
+    ordered = sweep_order(biases)
+    low_folds = [f for f in sorted(selection.index) if selection.loc[f, "sweep_edge"] == "low"]
+    high_folds = [f for f in sorted(selection.index) if selection.loc[f, "sweep_edge"] == "high"]
+    if low_folds or high_folds:
+        lines += [
+            "",
+            "  ⚠ SELECTION AT THE EDGE OF THE SWEPT RANGE",
+            f"    Swept: {', '.join(f'bias_{b}' for b in ordered)}",
+            "    A winner at an end of the range means the sweep may be mis-centred:",
+            "    the better model could lie outside it, and no metric here can tell",
+            "    'best of those tried' from 'best there is'.",
+        ]
+        if low_folds:
+            lines += [
+                f"    Fold(s) {low_folds} chose the LOWEST factor (bias_{ordered[0]}).",
+                "      Add a lower --bias_threshold_factor to bias_factors and re-run 03.0",
+                "      for that value alone, then re-run 03.1.",
+            ]
+        if high_folds:
+            lines += [
+                f"    Fold(s) {high_folds} chose the HIGHEST factor (bias_{ordered[-1]}).",
+                "      Add a higher --bias_threshold_factor to bias_factors and re-run 03.0",
+                "      for that value alone, then re-run 03.1.",
+            ]
 
     return "\n".join(lines)
 
@@ -1101,6 +1167,23 @@ def main():
         plot_pearsonr_scatter(df, selection, out_dir / "bias_model_pearsonr_scatter")
 
     print_summary(selection)
+
+    # Loud in the log, not only in the written explanation: an edge selection is
+    # the one outcome where the right next action is to change the sweep rather
+    # than to accept its winner.
+    edge = selection[selection["sweep_edge"] != ""]
+    if not edge.empty:
+        for end, label in (("low", "LOWEST"), ("high", "HIGHEST")):
+            folds_at = list(edge[edge["sweep_edge"] == end].index)
+            if folds_at:
+                logger.warning(
+                    "fold(s) %s selected the %s swept bias factor. The sweep may be "
+                    "mis-centred -- extend bias_factors past that end and re-run 03.0 "
+                    "for the new value, then 03.1. See bias_selection_explanation.txt.",
+                    folds_at,
+                    label,
+                )
+
     logger.info(f"All outputs in: {out_dir}/")
 
 
