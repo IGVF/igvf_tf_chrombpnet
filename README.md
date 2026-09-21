@@ -7,7 +7,7 @@ ChromBPNet pipeline for the IGVF TF collaboration. Trains bias-factorised deep l
 models on ATAC-seq pseudobulks from IGVF datasets to learn sequence-based chromatin
 accessibility and discover TF binding motifs.
 
-See [`pipeline/README.md`](pipeline/README.md) for full documentation.
+See [`workflows/README.md`](workflows/README.md) for full documentation.
 
 ---
 
@@ -25,15 +25,26 @@ See [`pipeline/README.md`](pipeline/README.md) for full documentation.
 ## Repo structure
 
 ```
-pipeline/               Pipeline scripts (steps 00–11) and shared config
+config/
+  example_dataset/config.yaml      annotated dataset template
+  igvf3_cardiomyocyte/config.yaml  a real, working example
+workflows/
+  SLURM/                sbatch scripts, one per pipeline step (00–11) + status.sh
+  nextflow/             placeholder for the Nextflow port
+src/                    cli.py (Click command group) + the remaining argparse tools
+lib/
+  bash/                 config.sh (per-dataset) + common.sh (shared settings, helpers)
+  python/utils/       importable helpers shared by src/ (intervals, references,
+                      compression, folds, log, palettes, plotting, regions)
 scripts/bash/           Utilities (download_references.sh: one-time shared-reference setup)
+scripts/python/         Standalone tools not wired into the pipeline
 envs/                   Conda environment specs (chrombpnet, finemo, motif_compendium)
 folds/                  5-fold cross-validation chromosome splits
-<dataset>/              One folder per dataset (data and results not tracked)
-  dataset_config.sh       Dataset-specific parameters (tracked)
+pixi.toml               Local dev environment (lint + syntax checks + QC plotting)
+<data_root>/<dataset>/  Data and results (never tracked; set data_root in site.sh)
   data/fragments/         Fragment files (*.tsv.gz)
   data/peaks/             Peak files (*.bed)
-  results/                Model outputs written here by pipeline
+  results/                Model outputs, plots and run metadata
 ```
 
 ---
@@ -52,7 +63,7 @@ ml biology samtools bedtools
 bash scripts/bash/download_references.sh
 ```
 
-Reference paths (genome, blacklist, motif DB) are set in `pipeline/config.sh` and each
+Reference paths (genome, blacklist, motif DB) are set in `lib/bash/common.sh` and each
 `dataset_config.sh` and point at the shared `$OAK/engreitz/Data` copies by default.
 
 ---
@@ -60,29 +71,67 @@ Reference paths (genome, blacklist, motif DB) are set in `pipeline/config.sh` an
 ## Quick start
 
 Most steps run per dataset — set `DATASET_DIR` before submitting.
-Steps 03.1, 04.2, and 10 process all datasets internally and do not need `DATASET_DIR`.
+Steps 04.2.qc_combined_boxplot, 09 and qc_datasets process all datasets internally and
+do not need `DATASET_DIR`.
+
+**Submit from `workflows/SLURM/`.** The steps locate the repo by walking up from the
+directory you ran `sbatch` in; set `REPO_ROOT` to submit from anywhere else.
+
+Every step checks its inputs first and, if any are missing, names the step that
+produces them and prints the command to run — so submitting out of order costs you
+a few seconds, not a queued GPU job. `bash status.sh` shows the whole picture.
 
 ```bash
-export DATASET_DIR=/path/to/igvf3_cardiomyocyte   # set per dataset for steps that need it
+export DATASET=igvf3_cardiomyocyte   # picks config/igvf3_cardiomyocyte/
+cd workflows/SLURM
 
-sbatch pipeline/00.copy_and_prepare_data.sh
-sbatch pipeline/01.preprocess_peaks.sh
-sbatch pipeline/02.preprocess_nonpeaks.sh
-sbatch pipeline/03.0.train_bias_model.sh
-sbatch pipeline/03.1.select_bias.sh        # no DATASET_DIR needed; update fold_bias_suffix in dataset_config.sh after
-sbatch pipeline/04.0.train_full_model.sh
-sbatch pipeline/04.1.qc_run_full_model.sh
-sbatch pipeline/04.2.qc_combined_boxplot.sh  # no DATASET_DIR needed; run once all datasets complete 04.1
-sbatch pipeline/05.get_contrib_scores.sh
-sbatch pipeline/06.average_contrib_scores.sh
-sbatch pipeline/07.contribs_to_bigwig.sh
-sbatch pipeline/08.run_modisco.sh
-sbatch pipeline/09.generate_predictions.sh
-sbatch pipeline/10.motif_compendium.sh       # no DATASET_DIR needed; run once all datasets complete 08
-sbatch pipeline/11.run_finemo_unified.sh
+sbatch 00.copy_and_prepare_data.sh
+sbatch 01.preprocess_peaks.sh
+sbatch 02.preprocess_nonpeaks.sh
+sbatch 03.0.train_bias_model.sh
+bash   03.1.select_bias.sh          # not a batch job; update fold_bias_suffix in dataset_config.sh after
+sbatch 03.2.qc_selected_bias.sh
+sbatch 04.0.train_full_model.sh
+sbatch 04.1.qc_run_full_model.sh
+sbatch 04.2.qc_combined_boxplot.sh  # no DATASET_DIR needed; run once all datasets complete 04.1
+sbatch 04.2.generate_predictions.sh
+sbatch 05.get_contrib_scores.sh
+sbatch 06.average_contrib_scores.sh
+sbatch 07.contribs_to_bigwig.sh
+sbatch 08.run_modisco.sh
+sbatch 09.cross_dataset_compendium.sh  # no DATASET_DIR needed; run once all datasets complete 08
+sbatch 10.run_finemo_unified.sh
+sbatch 11.postprocess_finemo.sh
 ```
 
-All shared parameters (conda envs, genome paths, output dirs) are in
-[`pipeline/config.sh`](pipeline/config.sh). Dataset-specific parameters
-(fragment paths, peak files, bias sweep values) are in each dataset's
-`dataset_config.sh`.
+All shared parameters (conda envs, references, algorithm thresholds) are in
+[`lib/bash/common.sh`](lib/bash/common.sh); the per-dataset output layout is derived in
+[`lib/bash/config.sh`](lib/bash/config.sh). Dataset-specific parameters (fragment paths,
+peak files, bias sweep values) are in each dataset's `dataset_config.sh`.
+
+---
+
+## Where am I?
+
+```bash
+export DATASET=igvf3_cardiomyocyte
+bash workflows/SLURM/status.sh      # what has run, and what to run next
+```
+
+Every run also writes a metadata JSON (inputs, outputs, md5s, tool versions, git
+commit, GitHub permalink). Load them all into DuckDB with the recipes in
+[`queries.sql`](queries.sql).
+
+---
+
+## Local development
+
+The cluster stack is not installable on a laptop. `pixi` covers the local checks only:
+
+```bash
+pixi install
+pixi run check           # bash -n + shellcheck + ruff + byte-compile
+pixi run hooks-install   # enable the pre-commit hook
+```
+
+The three cluster environments stay canonical in `envs/*.yml` — see `CLAUDE.md`.

@@ -1,0 +1,19 @@
+# shellcheck configuration for the workflow steps and lib/bash.
+#
+# external-sources: the steps source lib/bash/{config,common}.sh through
+# ${REPO_ROOT}, which shellcheck cannot resolve statically. Each source line
+# carries a "# shellcheck source=..." directive; source-path tells shellcheck
+# where to look relative to the file being checked (workflows/SLURM/* need two
+# levels up, lib/bash/* need one).
+external-sources=true
+source-path=SCRIPTDIR
+source-path=SCRIPTDIR/..
+source-path=SCRIPTDIR/../..
+
+# SC2154 (referenced but not assigned): every step reads variables that come
+# from ${DATASET_DIR}/dataset_config.sh — a per-dataset file outside the repo
+# whose path is only known at runtime. shellcheck cannot follow it, so this
+# fires on datasets, peak_type, folds, bias_factors, fold_bias_suffix,
+# genome_fa, chrom_sizes and friends in nearly every step. Disabled globally
+# rather than annotated ~76 times.
+disable=SC2154

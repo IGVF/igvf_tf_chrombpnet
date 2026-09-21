@@ -1,0 +1,57 @@
+# Install with:  pixi run hooks-install
+# Run over everything now:  pixi run hooks
+#
+# Run the hooks through pixi (or from inside `pixi shell`). The ruff and
+# shellcheck hooks are `language: system` and call the binaries pixi installs,
+# so the pre-commit hook, `pixi run lint` and `pixi run check-bash` are the same
+# tools reading the same config (.ruff.toml, .shellcheckrc) and cannot disagree.
+#
+# Adapted from ../pysceptre. Differences, all because this repo is a SLURM
+# pipeline rather than a package:
+#   - shellcheck is added; it is the main linter here (22 shell scripts to
+#     9 Python files).
+#   - ruff and shellcheck come from pixi rather than pinned hook repos, so
+#     there is one version of each in the repo instead of two.
+#   - check-added-large-files is tighter (256kb). This pipeline's artifacts are
+#     H5/bigwig/fragment files in the hundreds of MB; .gitignore covers them,
+#     this is the backstop.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        # envs/*.yml is `conda env export` output, not hand-written.
+        exclude: ^envs/
+      - id: check-toml
+      - id: check-json
+      - id: check-added-large-files
+        # Results and data must never be committed -- see .gitignore.
+        args: [--maxkb=256]
+      - id: mixed-line-ending
+      - id: check-merge-conflict
+
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: ruff check --fix --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+
+      - id: ruff-format
+        name: ruff format
+        entry: ruff format --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+
+      - id: shellcheck
+        name: shellcheck
+        entry: shellcheck -S warning
+        language: system
+        types: [shell]
+        # The steps are sourced-config bash, not standalone programs.
+        exclude: ^envs/

@@ -1,0 +1,39 @@
+# Lint/format config for lib/python and src.
+#
+# Kept in .ruff.toml rather than pyproject.toml: this repo is a SLURM pipeline,
+# not an installable package, so there is no pyproject.toml to hang it off.
+# The CLI, the pixi tasks and the pre-commit hook all read this one file and
+# therefore cannot disagree.
+line-length = 100
+indent-width = 4
+
+# scripts/python/detect_tn5_shift.py is vendored verbatim from scPrinter
+# (Ruochi Zhang, buenrostrolab/scPrinter). Linting it would mean editing code we
+# do not own; changes belong upstream. It is still byte-compiled by "pixi run
+# check-py". NOTE: ruff does find a real latent bug in it -- F821 on
+# `reverse_context` at line 176, in a debug print reachable only when a forward
+# context comes back the wrong shape. Report it upstream rather than patching here.
+exclude = ["scripts/python"]
+
+[lint]
+# E501 is off: the formatter owns line length, and leaving it on flags the long
+# Input/Output/Usage prose in the module docstrings, which it cannot rewrap.
+select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
+# B905 (zip() without strict=) fires 10 times in the QC plotting scripts, all
+# pre-dating the lib/src split. strict=True would change behaviour and
+# strict=False is noise, so the call sites need reviewing one at a time
+# rather than a blanket autofix. Re-enable when that is done.
+ignore = ["E501", "B905"]
+
+[lint.isort]
+# lib/python/utils is this repo's own package; without this ruff groups it
+# with numpy/pandas because it is not installed, only on sys.path.
+known-first-party = ["utils"]
+
+[lint.per-file-ignores]
+# Every script in src/ inserts lib/python on sys.path before importing utils,
+# so its imports cannot all sit at the top of the file.
+"src/*.py" = ["E402"]
+
+[format]
+indent-style = "space"

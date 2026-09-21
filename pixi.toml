@@ -1,0 +1,87 @@
+[workspace]
+name = "igvf-tf-chrombpnet"
+description = "ChromBPNet pipeline for the IGVF TF collaboration"
+channels = ["conda-forge", "bioconda"]
+platforms = ["linux-64", "osx-arm64"]
+
+# Scope: pixi covers local development only — linting, syntax checks, and
+# running the QC/plotting scripts on results copied off the cluster.
+#
+# It deliberately does NOT reproduce the three cluster environments. The
+# chrombpnet stack pins tensorflow==2.8.0 / numpy==1.23.4 / keras==2.8.0 as pip
+# dependencies with CUDA 11 wheels; finemo and MotifCompendium pin mutually
+# incompatible torch and cupy builds. Those three stay canonical in envs/*.yml
+# as fully pinned conda exports and are created with `conda env create`.
+# See CLAUDE.md, "Environments".
+
+[dependencies]
+python = ">=3.12,<3.14"
+
+[feature.dev.dependencies]
+ruff = "*"
+shellcheck = "*"
+pre-commit = "*"
+bash = ">=5.2.37,<6"
+pytest = ">=9.1.1,<10"
+
+[feature.qc.dependencies]
+pytest = "*"
+numpy = ">=1.23"
+pandas = ">=2.0"
+scipy = ">=1.10"
+matplotlib = ">=3.7"
+h5py = ">=3.8"
+pysam = ">=0.24.1,<0.25"
+duckdb = ">=1.5.5,<2"
+click = ">=8.5.0,<9"
+pyyaml = ">=6.0.3,<7"
+
+[feature.qc.pypi-dependencies]
+pyranges1 = ">=1.4"
+
+[environments]
+default = { features = ["dev"], solve-group = "main" }
+qc = { features = ["qc"], solve-group = "main" }
+
+[tasks.lint]
+description = "ruff check over lib/ and src/"
+cmd = "ruff check lib/python src"
+
+[tasks.fmt-check]
+description = "ruff format --diff (does not write)"
+cmd = "ruff format --diff lib/python src"
+
+[tasks.fmt]
+description = "ruff format (writes)"
+cmd = "ruff format lib/python src"
+
+[tasks.check-bash]
+description = "bash -n + shellcheck over every workflow step and bash lib"
+cmd = """
+bash -c '
+set -e
+for f in workflows/SLURM/*.sh lib/bash/*.sh scripts/bash/*.sh; do bash -n "$f"; done
+echo "bash -n: OK"
+shellcheck -S warning workflows/SLURM/*.sh lib/bash/*.sh scripts/bash/*.sh
+'
+"""
+
+[tasks.check-py]
+description = "byte-compile every Python file (no cluster imports needed)"
+cmd = "python -m compileall -q lib/python src scripts/python"
+
+[tasks.test]
+description = "pytest (needs the qc env: pyranges1, Python >= 3.12)"
+cmd = "pytest tests -q"
+
+[tasks.hooks-install]
+description = "install the git pre-commit hook"
+cmd = "pre-commit install"
+
+[tasks.hooks]
+description = "run every pre-commit hook over all files"
+cmd = "pre-commit run --all-files"
+
+[tasks.check]
+description = "all local checks"
+depends-on = ["check-bash", "check-py", "lint"]

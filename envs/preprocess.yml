@@ -1,0 +1,31 @@
+# preprocess environment — interval/table work with no deep-learning stack.
+#
+# Exists because pyranges1 requires Python >= 3.12 and the other three envs
+# cannot move: chrombpnet pins tensorflow==2.8/keras==2.8 (Python 3.10),
+# motif_compendium is 3.10, finemo is 3.11. Steps 00 and 01 and the reference
+# builder need none of those, so they get their own env instead.
+#
+# NOTE the import name: the distribution is `pyranges1` AND so is the module —
+# `import pyranges1 as pr`. Plain `import pyranges` gets the unrelated 0.x line.
+# pyranges1 is backed by `ruranges`, a Rust extension, which is why it is fast.
+#
+#   conda env create -f envs/preprocess.yml
+#
+# Unlike the other three specs this is a hand-written spec, not a
+# `conda env export` — it is new, so there is no existing solve to preserve.
+# Export it once it is created on the cluster if you want it pinned.
+name: preprocess
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python>=3.12,<3.14
+  - pandas>=2.0
+  - numpy>=1.23
+  - pysam>=0.22        # bgzip writing + tabix indexing, no htslib shell-out
+  - click>=8.1         # the src/cli.py command group
+  - pyyaml>=6          # full YAML for config.py (it falls back to a
+                       # strict built-in subset parser when absent)
+  - pip
+  - pip:
+      - pyranges1>=1.4  # not on conda-forge/bioconda; conda's `pyranges` is 0.1.4

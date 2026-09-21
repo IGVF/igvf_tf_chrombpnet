@@ -41,3 +41,6 @@ __pycache__/
 .virtual_documents/
 .vscode/
 .claude/
+
+# pixi
+.pixi/

@@ -1,0 +1,55 @@
+# ChromBPNet configuration — template. Every path below is a placeholder.
+# To add a dataset, see config/README.md.
+
+# Identifier for this dataset. Used verbatim in every output filename and in the
+# run metadata, so keep it short and filesystem-safe. It also supplies the
+# default for bias_dataset (whose reads train the Tn5 bias model).
+#
+# Keep this equal to the folder name: `DATASET=<name>` selects the folder, while
+# this names the outputs, so if they differ you get outputs you did not expect.
+dataset_name: example_dataset
+
+# Peaks to train on. Step 01 blacklist-filters this and writes the 10-column
+# narrowPeak chrombpnet wants (-p).
+regions: "/path/to/peaks.bed"
+
+# ATAC or DNASE (-d).
+assay: ATAC
+
+# The signal. Its kind is taken from the extension, so there is no second key to
+# keep in sync:
+#   .bam                          -> -ibam
+#   .tagAlign[.gz]                -> -itag
+#   .fragments.tsv.gz / .tsv.gz   -> -ifrag
+#   .bw / .bigWig                 -> used directly as the prepared bigwig
+#
+# A bigwig is NOT a chrombpnet training input; supplying one works here because
+# the pipeline hands a prepared bigwig straight to training, which skips the
+# conversion entirely. It must already carry the Tn5 shift chrombpnet expects
+# (+4/-4 for ATAC) — an unshifted bigwig will train, and be subtly wrong.
+signal_path: "/path/to/reads.fragments.tsv.gz"
+
+# Everything the pipeline writes goes under here.
+output_dir: "/path/to/results"
+
+# Label; becomes part of every output filename.
+peak_type: all
+
+# Use ["0"] for a quick single-fold test run.
+folds: ["0", "1", "2", "3", "4"]
+
+# Bias sweep (03.0). Positional: bias_factors[i] pairs with bias_suffixes_sweep[i].
+# The array is len(bias_sweep_folds) x len(bias_factors) GPU jobs; uncomment
+# bias_sweep_folds to pilot on fewer folds first. `cli.py config validate`
+# prints the --array range.
+bias_factors: ["0.5", "0.6", "0.7", "0.8"]
+bias_suffixes_sweep: ["_05", "_06", "_07", "_08"]
+# bias_sweep_folds: ["0"]
+
+# Filled in by hand after 03.1 writes selected_bias_per_fold.tsv.
+fold_bias_suffix:
+  "0": ""
+  "1": ""
+  "2": ""
+  "3": ""
+  "4": ""
