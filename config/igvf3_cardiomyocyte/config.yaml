@@ -51,6 +51,23 @@ signal_path: "${DATASET_ROOT}/igvf3_cardiomyocyte/data/fragments/igvf3_cardiomyo
 # chrom.sizes. Set false if they are already clean, to skip a full pass.
 filter_main_chroms: true
 
+# Tn5 shift ALREADY PRESENT in your reads, as (plus, minus). The pileup adjusts
+# from this to chrombpnet's +4/-4 (ATAC) or 0/+1 (DNASE) convention.
+#
+# Setting it is the normal path: the pileup itself needs no genome sequence, so
+# with these two values 00.0 requires no FASTA and no pyfaidx at all.
+#
+# Common cases:
+#   0, 0     raw alignments, no Tn5 correction applied
+#   4, -5    already Tn5-corrected the conventional way (e.g. 10x CellRanger
+#            ATAC fragments) -> adjustment becomes 0, +1
+#
+# Leave BOTH unset to auto-detect instead, which reads sequence around cut
+# sites and therefore does require `genome_fa` and pyfaidx. Detection is a
+# one-off: run it once, then write the answer here.
+plus_shift: 4
+minus_shift: -5
+
 # Everything the pipeline writes goes under here.
 output_dir: "${DATASET_ROOT}/igvf3_cardiomyocyte/results"
 

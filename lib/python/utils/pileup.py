@@ -94,44 +94,81 @@ def pileup_runs(cuts: np.ndarray, chrom_length: int):
     return starts[keep], ends[keep], values[keep].astype(np.float32)
 
 
-def _iter_fragment_chunks(path, chunk_rows: int = CHUNK_ROWS):
-    """Yield (chrom, start, end) frames from a fragments TSV, gz or plain."""
+def _iter_fragment_chunks(path, all_columns: bool, chunk_rows: int = CHUNK_ROWS):
+    """Yield chunks of a fragments TSV, gz or plain.
+
+    ``all_columns`` keeps barcode/count, which matters only when the filtered
+    rows are written back out; the pileup needs the first three. Parsing three
+    columns rather than five is meaningfully cheaper over hundreds of millions
+    of rows.
+    """
     import pandas as pd
 
-    yield from pd.read_csv(
-        path,
-        sep="\t",
-        header=None,
-        comment="#",
-        usecols=[0, 1, 2],
-        names=["chrom", "start", "end"],
-        dtype={"chrom": str, "start": np.int64, "end": np.int64},
-        chunksize=chunk_rows,
-    )
+    kwargs = {
+        "sep": "\t",
+        "header": None,
+        "comment": "#",
+        "chunksize": chunk_rows,
+        "dtype": {0: str, 1: np.int64, 2: np.int64},
+    }
+    if not all_columns:
+        kwargs["usecols"] = [0, 1, 2]
+    yield from pd.read_csv(path, **kwargs)
 
 
-def collect_cuts(fragments_path, chrom_sizes: dict[str, int], plus_delta, minus_delta):
-    """Stream the fragments once, returning {chrom: array of cut positions}.
+def collect_cuts(
+    fragments_path,
+    chrom_sizes: dict[str, int],
+    plus_delta,
+    minus_delta,
+    write_filtered=None,
+):
+    """Filter to the main chromosomes AND count cut sites in a SINGLE pass.
 
-    Memory is proportional to the number of cut sites (2 per fragment, int64),
-    not to the genome, and the file is never materialised in full.
+    Dropping rows on contigs absent from ``chrom_sizes`` *is* the
+    main-chromosome filter, and the pileup has to look at every row anyway, so
+    running the filter as a separate pass over a multi-GB file buys nothing.
+
+    ``write_filtered`` additionally writes the kept rows out (bgzipped when the
+    path ends in .gz), preserving every column so barcodes survive. That file is
+    only needed for the fallback where chrombpnet reads the reads itself; omit
+    it and nothing is rewritten at all.
+
+    Returns ``(cuts_by_chrom, skipped_by_contig, kept_row_count)``. Memory is
+    proportional to the number of cut sites, not to the genome.
     """
     per_chrom: dict[str, list[np.ndarray]] = {}
     skipped: dict[str, int] = {}
-    for chunk in _iter_fragment_chunks(fragments_path):
-        for chrom, grp in chunk.groupby("chrom", sort=False):
-            if chrom not in chrom_sizes:
-                skipped[chrom] = skipped.get(chrom, 0) + len(grp)
+    kept_rows = 0
+
+    out_fh = None
+    if write_filtered is not None:
+        from utils import compression
+
+        out_fh = compression.open_write(write_filtered)
+    try:
+        for chunk in _iter_fragment_chunks(fragments_path, all_columns=out_fh is not None):
+            keep = chunk[0].isin(chrom_sizes.keys())
+            if not keep.all():
+                for contig, n in chunk.loc[~keep, 0].value_counts().items():
+                    skipped[contig] = skipped.get(contig, 0) + int(n)
+            kept = chunk[keep]
+            if kept.empty:
                 continue
-            per_chrom.setdefault(chrom, []).append(
-                cut_positions(
-                    grp["start"].to_numpy(), grp["end"].to_numpy(), plus_delta, minus_delta
+            kept_rows += len(kept)
+
+            if out_fh is not None:
+                out_fh.write(kept.to_csv(sep="\t", header=False, index=False).encode())
+
+            for chrom, grp in kept.groupby(0, sort=False):
+                per_chrom.setdefault(chrom, []).append(
+                    cut_positions(grp[1].to_numpy(), grp[2].to_numpy(), plus_delta, minus_delta)
                 )
-            )
-    return (
-        {c: np.concatenate(parts) for c, parts in per_chrom.items()},
-        skipped,
-    )
+    finally:
+        if out_fh is not None:
+            out_fh.close()
+
+    return {c: np.concatenate(v) for c, v in per_chrom.items()}, skipped, kept_rows
 
 
 def write_bigwig(out_path, chrom_sizes: dict[str, int], cuts_by_chrom: dict[str, np.ndarray]):

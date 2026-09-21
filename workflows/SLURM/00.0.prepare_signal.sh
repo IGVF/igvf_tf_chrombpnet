@@ -18,10 +18,13 @@
 # duplication of a multi-GB file.)
 #
 # Three things, each skipped when unnecessary:
-#   1. filter reads to the main chromosomes — bedtools genomecov, which the
-#      conversion below runs, fails on contigs absent from the chrom.sizes file
-#   2. normalise a BAM to tagAlign (what chrombpnet does internally anyway)
-#   3. build the bigwig the training steps reuse
+#   1. filter reads to the main chromosomes AND count Tn5 cut sites, in a
+#      single pass over the file
+#   2. write the bigwig the training steps reuse
+#
+# No chrombpnet, and no genome FASTA: the pileup is numpy + pybigtools, and the
+# Tn5 shift comes from plus_shift/minus_shift in the config. Only auto-detecting
+# the shift needs sequence, and then only a one-off.
 #
 # chrombpnet train / pipeline / bias train all begin with:
 #   enzyme-shift auto-detection (samples reads, compares to a reference motif)
@@ -86,13 +89,14 @@ metadata_outputs+=( "prepared_bigwig=${prepared_dir}/data_unstranded.bw" )
 metadata_params+=( "signal_type=${signal_type}" "assay=${assay}" )
 require_input "${signal_path}" ""
 if [[ "${signal_type}" != "bigwig" ]]; then
-    # Only the read->bigwig conversion needs these, and a bigwig signal skips it.
-    #   genome_fa   : chrombpnet auto-detects the Tn5 shift by building PWMs from
-    #                 the sequence around cut sites (auto_shift_detect.compute_shift),
-    #                 and stream_filtered_tagaligns reads it too.
-    #   chrom_sizes : bedtools genomecov -g, and bedGraphToBigWig.
-    require_input "${genome_fa}"   scripts/bash/download_references.sh
+    # chrom.sizes bounds the pileup, so it is always needed for reads.
     require_input "${chrom_sizes}" scripts/bash/download_references.sh
+    # The genome is needed ONLY to auto-detect the Tn5 shift, which reads
+    # sequence around cut sites. With plus_shift/minus_shift in the config there
+    # is nothing to detect and no FASTA is touched.
+    if [[ -z "${plus_shift}" || -z "${minus_shift}" ]]; then
+        require_input "${genome_fa}" scripts/bash/download_references.sh
+    fi
 fi
 preflight_check
 
@@ -110,25 +114,16 @@ if [[ -f "${prepared_dir}/data_unstranded.bw" && -f "${prepared_dir}/prepared_bi
     exit 0
 fi
 
-# ── 1. main-chromosome filter ────────────────────────────────────────────────
-# Only for read-type signals, and only when asked. The conversion below runs
-# bedtools genomecov -g "${chrom_sizes}", which errors on any contig missing
-# from that file, so scaffold-carrying fragments must be filtered first.
-# Set filter_main_chroms: false in config.yaml if the reads are already clean.
-reads_for_conversion="${signal_path}"
-if [[ "${signal_type}" != "bigwig" && "${filter_main_chroms:-true}" == "true" ]]; then
-    filtered="${prepared_dir}/${dataset_name}_main_chrs.tsv.gz"
-    if [[ -f "${filtered}" ]]; then
-        echo "[$(date)] Main-chromosome filter already done: ${filtered}"
-    else
-        echo "[$(date)] Filtering ${signal_path} to the main chromosomes"
-        python "${src_dir}/cli.py" filter-fragments \
-            --input        "${signal_path}" \
-            --output       "${filtered}" \
-            --metadata-dir "${metadata_dir}"
-    fi
-    reads_for_conversion="${filtered}"
-    metadata_outputs+=( "filtered_reads=${filtered}" )
+# ── the read path: filter and convert in ONE pass ────────────────────────────
+# Dropping rows on contigs absent from chrom.sizes IS the main-chromosome
+# filter, and the pileup reads every row anyway, so there is no separate filter
+# pass. --write-filtered additionally keeps those rows as a file, which is only
+# needed for the fallback where chrombpnet reads the reads itself; set
+# filter_main_chroms: false to skip writing it and rewrite nothing.
+filtered_args=()
+if [[ "${filter_main_chroms:-true}" == "true" ]]; then
+    filtered_args+=( --write-filtered "${prepared_dir}/${dataset_name}_main_chrs.tsv.gz" )
+    metadata_outputs+=( "filtered_reads=${prepared_dir}/${dataset_name}_main_chrs.tsv.gz" )
 fi
 
 if [[ "${signal_type}" == "bigwig" ]]; then
@@ -166,11 +161,21 @@ fi
 
 echo "[$(date)] Preparing signal on CPU (this is what the GPU jobs will skip)"
 
+shift_args=()
+if [[ -n "${plus_shift}" && -n "${minus_shift}" ]]; then
+    # Known shift: no detection, so no genome sequence is read.
+    shift_args+=( --plus-shift "${plus_shift}" --minus-shift "${minus_shift}" )
+else
+    echo "[$(date)] plus_shift/minus_shift not set; detecting (needs ${genome_fa})"
+    shift_args+=( --genome "${genome_fa}" )
+fi
+
 python "${src_dir}/cli.py" prepare-bigwig \
-    --signal-path  "${reads_for_conversion}" \
+    "${shift_args[@]}" \
+    ${filtered_args[@]+"${filtered_args[@]}"} \
+    --signal-path  "${signal_path}" \
     --signal-type  "${signal_type}" \
     --assay        "${assay}" \
-    --genome       "${genome_fa}" \
     --chrom-sizes  "${chrom_sizes}" \
     --out-dir      "${prepared_dir}" \
     --metadata-dir "${metadata_dir}"

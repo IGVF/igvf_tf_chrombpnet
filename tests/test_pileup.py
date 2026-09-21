@@ -24,7 +24,6 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "lib" / "python"))
 
 pytest.importorskip("pybigtools", reason="needs the pixi 'qc' environment")
-import pybigtools  # noqa: E402
 
 from utils import pileup  # noqa: E402
 
@@ -82,7 +81,7 @@ def oracle_bigwig(tmp_path, fragments, chrom_sizes, dp, dm) -> Path:
 def ours_bigwig(tmp_path, fragments, chrom_sizes, dp, dm) -> Path:
     frags = tmp_path / "frags.tsv"
     frags.write_text("".join(f"{c}\t{s}\t{e}\n" for c, s, e in fragments))
-    cuts, _ = pileup.collect_cuts(frags, chrom_sizes, dp, dm)
+    cuts, _skipped, _kept = pileup.collect_cuts(frags, chrom_sizes, dp, dm)
     out = tmp_path / "ours.bw"
     pileup.write_bigwig(out, chrom_sizes, cuts)
     return out
@@ -217,3 +216,87 @@ def test_runs_are_nonzero_only():
 def test_no_cuts_gives_no_intervals():
     starts, ends, values = pileup.pileup_runs(np.array([], dtype=np.int64), 100)
     assert starts.size == ends.size == values.size == 0
+
+
+# ── filtering and conversion happen in ONE pass ──────────────────────────────
+
+
+def test_contigs_absent_from_chrom_sizes_are_dropped(tmp_path):
+    """That drop IS the main-chromosome filter -- no separate pass needed."""
+    f = tmp_path / "f.tsv"
+    f.write_text("chr1\t100\t200\nchrUn_GL000220v1\t10\t50\nchr1\t300\t400\n")
+    cuts, skipped, kept = pileup.collect_cuts(f, {"chr1": 1000}, 4, -4)
+    assert set(cuts) == {"chr1"}
+    assert skipped == {"chrUn_GL000220v1": 1}
+    assert kept == 2
+
+
+def test_write_filtered_emits_kept_rows_in_the_same_pass(tmp_path):
+    f = tmp_path / "f.tsv"
+    f.write_text("chr1\t100\t200\tAAA\t1\nchrUn\t10\t50\tBBB\t1\nchr2\t5\t9\tCCC\t2\n")
+    out = tmp_path / "filtered.tsv.gz"
+    cuts, skipped, kept = pileup.collect_cuts(
+        f, {"chr1": 1000, "chr2": 500}, 4, -4, write_filtered=out
+    )
+    import gzip
+
+    rows = gzip.open(out, "rt").read().strip().split("\n")
+    assert [r.split("\t")[0] for r in rows] == ["chr1", "chr2"]
+    # every column survives, so barcodes are not lost
+    assert rows[0].split("\t")[3] == "AAA"
+    assert kept == 2 and skipped == {"chrUn": 1}
+
+
+def test_write_filtered_is_bgzipped_so_it_can_be_indexed(tmp_path):
+    from utils import compression
+
+    f = tmp_path / "f.tsv"
+    f.write_text("chr1\t100\t200\n")
+    out = tmp_path / "filtered.tsv.gz"
+    pileup.collect_cuts(f, {"chr1": 1000}, 4, -4, write_filtered=out)
+    assert compression.is_bgzf(out)
+
+
+def test_filtered_output_is_optional(tmp_path):
+    """Omitting it means a multi-GB file is never rewritten."""
+    f = tmp_path / "f.tsv"
+    f.write_text("chr1\t100\t200\n")
+    pileup.collect_cuts(f, {"chr1": 1000}, 4, -4)
+    assert list(tmp_path.glob("*.gz")) == []
+
+
+# ── preprocessing must not depend on chrombpnet ──────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "module", ["utils/pileup.py", "utils/shift.py", "utils/compression.py", "utils/intervals.py"]
+)
+def test_preprocessing_modules_do_not_import_chrombpnet(module):
+    import ast
+
+    tree = ast.parse((REPO / "lib" / "python" / module).read_text())
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported |= {a.name.split(".")[0] for a in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module.split(".")[0])
+    assert "chrombpnet" not in imported
+    assert "torch" not in imported, "torch was dropped from shift detection"
+
+
+def test_shift_deltas_target_chrombpnet_not_scprinter():
+    """scPrinter's detect_shift targets +4/-5; chrombpnet wants +4/-4."""
+    from utils import shift as sh
+
+    assert sh.shift_deltas(0, 0, "ATAC") == (4, -4)
+    assert sh.shift_deltas(0, 0, "DNASE") == (0, 1)
+    # already at chrombpnet's convention -> no further adjustment
+    assert sh.shift_deltas(4, -4, "ATAC") == (0, 0)
+
+
+def test_shift_deltas_rejects_unknown_assay():
+    from utils import shift as sh
+
+    with pytest.raises(ValueError, match="ATAC or DNASE"):
+        sh.shift_deltas(0, 0, "CHIP")

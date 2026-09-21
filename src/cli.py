@@ -32,11 +32,24 @@ from utils import (  # noqa: E402
     intervals,
     log,
     metadata,
-    pileup,  # noqa: E402
+    pileup,
     references,
+    shift,
 )
 
 logger = log.get_logger(__name__)
+
+
+def _optional_version(dist: str):
+    """Version of an installed distribution, or None. Never raises."""
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as _v
+
+    try:
+        return _v(dist)
+    except PackageNotFoundError:
+        return None
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC = REPO_ROOT / "src"
@@ -266,7 +279,14 @@ def filter_fragments(input_path, output_path, chroms, index, metadata_dir, verbo
 @click.option("--signal-path", required=True, type=click.Path(exists=True, dir_okay=False))
 @click.option("--signal-type", required=True, type=click.Choice(["fragments", "bam", "tagalign"]))
 @click.option("--assay", default="ATAC", type=click.Choice(["ATAC", "DNASE"]))
-@click.option("--genome", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--genome",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Reference FASTA. Needed ONLY to detect the Tn5 shift, which reads "
+    "sequence around cut sites. Not needed at all if you give "
+    "--plus-shift/--minus-shift: the pileup itself never uses it.",
+)
 @click.option("--chrom-sizes", required=True, type=click.Path(exists=True, dir_okay=False))
 @click.option(
     "--out-dir",
@@ -275,12 +295,33 @@ def filter_fragments(input_path, output_path, chroms, index, metadata_dir, verbo
     help="Prepared-bigwig directory, passed to --prepared-bigwig later.",
 )
 @click.option(
+    "--write-filtered",
+    default=None,
+    type=click.Path(),
+    help="Also write the main-chromosome rows here, in the SAME pass (bgzipped "
+    "if .gz). Only needed for the fallback where chrombpnet reads the reads "
+    "itself; omit it and nothing is rewritten.",
+)
+@click.option(
+    "--plus-shift",
+    type=int,
+    default=None,
+    help="Tn5 shift already present in the reads, plus strand. Give this with "
+    "--minus-shift to skip detection entirely -- then no FASTA is needed, "
+    "because the pileup does not read sequence.",
+)
+@click.option(
+    "--minus-shift",
+    type=int,
+    default=None,
+    help="As --plus-shift, minus strand.",
+)
+@click.option(
     "--num-samples",
     type=int,
     default=10000,
     show_default=True,
-    help="Reads sampled for Tn5 shift detection. This is chrombpnet's own default; "
-    "changing it makes the bigwig differ from what chrombpnet would have produced.",
+    help="Reads sampled for Tn5 shift detection (only used when detecting).",
 )
 @click.option("--metadata-dir", default=None, type=click.Path(file_okay=False))
 @verbose_opt
@@ -292,6 +333,7 @@ def prepare_bigwig(
     genome,
     chrom_sizes,
     out_dir,
+    write_filtered,
     plus_shift,
     minus_shift,
     num_samples,
@@ -312,10 +354,6 @@ def prepare_bigwig(
     """
     _setup_logging(verbose, quiet)
     import json as _json
-    from importlib.metadata import version as dist_version
-
-    import chrombpnet.helpers.preprocessing.auto_shift_detect as auto_shift_detect
-    from chrombpnet.data import DefaultDataFile, get_default_data_path
 
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -323,38 +361,29 @@ def prepare_bigwig(
 
     with metadata.record("prepare_bigwig", out_dir=meta_dir) as md:
         md.add_input("signal", signal_path)
-        md.add_input("genome", genome)
+        if genome:
+            md.add_input("genome", genome)
         md.add_param("signal_type", signal_type)
         md.add_param("assay", assay)
         md.add_param("num_samples", num_samples)
 
-        # ── 1. shift detection: chrombpnet's, unchanged ──────────────────
-        # Only the pileup is reimplemented. The shift still comes from
-        # auto_shift_detect.compute_shift with chrombpnet's own default sample
-        # size, so the bigwig is what chrombpnet would have produced.
+        # ── 1. shift detection: ours, no chrombpnet ─────────────────────
+        # utils.shift (vendored scPrinter) reports the shift ALREADY PRESENT in
+        # the reads; shift_deltas then adjusts to chrombpnet's +4/-4 target.
         if plus_shift is None or minus_shift is None:
-            ref = get_default_data_path(
-                DefaultDataFile.atac_ref_motifs
-                if assay == "ATAC"
-                else DefaultDataFile.dnase_ref_motifs
-            )
-            logger.info("detecting the Tn5 shift (%d sampled reads)", num_samples)
-            plus_shift, minus_shift = auto_shift_detect.compute_shift(
-                signal_path if signal_type == "bam" else None,
-                signal_path if signal_type == "fragments" else None,
-                signal_path if signal_type == "tagalign" else None,
-                num_samples,
-                genome,
-                assay,
-                ref,
-            )
+            if genome is None:
+                raise click.UsageError(
+                    "--genome is required to detect the Tn5 shift (it reads sequence "
+                    "around cut sites). Either pass it, or pass --plus-shift and "
+                    "--minus-shift and no FASTA is needed."
+                )
+            logger.info("detecting the Tn5 shift already present in the reads")
+            plus_shift, minus_shift = shift.detect_shift_raw(signal_path, genome)
         logger.info("shift in the reads: %+d/%+d", plus_shift, minus_shift)
 
-        # chrombpnet's normalisation target: +4/-4 for ATAC, 0/+1 for DNASE.
-        if assay == "ATAC":
-            plus_delta, minus_delta = 4 - plus_shift, -4 - minus_shift
-        else:
-            plus_delta, minus_delta = -plus_shift, 1 - minus_shift
+        # Adjust from the detected shift to chrombpnet's target: +4/-4 (ATAC),
+        # 0/+1 (DNASE). NOT scPrinter's +4/-5 -- see utils.shift.
+        plus_delta, minus_delta = shift.shift_deltas(plus_shift, minus_shift, assay)
         logger.info("applying delta %+d/%+d", plus_delta, minus_delta)
         md.add_param("plus_shift", plus_shift)
         md.add_param("minus_shift", minus_shift)
@@ -363,8 +392,14 @@ def prepare_bigwig(
 
         # ── 2. pileup: ours, not chrombpnet's two external sorts ─────────────
         chromsizes = intervals.read_chromsizes(chrom_sizes)
-        logger.info("counting cut sites")
-        cuts, skipped = pileup.collect_cuts(signal_path, chromsizes, plus_delta, minus_delta)
+        logger.info("filtering to the main chromosomes and counting cut sites (one pass)")
+        cuts, skipped, kept = pileup.collect_cuts(
+            signal_path, chromsizes, plus_delta, minus_delta, write_filtered=write_filtered
+        )
+        md.add_param("reads_kept", kept)
+        if write_filtered:
+            md.add_output("filtered_reads", write_filtered)
+            logger.info("filtered reads -> %s", write_filtered)
         if skipped:
             logger.warning(
                 "skipped %d read(s) on %d contig(s) absent from chrom.sizes: %s",
@@ -384,9 +419,12 @@ def prepare_bigwig(
             "signal_md5": metadata.md5sum(signal_path),
             "signal_type": signal_type,
             "assay": assay,
-            "chrombpnet_version": dist_version("chrombpnet"),
+            # Recorded when chrombpnet happens to be installed, but preprocessing
+            # does not import it, so its absence is not an error.
+            "chrombpnet_version": _optional_version("chrombpnet"),
             # Which code produced the pileup, so a record says so.
             "pileup": "numpy",
+            "shift_detection": "utils.shift (scPrinter)",
             "plus_shift": int(plus_shift),
             "minus_shift": int(minus_shift),
         }
