@@ -253,57 +253,6 @@ def filter_fragments(input_path, output_path, chroms, index, metadata_dir, verbo
             logger.info(f"-> {tbi}")
 
 
-# ── prepare-signal (A) ────────────────────────────────────────────────────────
-
-
-@cli.command("prepare-signal")
-@click.option("--input", "input_path", required=True, type=click.Path(exists=True, dir_okay=False))
-@click.option("--signal-type", required=True, type=click.Choice(["fragments", "bam", "tagalign"]))
-@click.option("--output", "output_path", required=True, help="Normalised signal (.tagalign.gz).")
-@click.option("--metadata-dir", default=None, type=click.Path(file_okay=False))
-@verbose_opt
-@quiet_opt
-def prepare_signal(input_path, signal_type, output_path, metadata_dir, verbose, quiet):
-    """Normalise a BAM to tagAlign once, on CPU.
-
-    chrombpnet converts whatever you give it to a tagAlign stream internally, and
-    for a BAM that means `bedtools bamtobed` on every training task. Doing it once
-    here and setting `signal_type: tagalign` makes each of those tasks read a text
-    stream instead of decoding the BAM again. The output is byte-equivalent to what
-    chrombpnet's own `bam_to_tagalign_stream` produces, so the data is unchanged.
-
-    fragments and tagalign inputs need no normalisation and are passed through.
-    """
-    _setup_logging(verbose, quiet)
-    import subprocess
-
-    from utils import compression
-
-    if signal_type != "bam":
-        logger.info("%s needs no normalisation; use it directly as signal_path", signal_type)
-        return
-
-    meta_dir = metadata_dir or (Path(output_path).parent / "metadata")
-    with metadata.record("prepare_signal", out_dir=meta_dir) as md:
-        md.add_input("bam", input_path)
-        md.add_param("signal_type_in", "bam")
-        md.add_param("signal_type_out", "tagalign")
-
-        logger.info("bedtools bamtobed %s -> %s", input_path, output_path)
-        with compression.open_write(output_path) as out:
-            proc = subprocess.Popen(
-                ["bedtools", "bamtobed", "-i", str(input_path)], stdout=subprocess.PIPE
-            )
-            for chunk in iter(lambda: proc.stdout.read(1 << 22), b""):
-                out.write(chunk)
-            proc.stdout.close()
-            if proc.wait() != 0:
-                raise click.ClickException(f"bedtools bamtobed failed on {input_path}")
-
-        md.add_output("tagalign", output_path)
-        logger.info("-> %s   (set signal_type: tagalign, signal_path: this file)", output_path)
-
-
 # ── prepare-bigwig (B) ────────────────────────────────────────────────────────
 
 

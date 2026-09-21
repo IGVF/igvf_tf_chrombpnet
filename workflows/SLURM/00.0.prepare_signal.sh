@@ -89,6 +89,9 @@ require_input "${genome_fa}"   scripts/bash/download_references.sh
 require_input "${chrom_sizes}" scripts/bash/download_references.sh
 preflight_check
 
+# bedtools and bedGraphToBigWig are for CHROMBPNET, not for us: its
+# reads_to_bigwig shells out to `bedtools genomecov`. Our own interval work
+# is pyranges1 and needs neither.
 ml biology bedtools
 load_render_modules
 activate_env "${CONDA_ENV}"
