@@ -58,7 +58,6 @@ require_input "${folds_dir}/fold_${fold}.json"
 preflight_check
 
 activate_env "${CONDA_ENV}"
-metadata_tools+=( "$(tool_version chrombpnet chrombpnet --version)" )
 metadata_outputs+=( "negatives=${negatives_file}" )
 metadata_params+=( "fold=${fold}" "peak_type=${peak_type}" )
         if [[ -f "${negatives_file}" ]]; then

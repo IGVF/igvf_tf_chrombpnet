@@ -71,7 +71,6 @@ require_input "${regions_file}" 05.0.get_contrib_scores.sh
 preflight_check
 
 activate_env "${CONDA_ENV}"
-metadata_tools+=( "$(tool_version chrombpnet chrombpnet --version)" )
 metadata_params+=( "dataset=${dataset}" )
 if [[ ! -f "${regions_file}" ]]; then
     echo "[${dataset}] Regions BED not found: ${regions_file}" >&2

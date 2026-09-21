@@ -75,7 +75,6 @@ activate_env "${CONDA_ENV}"
 metadata_start "06.0.average_contrib_scores"
 metadata_params+=( "dataset=${dataset}" )
 
-metadata_tools+=( "$(tool_version chrombpnet chrombpnet --version)" )
 
 for score_type in "${score_types[@]}"; do
     echo "[$(date)] [${dataset} ${score_type}] Averaging contribution scores..."

@@ -68,7 +68,6 @@ require_input "${chrom_sizes}" scripts/bash/download_references.sh
 preflight_check
 
 activate_env "${preprocess_conda}"
-metadata_tools+=( "$(tool_version python python --version)" )
     metadata_outputs+=( "narrowpeak=${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak" )
     metadata_outputs+=( "bed=${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.bed" )
     metadata_params+=( "peak_type=${peak_type}" "input_window=${chrombpnet_input_window}" )

@@ -178,14 +178,6 @@ metadata_emit() {
     return 0
 }
 
-# tool_version <name> <command...> — "name=version", or "name=unknown" if the
-# probe fails. A version probe must never take the step down.
-tool_version() {
-    local name="$1"; shift
-    local out
-    out="$("$@" 2>&1 | head -1 | tr -d '\r')" || out="unknown"
-    echo "${name}=${out:-unknown}"
-}
 
 # ── ChromBPNet inputs ─────────────────────────────────────────────────────────
 

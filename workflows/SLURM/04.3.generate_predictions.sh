@@ -65,7 +65,6 @@ activate_env "${CONDA_ENV}"
 
 metadata_start "04.3.generate_predictions"
 
-metadata_tools+=( "$(tool_version chrombpnet chrombpnet --version)" )
 
 gpu_env
 

@@ -60,7 +60,6 @@ activate_env "${CONDA_ENV}"
 metadata_start "05.0.get_contrib_scores"
 metadata_params+=( "fold=${fold}" )
 
-metadata_tools+=( "$(tool_version chrombpnet chrombpnet --version)" )
 
 gpu_env
 

@@ -113,7 +113,6 @@ require_input "${peaks_file}" 05.0.get_contrib_scores.sh
 preflight_check
 
 activate_env "${finemo_conda}"
-metadata_tools+=( "$(tool_version finemo finemo --version)" )
 gpu_env
 metadata_outputs+=( "hits=${hits_file}" )
 metadata_params+=( "alpha=${finemo_alpha}" "dataset=${dataset}" )

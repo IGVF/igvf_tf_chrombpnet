@@ -83,7 +83,6 @@ load_gpu_modules
 activate_env "${CONDA_ENV}"
 metadata_params+=( "fold=${fold}" "bias_suffix=${suffix}" )
 
-metadata_tools+=( "$(tool_version chrombpnet chrombpnet --version)" )
 
 gpu_env
 

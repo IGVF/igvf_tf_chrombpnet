@@ -82,7 +82,6 @@ preflight_check
 
 load_gpu_modules
 activate_env "${CONDA_ENV}"
-metadata_tools+=( "$(tool_version chrombpnet chrombpnet --version)" )
 gpu_env
 metadata_params+=( "fold=${fold}" "bias_suffix=${suffix}" )
 echo "[$(date)] [fold ${fold}] Full QC on selected bias model (suffix ${suffix})"

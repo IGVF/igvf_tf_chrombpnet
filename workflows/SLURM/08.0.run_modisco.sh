@@ -85,7 +85,6 @@ activate_env "${CONDA_ENV}"
 metadata_start "08.0.run_modisco"
 metadata_params+=( "dataset=${dataset}" )
 
-metadata_tools+=( "$(tool_version modisco modisco --version)" )
 
 for score_type in "${score_types[@]}"; do
     echo "[$(date)] Dataset ${dataset}: running MoDISco on averaged ${score_type} scores..."

@@ -89,7 +89,6 @@ activate_env "${finemo_conda}"
 metadata_outputs+=( "motif_report=${report_dir}/motif_report.tsv" )
 metadata_params+=( "dataset=${dataset}" )
 
-metadata_tools+=( "$(tool_version finemo finemo --version)" )
 
 # Compute cwm_similarity for each motif by comparing the average CWM
 # reconstructed from called instances against the input (modisco) CWM.

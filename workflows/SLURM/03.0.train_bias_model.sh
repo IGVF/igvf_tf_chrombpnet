@@ -102,7 +102,6 @@ preflight_check
 
 load_gpu_modules
 activate_env "${CONDA_ENV}"
-metadata_tools+=( "$(tool_version chrombpnet chrombpnet --version)" )
 gpu_env
 metadata_outputs+=( "bias_model=${model_file}" )
 metadata_params+=( "fold=${fold}" "bias_factor=${bf}" "bias_suffix=${suffix}" )

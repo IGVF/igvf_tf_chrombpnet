@@ -89,13 +89,13 @@ require_input "${genome_fa}"   scripts/bash/download_references.sh
 require_input "${chrom_sizes}" scripts/bash/download_references.sh
 preflight_check
 
-# bedtools and bedGraphToBigWig are for CHROMBPNET, not for us: its
-# reads_to_bigwig shells out to `bedtools genomecov`. Our own interval work
-# is pyranges1 and needs neither.
-ml biology bedtools
-load_render_modules
+# No `ml` here. The conversion shells out to bedtools and bedGraphToBigWig
+# (chrombpnet's reads_to_bigwig does, not us), and envs/chrombpnet.yml already
+# pins both -- bedtools=2.31.1, ucsc-bedgraphtobigwig=482 -- so the conda env
+# supplies them. Loading a module too would only risk a different bedtools
+# shadowing the pinned one. cairo/pango are for report rendering, which this
+# step does not do.
 activate_env "${CONDA_ENV}"
-metadata_tools+=( "$(tool_version chrombpnet chrombpnet --version)" )
 
 mkdir -p "${prepared_dir}"
 
