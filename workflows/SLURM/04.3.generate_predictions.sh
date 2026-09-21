@@ -9,7 +9,7 @@
 #SBATCH --output=%x_%j.log
 #SBATCH --error=%x_%j.log
 
-# 04.2.generate_predictions.sh
+# 04.3.generate_predictions.sh
 # Purpose: Generate genome-wide accessibility prediction bigwigs for one dataset,
 #          averaged across all available trained folds.
 #          One SLURM array job per dataset.  Both bias-corrected and uncorrected
@@ -25,8 +25,8 @@
 #   <dataset>_avg_chrombpnet_uncorrected_preds_w_logcounts.bed
 #
 # Usage:
-#   sbatch 04.2.generate_predictions.sh            # dataset 0
-#   sbatch 04.2.generate_predictions.sh            # (override with --array=0 if needed)
+#   sbatch 04.3.generate_predictions.sh            # dataset 0
+#   sbatch 04.3.generate_predictions.sh            # (override with --array=0 if needed)
 #
 # Prerequisites: 04.0.train_full_model.sh must have completed.
 
@@ -63,7 +63,7 @@ load_gpu_modules
 
 activate_env "${CONDA_ENV}"
 
-metadata_start "04.2.generate_predictions"
+metadata_start "04.3.generate_predictions"
 
 metadata_tools+=( "$(tool_version chrombpnet chrombpnet --version)" )
 

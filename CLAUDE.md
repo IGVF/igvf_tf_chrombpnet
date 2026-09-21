@@ -134,7 +134,7 @@ derived output paths live in `config.sh`.
 | `04.0.train_full_model.sh` | fold | yes |
 | `04.1.qc_run_full_model.sh` | — | yes |
 | `04.2.qc_combined_boxplot.sh` | — | no (hardcoded `CORE_PATH`) |
-| `04.2.generate_predictions.sh` | dataset | yes |
+| `04.3.generate_predictions.sh` | dataset | yes |
 | `05.get_contrib_scores.sh` | fold | yes |
 | `06.average_contrib_scores.sh` | dataset | yes |
 | `07.contribs_to_bigwig.sh` | dataset | yes |
@@ -281,7 +281,7 @@ none of them execute pipeline logic. Don't claim a step was verified beyond that
 
 ## Gotchas
 - **Two scripts share the `04.2.` prefix**: `04.2.qc_combined_boxplot.sh` and
-  `04.2.generate_predictions.sh`. They are unrelated (cross-dataset QC vs per-dataset
+  `04.3.generate_predictions.sh`. They are unrelated (cross-dataset QC vs per-dataset
   prediction bigwigs) and the numbering collision is real, not a typo in one of them.
 
 - **Stale step numbers are still scattered through headers and docstrings.** `_10`
@@ -339,7 +339,7 @@ none of them execute pipeline logic. Don't claim a step was verified beyond that
 
 - **The GPU compute-capability constraint is applied unevenly.** `03.0` and `04.0` pin
   `--constraint="GPU_CC:7.0|7.5|8.0|8.6"` because the loaded `cuda/11.5.0` can't drive
-  Ada (8.9) or Hopper (9.0). `03.2`, `04.2.generate_predictions`, `05` and `10` load
+  Ada (8.9) or Hopper (9.0). `03.2`, `04.3.generate_predictions`, `05` and `10` load
   the same cuda/cudnn modules with no constraint. If a GPU step fails oddly on
   `owners`, that's the first thing to check.
 
@@ -364,7 +364,7 @@ none of them execute pipeline logic. Don't claim a step was verified beyond that
   `motif_report.tsv` (11), `interpretation.counts_scores.{h5,bw}` (05) or
   `*_negatives.bed` (02).
 
-- **`04.2.generate_predictions.sh` hardcodes `for fold in "0" "1" "2" "3" "4"`** rather
+- **`04.3.generate_predictions.sh` hardcodes `for fold in "0" "1" "2" "3" "4"`** rather
   than iterating `"${folds[@]}"`, and collects whichever fold models happen to exist.
   Deliberate for the "average over available folds" behaviour, but it means a dataset
   configured with a fold subset still scans all five.

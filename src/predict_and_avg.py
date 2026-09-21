@@ -1,7 +1,9 @@
 """
-10.predict_and_avg.py
+predict_and_avg.py
 Generate genome-wide accessibility prediction bigwigs by averaging ChromBPNet
 model outputs across any number of folds.
+
+Called by 04.3.generate_predictions.sh.
 
 Adapted from the Greenleaf HDMA pipeline (08-predict_and_avg.py), with
 support for a variable number of folds (not hard-coded to 5).

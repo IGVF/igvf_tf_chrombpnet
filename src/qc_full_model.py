@@ -1,5 +1,5 @@
 """
-05.qc_full_model.py
+qc_full_model.py
 Visualize ChromBPNet full-model performance metrics across all datasets and folds.
 
 Reads from <full_model_dir>/<dataset>_<peak_type>_fold_<fold>/:
@@ -15,13 +15,14 @@ Produces:
   <out-dir>/<dataset>_fold<fold>_scatter.pdf/png       predicted vs observed log-count scatter
   <out-dir>/<dataset>_fold<fold>_scatter_data.tsv      scatter plot data
 
-Run after step 05 (train_full_model.sh) via 05.qc_run_full_model.sh.
+Run after 04.0.train_full_model.sh, via 04.1.qc_run_full_model.sh
+(per dataset) or 04.2.qc_combined_boxplot.sh (--combined, across datasets).
 
 Usage:
   python 05.qc_full_model.py \\
       --full-model-dir ../results/full_models \\
       --data-path      ../results/preprocessing \\
-      --datasets d0 d1 d2 d3 d4 \\
+      --datasets igvf3_cardiomyocyte \\
       --folds 0 1 2 3 4 \\
       --peak-type all \\
       --out-dir ../results/plots/full_model_qc
@@ -346,7 +347,9 @@ def parse_args():
         default=None,
         help="Preprocessing directory with per-dataset peaks (data_path in config.sh)",
     )
-    p.add_argument("--datasets", nargs="+", default=["d0", "d1", "d2", "d3", "d4"])
+    # No default: the dataset names are real directory names and a wrong guess
+    # silently produces an empty plot. They come from the config via the step.
+    p.add_argument("--datasets", nargs="+", required=True)
     p.add_argument("--folds", nargs="+", default=["0"])
     p.add_argument("--peak-type", default="all")
     p.add_argument("--out-dir", default="qc")

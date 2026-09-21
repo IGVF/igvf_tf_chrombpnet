@@ -94,7 +94,7 @@ sbatch 03.2.qc_selected_bias.sh
 sbatch 04.0.train_full_model.sh
 sbatch 04.1.qc_run_full_model.sh
 sbatch 04.2.qc_combined_boxplot.sh  # no DATASET_DIR needed; run once all datasets complete 04.1
-sbatch 04.2.generate_predictions.sh
+sbatch 04.3.generate_predictions.sh
 sbatch 05.get_contrib_scores.sh
 sbatch 06.average_contrib_scores.sh
 sbatch 07.contribs_to_bigwig.sh

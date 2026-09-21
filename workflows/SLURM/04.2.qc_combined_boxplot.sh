@@ -1,12 +1,11 @@
 #!/bin/bash
+# shellcheck disable=SC2218  # false positive in shellcheck 0.11.0: metadata_start and
+# activate_env both come from lib/bash/common.sh, sourced above.
 # Plot combined full-model QC metrics for all four datasets side by side.
 # Run once after 04.1.qc_run_full_model.sh has completed for all datasets.
-# No DATASET_DIR needed; datasets are hardcoded below.
-#
-# CORE_PATH is the collaboration root that holds <dataset>/results/... It is
-# NOT derived from REPO_ROOT: this step reads results written by 04.1 across
-# all four datasets, which on the cluster live outside this checkout. Override
-# it at submit time if your results tree is somewhere else.
+# No DATASET selection needed: it discovers datasets from config/ and combines
+# whichever have 04.1 output.
+
 #SBATCH --job-name=model_qc_combined
 #SBATCH --mem=8G
 #SBATCH --time=0:30:00
@@ -43,15 +42,40 @@ export REPO_ROOT
 # shellcheck source=lib/bash/common.sh
 source "${REPO_ROOT}/lib/bash/common.sh" || exit 1
 
-CORE_PATH="${CORE_PATH:-/oak/stanford/groups/engreitz/Users/opushkar/igvf_tf_collab}"
+# Cross-dataset step: the root is DATASET_ROOT (config/README.md), and the
+# datasets are whatever configs exist under config/ -- not a hardcoded list that
+# silently goes stale when a dataset is added or renamed.
+core_path="${DATASET_ROOT:-${REPO_ROOT}}"
+
+combined_datasets=()
+for _cfg in "${REPO_ROOT}"/config/*/config.yaml; do
+    [[ -f "${_cfg}" ]] || continue
+    _name="$(basename "$(dirname "${_cfg}")")"
+    [[ "${_name}" == "example_dataset" ]] && continue     # the template, not a dataset
+    # Only include datasets that actually have per-dataset QC output to combine.
+    [[ -f "${core_path}/${_name}/results/plots/full_model_qc/model_metrics.tsv" ]] \
+        && combined_datasets+=( "${_name}" )
+done
+unset _cfg _name
+
+if [[ ${#combined_datasets[@]} -eq 0 ]]; then
+    echo "ERROR: no dataset under ${core_path} has full_model_qc/model_metrics.tsv." >&2
+    echo "  Run 04.1.qc_run_full_model.sh for each dataset first." >&2
+    exit 1
+fi
+
+out_dir="${core_path}/results/plots/full_model_qc_combined"
+
+metadata_start "04.2.qc_combined_boxplot"
+metadata_params+=( "datasets=${combined_datasets[*]}" )
+metadata_outputs+=( "metrics_plot=${out_dir}/cross_dataset_boxplot.pdf" )
 
 activate_env "${CONDA_ENV}"
 
-metadata_start "04.2.qc_combined_boxplot"
-
+echo "[$(date)] Combining full-model QC across: ${combined_datasets[*]}"
 
 python "${src_dir}/qc_full_model.py" \
     --combined \
-    --core-path "${CORE_PATH}" \
-    --datasets igvf11_h7_hesc igvf3_cardiomyocyte igvf6_definitive_endoderm igvf_endothelial \
-    --out-dir "${CORE_PATH}/results/plots/full_model_qc_combined"
+    --core-path "${core_path}" \
+    --datasets  "${combined_datasets[@]}" \
+    --out-dir   "${out_dir}"

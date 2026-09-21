@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-04.0.select_bias_model.py
+select_bias_model.py
 Select the best ChromBPNet Tn5 bias model per fold.
 
 Plots (PDF + PNG):
@@ -27,8 +27,8 @@ Selection criteria (ChromBPNet developer guidelines):
     Both JSD metrics are sensitive to read depth.
 
 Usage:
-  python 04.0.select_bias_model.py \
-    --core-path /oak/stanford/groups/engreitz/Users/opushkar/igvf_tf_collab \
+  python select_bias_model.py \
+    --bias-models-dir <output_dir>/bias_models \
     --biases 05 06 07 08 \
     --folds 0 1 2 3 4 \
     --dataset igvf6_definitive_endoderm \
