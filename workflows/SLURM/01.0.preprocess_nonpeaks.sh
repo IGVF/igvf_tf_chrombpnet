@@ -1,7 +1,7 @@
 #!/bin/bash
 # shellcheck disable=SC2218  # false positive in shellcheck 0.11.0: helpers come from common.sh
 #SBATCH --job-name=preprocess_nonpeaks
-#SBATCH --mem=64G
+#SBATCH --mem=100G
 #SBATCH --cpus-per-task=2
 #SBATCH --time=12:00:00
 #SBATCH --partition=normal,engreitz
@@ -107,6 +107,12 @@ preflight_check
 # ChromBPNet's env, not preprocess: `prep nonpeaks` shells out to bedtools
 # slop/sort/merge/intersect, which that env pins.
 activate_env "${CONDA_ENV}"
+
+# The one step where probing the ChromBPNet version earns its cost. `chrombpnet
+# --version` imports TensorFlow, which is why 00.0 does not do it -- but the
+# negatives are reproducible only from the seed AND the version that consumed
+# it, and this step runs chrombpnet anyway, for hours.
+metadata_tools+=( "chrombpnet=$(chrombpnet --version 2>/dev/null | tr -d '\n' || echo unknown)" )
 
 # `-o` is a path PREFIX whose directory ChromBPNet does not create -- its own
 # help says "make sure it exists".
