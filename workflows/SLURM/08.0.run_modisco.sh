@@ -83,6 +83,8 @@ load_render_modules
 activate_env "${CONDA_ENV}"
 
 metadata_start "08.0.run_modisco"
+metadata_inputs+=( "averaged=${averaged_dir}/${dataset}" )
+metadata_outputs+=( "modisco=${averaged_dir}/${dataset}/modisco/modisco_counts_results.h5" )
 metadata_params+=( "dataset=${dataset}" )
 
 

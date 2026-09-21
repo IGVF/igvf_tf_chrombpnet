@@ -73,6 +73,8 @@ mkdir -p "${out_dir}" "${log_dir}"
 activate_env "${CONDA_ENV}"
 
 metadata_start "06.0.average_contrib_scores"
+metadata_inputs+=( "full_models=${full_model_dir_selected}" )
+metadata_outputs+=( "averaged=${averaged_dir}/${dataset}/${dataset}_average_shaps.counts.h5" )
 metadata_params+=( "dataset=${dataset}" )
 
 

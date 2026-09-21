@@ -36,6 +36,8 @@ source "${REPO_ROOT}/lib/bash/config.sh" || exit 1
 activate_env "${CONDA_ENV}"
 
 metadata_start "04.1.qc_run_full_model"
+metadata_inputs+=( "full_models=${full_model_dir}" )
+metadata_outputs+=( "metrics=${results_path}/plots/full_model_qc/model_metrics.tsv" )
 metadata_params+=( "peak_type=${peak_type}" )
 
 

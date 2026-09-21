@@ -228,3 +228,111 @@ def test_a_config_may_override_individual_reference_files():
 def test_reference_root_reaches_the_shell_export():
     shell = config.to_shell(config.resolve({"dataset_name": "d", "reference_root": "/refs"}))
     assert "reference_root=/refs" in shell
+
+
+# ── GENCODE TSS parsing (the GTF cannot be downloaded in tests) ──────────────
+
+
+def _gtf(tmp_path, lines):
+    p = tmp_path / "a.gtf"
+    p.write_text("##description: test\n" + "".join(lines))
+    return p
+
+
+def test_tss_is_start_on_plus_and_end_on_minus_converted_to_0_based(tmp_path):
+    """GTF is 1-based inclusive, BED is 0-based. An off-by-one here shifts every
+    TSS and quietly flattens the enrichment profile."""
+    from utils import references
+
+    gtf = _gtf(
+        tmp_path,
+        [
+            'chr1\tHAVANA\tgene\t1001\t2000\t.\t+\t.\tgene_name "FWD";\n',
+            'chr1\tHAVANA\tgene\t3001\t4000\t.\t-\t.\tgene_name "REV";\n',
+        ],
+    )
+    sites = references.tss_sites_from_gtf(gtf, {"chr1"})
+    assert sites == [("chr1", 1000, "+", "FWD"), ("chr1", 3999, "-", "REV")]
+
+
+def test_tss_deduplicates_shared_start_sites(tmp_path):
+    from utils import references
+
+    gtf = _gtf(
+        tmp_path,
+        [
+            'chr1\tHAVANA\tgene\t1001\t2000\t.\t+\t.\tgene_name "A";\n',
+            'chr1\tHAVANA\tgene\t1001\t9000\t.\t+\t.\tgene_name "B";\n',
+        ],
+    )
+    assert len(references.tss_sites_from_gtf(gtf, {"chr1"})) == 1
+
+
+def test_tss_skips_non_gene_features_and_other_contigs(tmp_path):
+    from utils import references
+
+    gtf = _gtf(
+        tmp_path,
+        [
+            'chr1\tHAVANA\ttranscript\t1001\t2000\t.\t+\t.\tgene_name "T";\n',
+            'chrM\tHAVANA\tgene\t10\t99\t.\t+\t.\tgene_name "M";\n',
+            'chr1\tHAVANA\tgene\t5001\t6000\t.\t+\t.\tgene_name "G";\n',
+        ],
+    )
+    sites = references.tss_sites_from_gtf(gtf, {"chr1"})
+    assert [s[3] for s in sites] == ["G"]
+
+
+def test_tss_sites_are_sorted_by_position(tmp_path):
+    from utils import references
+
+    gtf = _gtf(
+        tmp_path,
+        [
+            'chr1\tHAVANA\tgene\t9001\t9500\t.\t+\t.\tgene_name "late";\n',
+            'chr1\tHAVANA\tgene\t1001\t2000\t.\t+\t.\tgene_name "early";\n',
+        ],
+    )
+    assert [s[3] for s in references.tss_sites_from_gtf(gtf, {"chr1"})] == ["early", "late"]
+
+
+def test_gencode_reference_is_the_igvf_copy_matching_our_genome():
+    """The IGVF copy has UCSC-style contig names matching IGVFFI0653VCGH; a GTF
+    whose contigs disagree yields an empty TSS list and a meaningless metric."""
+    from utils import references
+
+    lay = references.layout("/tmp/refs")
+    assert lay["gencode_accession"] == "IGVFFI9573KOZR"
+    assert "api.data.igvf.org" in lay["gencode_gtf_url"]
+    assert lay["gencode_release"] == "43"
+
+
+def test_genome_and_annotation_are_a_matched_igvf_pair():
+    """The GENCODE 43 GTF was renamed to match THIS genome's contigs. Swapping
+    one without the other gives an empty TSS list and a meaningless metric."""
+    from utils import references
+
+    lay = references.layout("/tmp/refs")
+    assert lay["genome_accession"] == "IGVFFI0653VCGH"
+    assert lay["gencode_accession"] == "IGVFFI9573KOZR"
+    assert lay["genome_md5"] and lay["gencode_md5"]
+
+
+def test_verify_rejects_a_file_that_does_not_match_the_pinned_md5(tmp_path):
+    from utils import references
+
+    f = tmp_path / "x"
+    f.write_text("corrupted")
+    with pytest.raises(RuntimeError, match="does not match the pinned"):
+        references._verify(f, "0" * 32, "http://127.0.0.1:1/unreachable", "thing")
+
+
+def test_verify_passes_offline_when_the_pinned_md5_matches(tmp_path):
+    """A firewalled cluster still gets a real integrity check."""
+    from utils import references
+
+    f = tmp_path / "x"
+    f.write_text("hello")
+    references._verify(
+        f, references._md5(f), "http://127.0.0.1:1/unreachable", "thing", log=lambda *_: None
+    )

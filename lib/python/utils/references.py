@@ -69,14 +69,31 @@ def describe_source(spec: str) -> str:
 
 DEFAULT_ROOT = "/oak/stanford/groups/engreitz/Data"
 
+#: GRCh38 no-alt analysis set with UCSC ids (chr-prefixed), from the IGVF
+#: portal. This exact file is what the GENCODE 43 GTF below was renamed
+#: against -- the portal lists both as inputs to the same kallisto index --
+#: so genome, annotation and chrom.sizes all agree on contig names. Do not
+#: swap one without the other.
 GENOME_ACCESSION = "IGVFFI0653VCGH"
+#: md5 as published by the portal. Pinned so a corrupted or swapped download is
+#: caught even when the metadata API cannot be reached; the API is still
+#: consulted, and a disagreement between the two is itself worth failing on.
+GENOME_MD5 = "a08035b6a6e31780e96a34008ff21bd6"
 BLACKLIST_ACCESSION = "ENCFF356LFX"
 #: ChromBPNet's input window. The blacklist slop is half of it.
 CHROMBPNET_INPUT_WINDOW = 2114
-#: UCSC refGene for hg38. Used only to derive a TSS list for QC. Chosen over a
-#: full GENCODE GTF because it is ~9MB rather than ~50MB and needs no GTF
-#: parsing -- TSS is txStart on +, txEnd on -.
-REFGENE_URL = "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/database/refGene.txt.gz"
+#: GENCODE 43 annotation, used to derive a TSS list for QC.
+#:
+#: Taken from the IGVF portal rather than from EBI, for a reason that matters:
+#: IGVFFI9573KOZR is GENCODE 43 with its chromosome names converted to the
+#: UCSC style "as used in genome reference fasta file", i.e. it is guaranteed
+#: to match IGVFFI0653VCGH. A GTF whose contigs disagree with the genome and
+#: chrom.sizes produces an empty TSS list and a silently meaningless
+#: enrichment number. It also means the md5 can be verified the same way the
+#: genome's is, from the same metadata API.
+GENCODE_RELEASE = "43"
+GENCODE_ACCESSION = "IGVFFI9573KOZR"
+GENCODE_MD5 = "230008ce6a9bbc0320ac3b7d7e8fbf23"
 
 MOTIF_DB_URL = (
     "https://raw.githubusercontent.com/kundajelab/MotifCompendium/main/"
@@ -132,6 +149,7 @@ def layout(reference_root=None) -> dict:
         "blacklist_dir": str(blacklist_dir),
         "motif_dir": str(motif_dir),
         "genome_accession": GENOME_ACCESSION,
+        "genome_md5": GENOME_MD5,
         "genome_url": (
             f"https://api.data.igvf.org/reference-files/{GENOME_ACCESSION}"
             f"/@@download/{GENOME_ACCESSION}.fasta.gz"
@@ -158,10 +176,19 @@ def layout(reference_root=None) -> dict:
         "blacklist_slop": str(blacklist_dir / "blacklist_slop.bed.gz"),
         "ref_db_meme": str(motif_dir / "MotifCompendium-Database-Human.meme.txt"),
         "ref_db_meme_url": MOTIF_DB_URL,
-        "refgene_url": REFGENE_URL,
-        "refgene_raw": str(genome_path / "annotation" / "refGene.txt.gz"),
+        "gencode_release": GENCODE_RELEASE,
+        "gencode_accession": GENCODE_ACCESSION,
+        "gencode_md5": GENCODE_MD5,
+        "gencode_gtf_url": (
+            f"https://api.data.igvf.org/reference-files/{GENCODE_ACCESSION}"
+            f"/@@download/{GENCODE_ACCESSION}.gtf.gz"
+        ),
+        "gencode_metadata_url": (
+            f"https://api.data.igvf.org/reference-files/{GENCODE_ACCESSION}/?format=json"
+        ),
+        "gencode_gtf": str(genome_path / "annotation" / f"{GENCODE_ACCESSION}.gtf.gz"),
         # Unique TSS positions, for the TSS-enrichment QC. Derived, not downloaded.
-        "tss_bed": str(genome_path / "annotation" / "refGene_tss_unique.bed"),
+        "tss_bed": str(genome_path / "annotation" / f"gencode.v{GENCODE_RELEASE}.tss_unique.bed"),
         "annotation_dir": str(genome_path / "annotation"),
     }
 
@@ -220,6 +247,37 @@ def published_md5(metadata_url: str) -> str | None:
         return None
 
 
+def tss_sites_from_gtf(gtf_path, wanted_chroms=None, feature="gene"):
+    """Unique TSS positions from a GENCODE GTF, as 0-based (chrom, pos, strand, name).
+
+    GTF is 1-based inclusive and BED is 0-based half-open, so a ``+`` feature's
+    TSS is ``start - 1`` and a ``-`` feature's is ``end - 1``. Getting that
+    wrong shifts every TSS by one base and quietly flattens the enrichment
+    profile, so it is pinned by a test.
+
+    Deduplicated: many genes share a TSS, and counting one twice would weight
+    it twice in the aggregate profile.
+    """
+    seen: dict[tuple[str, int, str], str] = {}
+    opener = gzip.open if str(gtf_path).endswith(".gz") else open
+    with opener(gtf_path, "rt") as fh:
+        for line in fh:
+            if line.startswith("#"):
+                continue
+            f = line.rstrip("\n").split("\t")
+            if len(f) < 9 or f[2] != feature:
+                continue
+            chrom, start, end, strand, attrs = f[0], int(f[3]), int(f[4]), f[6], f[8]
+            if wanted_chroms is not None and chrom not in wanted_chroms:
+                continue
+            pos = start - 1 if strand == "+" else end - 1
+            key = (chrom, pos, strand)
+            if key not in seen:
+                m = re.search(r'gene_name "([^"]+)"', attrs)
+                seen[key] = m.group(1) if m else "."
+    return [(c, p, st, seen[(c, p, st)]) for c, p, st in sorted(seen, key=lambda t: (t[0], t[1]))]
+
+
 def _faidx(fasta, log=print) -> Path:
     """Write <fasta>.fai. Replaces `samtools faidx`."""
     import pysam  # noqa: PLC0415  # only needed when actually indexing
@@ -233,6 +291,30 @@ def _relative_symlink(target, link, log=print) -> None:
     link = Path(link)
     link.unlink(missing_ok=True)
     link.symlink_to(Path(target).name)
+
+
+def _verify(path, pinned: str, metadata_url: str, what: str, log=print) -> None:
+    """Check a download against the pinned md5, and against the portal's.
+
+    The pinned value means an offline or firewalled machine still gets a real
+    integrity check. The portal is consulted too: if it now advertises a
+    different md5 the file has been revised upstream, and silently accepting
+    that would mean two people running "the same" pipeline on different data.
+    """
+    actual = _md5(path)
+    if pinned and actual != pinned:
+        raise RuntimeError(f"{what} md5 {actual} does not match the pinned {pinned} ({path})")
+    published = published_md5(metadata_url)
+    if published is None:
+        log(f"  {what} md5 matches the pinned value (portal unreachable)")
+    elif published != pinned:
+        raise RuntimeError(
+            f"{what}: the portal now advertises md5 {published}, but this pipeline "
+            f"pins {pinned}. The reference has been revised upstream -- update "
+            "utils/references.py deliberately rather than silently changing data."
+        )
+    else:
+        log(f"  {what} md5 verified (pinned and portal agree)")
 
 
 def fetch_all(reference_root=None, log=print) -> dict:
@@ -250,14 +332,7 @@ def fetch_all(reference_root=None, log=print) -> dict:
         log(f"  downloading genome ({ref['genome_accession']})")
         download(ref["genome_url"], gz, log=log)
 
-    expected = published_md5(ref["genome_metadata_url"])
-    if expected:
-        if _md5(gz) == expected:
-            log("  genome md5 verified against IGVF metadata")
-        else:
-            raise RuntimeError("genome fasta.gz md5 does not match IGVF metadata")
-    else:
-        log("  could not reach IGVF metadata; skipping md5 check")
+    _verify(gz, ref["genome_md5"], ref["genome_metadata_url"], "genome", log)
 
     fa = Path(ref["genome_fa"])
     if not (fa.is_file() and fa.stat().st_size):
@@ -335,34 +410,25 @@ def fetch_all(reference_root=None, log=print) -> dict:
         log("  downloading MotifCompendium reference DB")
         download(ref["ref_db_meme_url"], meme, log=log)
 
-    # 5. TSS list for QC, derived from refGene
+    # 5. TSS list for QC, derived from the GENCODE annotation
     tss = Path(ref["tss_bed"])
     if tss.is_file() and tss.stat().st_size:
         log("  TSS list present")
     else:
-        rg = Path(ref["refgene_raw"])
-        if not (rg.is_file() and rg.stat().st_size):
-            log("  downloading refGene (for the TSS QC list)")
-            download(ref["refgene_url"], rg, log=log)
-        log("  deriving unique TSS positions from refGene")
-        wanted = set(main_chromosomes())
-        sites = set()
-        with gzip.open(rg, "rt") as fh:
-            for line in fh:
-                f = line.rstrip("\n").split("\t")
-                # refGene: bin name chrom strand txStart txEnd ...
-                if len(f) < 6:
-                    continue
-                chrom, strand, tx_start, tx_end = f[2], f[3], f[4], f[5]
-                if chrom not in wanted:
-                    continue
-                pos = int(tx_start) if strand == "+" else int(tx_end) - 1
-                sites.add((chrom, pos, strand))
+        gtf = Path(ref["gencode_gtf"])
+        if not (gtf.is_file() and gtf.stat().st_size):
+            log(
+                f"  downloading GENCODE {ref['gencode_release']} annotation "
+                f"({ref['gencode_accession']})"
+            )
+            download(ref["gencode_gtf_url"], gtf, log=log)
+        _verify(gtf, ref["gencode_md5"], ref["gencode_metadata_url"], "GENCODE GTF", log)
+        log("  deriving unique TSS positions")
+        sites = tss_sites_from_gtf(gtf, set(main_chromosomes()))
         if not sites:
-            raise RuntimeError(f"no TSS parsed from {rg}")
-        ordered = sorted(sites, key=lambda t: (t[0], t[1]))
-        tss.write_text("".join(f"{c}\t{p}\t{p + 1}\t.\t0\t{st}\n" for c, p, st in ordered))
-        log(f"  wrote {len(ordered)} unique TSS positions")
+            raise RuntimeError(f"no TSS parsed from {gtf}")
+        tss.write_text("".join(f"{c}\t{p}\t{p + 1}\t{g}\t0\t{st}\n" for c, p, st, g in sites))
+        log(f"  wrote {len(sites)} unique TSS positions")
 
     log(f"done. references under {ref['REFERENCE_ROOT']}")
     return ref

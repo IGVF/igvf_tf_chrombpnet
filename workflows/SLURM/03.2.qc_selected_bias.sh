@@ -79,6 +79,7 @@ require_input "${model_file}" 03.0.train_bias_model.sh
 require_input "${genome_fa}" "cli.py download-references"
 require_input "${fold_json}"
 require_input "${chrom_sizes}" "cli.py download-references"
+metadata_outputs+=( "bias_qc_dir=${out_dir}/evaluation" )
 preflight_check
 
 load_gpu_modules

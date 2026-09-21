@@ -67,6 +67,11 @@ qc_dir="${results_path}/plots/signal_qc"
 metadata_start "01.0.qc_signal_peaks"
 metadata_inputs+=( "bigwig=${signal_bw}" "peaks=${peaks_np}" )
 metadata_outputs+=( "qc_json=${qc_dir}/${dataset}_signal_qc.json" )
+metadata_outputs+=( "qc_tsv=${qc_dir}/${dataset}_signal_qc.tsv" )
+metadata_outputs+=( "profile_peaks=${qc_dir}/${dataset}_profile_peaks.pdf" )
+metadata_outputs+=( "profile_tss=${qc_dir}/${dataset}_profile_tss.pdf" )
+metadata_params+=( "peak_type=${peak_type}" "input_window=${chrombpnet_input_window}" )
+[[ -n "${tss_bed}" && -f "${tss_bed}" ]] && metadata_inputs+=( "tss=${tss_bed}" )
 require_input "${signal_bw}" 00.0.prepare_signal.sh
 require_input "${peaks_np}"  00.1.preprocess_peaks.sh
 preflight_check

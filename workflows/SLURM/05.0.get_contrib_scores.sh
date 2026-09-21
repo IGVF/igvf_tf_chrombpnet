@@ -58,6 +58,11 @@ load_gpu_modules
 activate_env "${CONDA_ENV}"
 
 metadata_start "05.0.get_contrib_scores"
+for _ds in "${datasets[@]}"; do
+    metadata_inputs+=( "model_${_ds}=${full_model_dir}/${_ds}_${peak_type}_fold_${fold}/models/chrombpnet_nobias.h5" )
+    metadata_outputs+=( "contribs_${_ds}=${full_model_dir}/${_ds}_${peak_type}_fold_${fold}/interpretation/interpretation.counts_scores.h5" )
+done
+unset _ds
 metadata_params+=( "fold=${fold}" )
 
 

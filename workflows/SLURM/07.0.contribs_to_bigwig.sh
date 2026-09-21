@@ -68,6 +68,7 @@ regions_file="${full_model_dir}/${dataset}_${peak_type}_fold_0/interpretation/in
 
 metadata_inputs+=( "regions=${regions_file}" )
 require_input "${regions_file}" 05.0.get_contrib_scores.sh
+metadata_outputs+=( "bigwig=${averaged_dir}/${dataset}/${dataset}_average_shaps.counts.bw" )
 preflight_check
 
 activate_env "${CONDA_ENV}"

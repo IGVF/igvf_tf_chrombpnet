@@ -75,6 +75,7 @@ require_input "${peaks_file}"  00.1.preprocess_peaks.sh
 require_input "${genome_fa}"   "cli.py download-references"
 require_input "${chrom_sizes}" "cli.py download-references"
 preflight_check
+metadata_outputs+=( "predictions_dir=${out_dir}" )
 metadata_params+=( "dataset=${dataset}" )
 out_dir="${predictions_dir}/${dataset}_${peak_type}"
 mkdir -p "${out_dir}"
