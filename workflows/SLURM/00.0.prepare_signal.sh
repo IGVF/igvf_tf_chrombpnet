@@ -134,11 +134,17 @@ fi
 
 if [[ "${signal_type}" == "bigwig" ]]; then
     # Already a bigwig: nothing to convert. Register it as the prepared bigwig so
-    # the GPU steps install it directly. It must already carry the Tn5 shift
-    # chrombpnet expects (+4/-4 for ATAC) -- we cannot verify that, and an
-    # unshifted bigwig will train without complaint and be subtly wrong.
+    # the GPU steps install it directly.
+    #
+    # It has to be what chrombpnet's own reads_to_bigwig would have written:
+    # per-base Tn5 insertion counts (genomecov -bg -5, 5' ends only) with the
+    # shift normalised to +4/-4 for ATAC. A bigwig from a previous chrombpnet
+    # run qualifies. Read COVERAGE from e.g. deeptools bamCoverage does not --
+    # wrong quantity and unshifted -- and nothing here can tell the difference.
     echo "[$(date)] Signal is already a bigwig; registering it, no conversion needed."
-    echo "           NOTE: assumed to be Tn5-shifted the way chrombpnet expects."
+    echo "           It must be Tn5 insertion counts shifted to +4/-4 (ATAC), as"
+    echo "           chrombpnet's own auxiliary/data_unstranded.bw is. Coverage"
+    echo "           bigwigs (deeptools etc.) are the wrong signal and will train."
     ln -sf "${signal_path}" "${prepared_dir}/data_unstranded.bw"
     python - "$@" <<PY
 import hashlib, json, pathlib, sys

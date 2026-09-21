@@ -23,10 +23,21 @@ assay: ATAC
 #   .fragments.tsv.gz / .tsv.gz   -> -ifrag
 #   .bw / .bigWig                 -> used directly as the prepared bigwig
 #
-# A bigwig is NOT a chrombpnet training input; supplying one works here because
-# the pipeline hands a prepared bigwig straight to training, which skips the
-# conversion entirely. It must already carry the Tn5 shift chrombpnet expects
-# (+4/-4 for ATAC) — an unshifted bigwig will train, and be subtly wrong.
+# A bigwig is NOT a chrombpnet training input. Supplying one works here because
+# the pipeline hands a prepared bigwig straight to training, skipping the
+# conversion — so it must be the SAME QUANTITY chrombpnet would have produced:
+#
+#   per-base Tn5 INSERTION counts (bedtools genomecov -bg -5, i.e. 5' ends only),
+#   with the shift normalised to +4/-4 for ATAC (0/+1 for DNASE).
+#
+# chrombpnet's own auxiliary/data_unstranded.bw satisfies both: reads_to_bigwig
+# detects whatever shift the reads already carry and applies (4-detected) to
+# reach +4/-4. Reusing one from another chrombpnet run is safe.
+#
+# A bigwig from deeptools bamCoverage or similar is NOT safe: that is full read
+# COVERAGE, not 5' insertion counts, which is a different signal entirely — and
+# it is unshifted. Nothing here can detect either mistake; it will train and be
+# wrong. If in doubt, give the reads and let 00.0 build the bigwig.
 #
 # This file is never copied or modified. Point it at your data where it already
 # lives; 00.0 writes only derived files, under output_dir.
