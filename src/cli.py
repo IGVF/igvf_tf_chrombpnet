@@ -28,7 +28,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib" / "python"))
 import click  # noqa: E402
 
 from utils import config as cfg  # noqa: E402
-from utils import intervals, log, metadata, references  # noqa: E402
+from utils import (  # noqa: E402
+    intervals,
+    log,
+    metadata,
+    pileup,  # noqa: E402
+    references,
+)
 
 logger = log.get_logger(__name__)
 
@@ -286,6 +292,8 @@ def prepare_bigwig(
     genome,
     chrom_sizes,
     out_dir,
+    plus_shift,
+    minus_shift,
     num_samples,
     metadata_dir,
     verbose,
@@ -304,11 +312,10 @@ def prepare_bigwig(
     """
     _setup_logging(verbose, quiet)
     import json as _json
-    import os
-    from argparse import Namespace
     from importlib.metadata import version as dist_version
 
-    import chrombpnet.helpers.preprocessing.reads_to_bigwig as reads_to_bigwig
+    import chrombpnet.helpers.preprocessing.auto_shift_detect as auto_shift_detect
+    from chrombpnet.data import DefaultDataFile, get_default_data_path
 
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -321,35 +328,52 @@ def prepare_bigwig(
         md.add_param("assay", assay)
         md.add_param("num_samples", num_samples)
 
-        args = Namespace(
-            input_bam_file=signal_path if signal_type == "bam" else None,
-            input_fragment_file=signal_path if signal_type == "fragments" else None,
-            input_tagalign_file=signal_path if signal_type == "tagalign" else None,
-            data_type=assay,
-            genome=genome,
-            chrom_sizes=chrom_sizes,
-            output_prefix=str(out / "data"),
-            plus_shift=None,
-            minus_shift=None,
-            # 10000 is chrombpnet 1.0.1's own default (parsers.py --num-samples
-            # and reads_to_bigwig.py agree). It must match: the shift is detected
-            # from this many sampled reads, and a prepared bigwig is only a
-            # faithful substitute if it was made the way chrombpnet would have.
-            num_samples=num_samples,
-            ATAC_ref_path=None,
-            DNASE_ref_path=None,
-            bsort=False,
-            # chrombpnet defaults to None (system /tmp). On a compute node the
-            # genome-scale `sort` can overrun /tmp, so prefer SLURM's node-local
-            # scratch when it exists. This only changes where sort spills, not
-            # the output.
-            tmpdir=os.environ.get("TMPDIR") or None,
-            no_st=False,
-        )
-        logger.info(
-            "converting %s (%s) -> %s", signal_path, signal_type, out / "data_unstranded.bw"
-        )
-        reads_to_bigwig.main(args)
+        # ── 1. shift detection: chrombpnet's, unchanged ──────────────────
+        # Only the pileup is reimplemented. The shift still comes from
+        # auto_shift_detect.compute_shift with chrombpnet's own default sample
+        # size, so the bigwig is what chrombpnet would have produced.
+        if plus_shift is None or minus_shift is None:
+            ref = get_default_data_path(
+                DefaultDataFile.atac_ref_motifs
+                if assay == "ATAC"
+                else DefaultDataFile.dnase_ref_motifs
+            )
+            logger.info("detecting the Tn5 shift (%d sampled reads)", num_samples)
+            plus_shift, minus_shift = auto_shift_detect.compute_shift(
+                signal_path if signal_type == "bam" else None,
+                signal_path if signal_type == "fragments" else None,
+                signal_path if signal_type == "tagalign" else None,
+                num_samples,
+                genome,
+                assay,
+                ref,
+            )
+        logger.info("shift in the reads: %+d/%+d", plus_shift, minus_shift)
+
+        # chrombpnet's normalisation target: +4/-4 for ATAC, 0/+1 for DNASE.
+        if assay == "ATAC":
+            plus_delta, minus_delta = 4 - plus_shift, -4 - minus_shift
+        else:
+            plus_delta, minus_delta = -plus_shift, 1 - minus_shift
+        logger.info("applying delta %+d/%+d", plus_delta, minus_delta)
+        md.add_param("plus_shift", plus_shift)
+        md.add_param("minus_shift", minus_shift)
+        md.add_param("plus_delta", plus_delta)
+        md.add_param("minus_delta", minus_delta)
+
+        # ── 2. pileup: ours, not chrombpnet's two external sorts ─────────────
+        chromsizes = intervals.read_chromsizes(chrom_sizes)
+        logger.info("counting cut sites")
+        cuts, skipped = pileup.collect_cuts(signal_path, chromsizes, plus_delta, minus_delta)
+        if skipped:
+            logger.warning(
+                "skipped %d read(s) on %d contig(s) absent from chrom.sizes: %s",
+                sum(skipped.values()),
+                len(skipped),
+                ", ".join(sorted(skipped)[:5]),
+            )
+        logger.info("writing %s", out / "data_unstranded.bw")
+        pileup.write_bigwig(out / "data_unstranded.bw", chromsizes, cuts)
 
         bw = out / "data_unstranded.bw"
         if not bw.is_file():
@@ -361,6 +385,10 @@ def prepare_bigwig(
             "signal_type": signal_type,
             "assay": assay,
             "chrombpnet_version": dist_version("chrombpnet"),
+            # Which code produced the pileup, so a record says so.
+            "pileup": "numpy",
+            "plus_shift": int(plus_shift),
+            "minus_shift": int(minus_shift),
         }
         (out / "prepared_bigwig.json").write_text(_json.dumps(sidecar, indent=2) + "\n")
         md.add_output("bigwig", bw)

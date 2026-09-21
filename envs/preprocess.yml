@@ -22,6 +22,7 @@ dependencies:
   - python>=3.12,<3.14
   - pandas>=2.0
   - numpy>=1.23
+  - pybigtools>=0.3   # Rust bigWig writer for the cut-site pileup
   - pysam>=0.22        # bgzip writing + tabix indexing, no htslib shell-out
   - click>=8.1         # the src/cli.py command group
   - pyyaml>=6          # full YAML for config.py (it falls back to a

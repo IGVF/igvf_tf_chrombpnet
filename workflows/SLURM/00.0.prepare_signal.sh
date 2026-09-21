@@ -96,12 +96,11 @@ if [[ "${signal_type}" != "bigwig" ]]; then
 fi
 preflight_check
 
-# No `ml` here. The conversion shells out to bedtools and bedGraphToBigWig
-# (chrombpnet's reads_to_bigwig does, not us), and envs/chrombpnet.yml already
-# pins both -- bedtools=2.31.1, ucsc-bedgraphtobigwig=482 -- so the conda env
-# supplies them. Loading a module too would only risk a different bedtools
-# shadowing the pinned one. cairo/pango are for report rendering, which this
-# step does not do.
+# No `ml` here, and no external tools at all for the pileup: it is numpy +
+# pybigtools (Rust), ~27x faster than chrombpnet's awk|sort|genomecov|sort|
+# bedGraphToBigWig on a 5M-fragment file, and verified interval-for-interval
+# identical against chrombpnet's own command in tests/test_pileup.py.
+# chrombpnet is still imported, for shift detection only.
 activate_env "${CONDA_ENV}"
 
 mkdir -p "${prepared_dir}"
