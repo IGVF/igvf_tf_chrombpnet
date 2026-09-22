@@ -63,7 +63,7 @@ from pathlib import Path
 # conda envs, under pixi, and under a bare python).
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib" / "python"))
 
-from utils import log, metadata  # noqa: E402
+from utils import log, metadata, onehot  # noqa: E402
 
 logger = log.get_logger(__name__)
 
@@ -164,6 +164,13 @@ def main() -> int:
             logger.info("reused prepared bigwig %s -> %s (skipped conversion)", source, dest)
 
         reads_to_bigwig.main = _install_prepared
+
+    # chrombpnet's one-hot encoder routes through np.unique(return_inverse=True),
+    # whose int64 inverse costs 8 bytes per base for the whole training set at
+    # once. Ours is byte-identical and ~4x lighter; install() verifies that
+    # against the container's own function before swapping. See
+    # lib/python/utils/onehot.py and docs/resource-measurements.md.
+    onehot.install()
 
     import chrombpnet.CHROMBPNET as chrombpnet_cli
 
