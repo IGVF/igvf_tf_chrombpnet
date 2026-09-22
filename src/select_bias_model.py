@@ -35,6 +35,8 @@ Usage:
     --peak-type all
 """
 
+from __future__ import annotations  # py3.8 in the chrombpnet container: PEP 585/604 annotations
+
 # %%
 import argparse
 import json

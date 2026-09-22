@@ -24,6 +24,8 @@ Usage (see metadata_emit in lib/bash/common.sh, which builds this call):
       --tool   "chrombpnet=1.0.1"
 """
 
+from __future__ import annotations  # py3.8 in the chrombpnet container: PEP 585/604 annotations
+
 import argparse
 import sys
 import time

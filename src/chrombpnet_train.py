@@ -51,6 +51,8 @@ Usage (see workflows/SLURM/03.0 and 04.0):
       -- bias train -ifrag ... -o ...
 """
 
+from __future__ import annotations  # py3.8 in the chrombpnet container: PEP 585/604 annotations
+
 import json
 import os
 import shutil
