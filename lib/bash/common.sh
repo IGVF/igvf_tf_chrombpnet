@@ -25,7 +25,10 @@ fi
 
 # ── Cluster software ──────────────────────────────────────────────────────────
 # Recreate the envs from the pinned specs: conda env create -f envs/<name>.yml
-CONDA_INIT="${CONDA_INIT:-/home/groups/engreitz/Software/anaconda3/etc/profile.d/conda.sh}"
+# `:-` would resolve an explicitly EMPTY CONDA_INIT back to this default, and
+# empty is meaningful: it means "no conda, the tools are already on PATH"
+# (a container, or a pixi environment). `-` keeps the empty value.
+CONDA_INIT="${CONDA_INIT-/home/groups/engreitz/Software/anaconda3/etc/profile.d/conda.sh}"
 CONDA_ENV="${CHROMBPNET_ENV:-/home/groups/engreitz/Users/opushkar/.conda/envs/chrombpnet}"
 finemo_conda="${FINEMO_ENV:-/home/groups/engreitz/Users/opushkar/.conda/envs/finemo}"
 motif_compendium_conda="${MOTIF_COMPENDIUM_ENV:-/home/groups/engreitz/Users/opushkar/.conda/envs/motif_compendium}"
@@ -113,6 +116,16 @@ metadata_dir="${METADATA_DIR:-${REPO_ROOT}/results/metadata}"
 # after this call rather than at the top of the file.
 activate_env() {
     local env_path="${1:?activate_env: missing env path}"
+    # CONDA_INIT set to the empty string means "there is no conda here; the
+    # tools this step needs are already on PATH" -- a container image, or a
+    # pixi environment (see workflows/molab/). This is opt-in: an UNSET or
+    # merely missing CONDA_INIT stays a hard error below, because carrying on
+    # in whatever environment happened to be active is precisely the failure
+    # this function exists to prevent.
+    if [[ -z "${CONDA_INIT}" ]]; then
+        echo "[$(date)] activate_env: CONDA_INIT empty, using tools on PATH (not activating ${env_path})"
+        return 0
+    fi
     if [[ ! -f "${CONDA_INIT}" ]]; then
         echo "ERROR: conda init script not found: ${CONDA_INIT}" >&2
         echo "  Export CONDA_INIT to your conda's etc/profile.d/conda.sh." >&2

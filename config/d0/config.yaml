@@ -1,0 +1,74 @@
+# ChromBPNet configuration — d0 (local single-GPU validation run)
+#
+#   export DATASET=d0
+#   cd workflows/SLURM && bash 00.0.prepare_signal.sh
+#
+# Not a cluster dataset: this runs on a gVisor box with 4 CPUs, 32 GB RAM and
+# one RTX PRO 6000 (Blackwell, compute capability 12.0), driving the pipeline
+# through the chrombpnet Apptainer container instead of SLURM + conda. Every
+# path is absolute and outside the checkout, so DATASET_ROOT is not used.
+
+dataset_name: d0
+
+# 156,236 candidate regions, plain 3-column BED, widths 500-5018 bp (mean 744).
+# 00.1 blacklist-filters this and writes the 10-column narrowPeak chrombpnet
+# wants, taking the summit as the peak midpoint. NOTE these are NOT fixed-width
+# calls like HEP3B's: for the widest regions a midpoint summit places the
+# 2114 bp window somewhere fairly arbitrary within the region.
+regions: "/marimo/data/test_data_d0/inputs/d0_macs2_peaks.narrowPeak.sorted.candidateRegions.bed"
+
+assay: ATAC
+
+# 20,771,300 fragments, 5 columns (chrom/start/end/barcode/count); barcodes are
+# 16 bp 10x-style with an `_IGVFSM6578YOFR` suffix.
+# `.tsv.gz` -> signal_type=fragments -> chrombpnet -ifrag.
+signal_path: "/marimo/data/test_data_d0/inputs/d0.fragments.tsv.gz"
+
+# These fragments are ALREADY main-chromosome only — VERIFIED, not assumed:
+# `cut -f1 | sort -u` over the whole file returns exactly chr1-22, chrX, chrY,
+# chrM and nothing else (25 contigs). The filter would be a full pass over a
+# 244 MB file producing a byte-identical copy, so it is skipped.
+filter_main_chroms: false
+
+# Tn5 shift ALREADY PRESENT in these reads: deliberately left UNSET for the
+# first run so 00.0 measures it against the genome. These look like 10x
+# multiome fragments, which would imply +4/-5 — but HEP3B's config measured
+# rather than assumed, and so should this. Detection needs genome_fa and
+# pyfaidx and costs ~45s; once 00.0 reports a value, write it here so later
+# runs open no FASTA.
+# plus_shift: 4
+# minus_shift: -5
+
+# Local reference tree, laid out exactly as references.layout() expects.
+# Populated by `cli.py download-references`; the genome is IGVFFI0653VCGH with
+# its md5 verified against the IGVF portal metadata.
+reference_root: "/marimo/data/references"
+
+# Outside the checkout, so nothing lands in git; alongside the inputs it came from.
+output_dir: "/marimo/data/test_data_d0/results"
+
+peak_type: all
+
+# Single fold for the local validation run. Widen to all five for a real
+# cross-validated run.
+folds: ["0"]
+
+# Bias sweep (03.0), left at the repo default ON PURPOSE.
+#
+# A scan of this data under the PRE-refactor pipeline found factor 0.5 leaves
+# zero non-peaks after chrombpnet's outlier filter and crashes, and that — because
+# counts are integers — 0.6==0.7 and 0.8 upward collapse onto the same training
+# set. That measurement is NOT carried over: it used the old step 02's negatives,
+# while this branch exposes nonpeak_seed / neg_to_pos_ratio and generates them
+# differently, so the counts and the threshold arithmetic can move. Re-measure
+# against 01.0's actual negatives before launching the sweep, and see
+# docs/bias-factor-per-fold.md — which warns against shrinking this grid, and
+# notes it is mis-centred (winners pile up at the 0.8 ceiling).
+#
+# 1 fold x 4 factors -> --array=0-3.
+bias_factors: ["0.5", "0.6", "0.7", "0.8"]
+bias_suffixes_sweep: ["_05", "_06", "_07", "_08"]
+
+# Filled in by hand after 03.1 writes selected_bias_per_fold.tsv.
+fold_bias_suffix:
+  "0": ""

@@ -44,9 +44,35 @@ pyfaidx = ">=0.9.0.4,<0.10"
 [feature.qc.pypi-dependencies]
 pyranges1 = ">=1.4"
 
+# The `preprocess` cluster environment, reproduced. This is the ONE of the four
+# that pixi can reproduce faithfully: steps 00.0/00.1/02.0 and the reference
+# builder need only interval/table/bigwig work, with no deep-learning stack and
+# no CUDA wheels, so there is nothing here that pins a GPU build. Mirrors
+# envs/preprocess.yml dependency for dependency -- keep the two in step.
+#
+# This does NOT contradict "pixi deliberately does not reproduce the cluster
+# environments": that rule is about chrombpnet / finemo / motif_compendium,
+# which pin mutually incompatible tensorflow, torch and cupy builds. On molab
+# those come from the container instead (see workflows/molab/).
+[feature.preprocess.dependencies]
+python = ">=3.12,<3.14"
+pandas = ">=2.0"
+numpy = ">=1.23"
+pybigtools = ">=0.3"      # Rust bigWig writer for the cut-site pileup
+pysam = ">=0.22"          # bgzip writing + tabix indexing
+pyfaidx = ">=0.7"         # utils/shift.py, Tn5 shift auto-detection
+matplotlib-base = ">=3.7" # utils/plotting.py; -base on purpose, Agg backend
+pybigwig = ">=0.3"        # utils/qc.py READS bigwigs (distinct from pybigtools)
+click = ">=8.1"           # the src/cli.py command group
+pyyaml = ">=6"            # full YAML for config.py
+
+[feature.preprocess.pypi-dependencies]
+pyranges1 = ">=1.4"       # not on conda-forge/bioconda; conda's is the 0.x line
+
 [environments]
 default = { features = ["dev"], solve-group = "main" }
 qc = { features = ["qc"], solve-group = "main" }
+preprocess = { features = ["preprocess"], solve-group = "main" }
 
 [tasks.lint]
 description = "ruff check over lib/ and src/"
@@ -65,9 +91,9 @@ description = "bash -n + shellcheck over every workflow step and bash lib"
 cmd = """
 bash -c '
 set -e
-for f in workflows/SLURM/*.sh lib/bash/*.sh; do bash -n "$f"; done
+for f in workflows/SLURM/*.sh workflows/molab/*.sh lib/bash/*.sh; do bash -n "$f"; done
 echo "bash -n: OK"
-shellcheck -S warning workflows/SLURM/*.sh lib/bash/*.sh
+shellcheck -S warning workflows/SLURM/*.sh workflows/molab/*.sh lib/bash/*.sh
 '
 """
 
