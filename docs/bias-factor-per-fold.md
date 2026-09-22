@@ -1,7 +1,36 @@
 # Is the bias threshold factor a per-fold quantity?
 
-**Status:** open. Everything needed to settle it is already on the cluster; the
+**Status:** open overall; **run for HEP3B on 2026-09-21** and deliberately not
+acted on. Everything needed to settle it is already on the cluster; the
 analysis needs no GPU and no retraining. Written 2026-09-21.
+
+> **HEP3B result.** Q1/Q2/Q3 below were run against HEP3B's complete 4x5 grid.
+> Script, numbers and write-up:
+> `nnfc_hep3b/analyses/20260921_bias_factor_per_fold/` (`FINDINGS.md`). It
+> imports `select_best`/`classify_row` from `src/select_bias_model.py` so the
+> counterfactual cannot drift from the selector, and takes `--metrics`, so it
+> runs unchanged on the other three datasets.
+>
+> The decision rule fires **"switch to two stages"** — max relative delta 1.39%
+> against the 2% tie epsilon, no status changes. **Do not act on it yet**, for
+> two reasons the rule cannot see:
+>
+> 1. *The status half of the rule is vacuous on this dataset.* All 20 cells are
+>    `warn` (peaks Pearson r spans -0.446..-0.324, never clearing -0.3 nor
+>    dropping below -0.5), so "no fold changes status" was guaranteed before the
+>    analysis ran. On a dataset with a pass/fail mix it could still fire the
+>    other way.
+> 2. *The sweep is mis-centred.* Three of five folds select `08`, the top of the
+>    swept range, with the metric still improving. A shared factor chosen from a
+>    grid that cannot see the optimum is not the shared factor we want. Widen
+>    `bias_factors` past 0.8 and re-run before shrinking anything.
+>
+> Q2 is the informative part and supports the doc's hypothesis: spread across
+> **folds at a fixed factor** (0.00731) is 86% of the spread across **factors
+> within a fold** (0.00855), so the per-fold winner is largely fold-to-fold
+> measurement noise. Worth noting separately: the 2% relative tie window is
+> 0.00396, which is 27% of the entire observed spread — so on this data the
+> tie-break, not the primary metric, usually decides the winner.
 
 ## The question
 
