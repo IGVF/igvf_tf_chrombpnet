@@ -131,6 +131,18 @@ THRESHOLD_COLORS = {
     "fail": OKABE_ITO["vermillion"],
 }
 
+#: Bias-threshold scan (02.0). The three verdicts plus the two distributions
+#: the cutoff sits between. Green/orange/vermillion carry the same pass / warn
+#: / fail meaning they do in STATUS_COLORS.
+BIAS_SCAN_COLORS = {
+    "ok": OKABE_ITO["bluish_green"],
+    "risky": OKABE_ITO["orange"],
+    "fail": OKABE_ITO["vermillion"],
+    "nonpeaks": OKABE_ITO["sky_blue"],
+    "peaks": OKABE_ITO["reddish_purple"],
+    "cutoff": OKABE_ITO["black"],
+}
+
 # ── Fragment-size classes (src/qc_datasets.py) ────────────────────────────────
 
 #: NFR / mono / di / tri nucleosome bins. An ordered series, so it walks the

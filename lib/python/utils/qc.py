@@ -323,6 +323,82 @@ def peak_vs_nonpeak_signal(bigwig, peaks, nonpeaks, window: int = 1000, **kw):
     return metrics, pos, neg
 
 
+def bias_threshold_viability(
+    bigwig, peaks, nonpeaks, factors=None,
+    outputlen: int = 1000, outlier_threshold: float = 0.9999,
+    max_regions: int = 10_000_000,
+):
+    """Which bias_threshold_factor values 03.0 can actually train on.
+
+    03.0's sweep is the most expensive thing in the pipeline -- folds x factors
+    GPU jobs -- and some of those jobs cannot succeed, for a reason visible
+    here with no GPU at all. `chrombpnet bias train` selects its background by
+
+        counts_threshold = quantile(peak_counts, 0.01) * bias_threshold_factor
+        kept  = nonpeak_counts[nonpeak_counts < counts_threshold]
+        upper = quantile(kept, outlier_threshold)
+        lower = quantile(kept, 1 - outlier_threshold)
+        nonpeaks = nonpeaks[(counts < upper) & (counts > lower)]
+
+    Counts are integers. When the cutoff is low, `kept` holds only a couple of
+    distinct values, the two quantiles collapse onto adjacent integers, and the
+    strict inequalities select nothing -- 0 non-peaks, counts_loss_weight nan,
+    and a crash inside the one-hot encoder several frames later, AFTER the
+    bigwig preprocessing has run. chrombpnet asserts `kept` is non-empty but
+    never checks the post-outlier count, which is why the error surfaces so far
+    from its cause.
+
+    The same quantisation means neighbouring factors are often IDENTICAL: the
+    training set only changes when q01 * factor crosses an integer.
+
+    Everything needed is already in hand here -- 02.0 has the prepared bigwig,
+    the filtered peaks and the GC-matched negatives -- so the answer costs a
+    couple of minutes of CPU instead of a failed GPU job per bad factor.
+    """
+    # NOT subsampled by default: quantile(kept, 0.9999) is the whole point and
+    # needs the real tail. chrombpnet tunes on train+valid only, so treat these
+    # as indicative of the sweep rather than an exact replay of it.
+    # A fine grid is free: the bigwig is read once, below, and the factor loop
+    # is arithmetic. Sweeping past 1.0 matters because
+    # docs/bias-factor-per-fold.md records winners piling up at the 0.8 ceiling
+    # of the default grid, which cannot see an optimum outside its own range.
+    if factors is None:
+        factors = [round(f, 2) for f in np.arange(0.05, 2.001, 0.05)]
+
+    pk = window_totals(bigwig, peaks, window=outputlen, max_regions=max_regions)
+    ng = window_totals(bigwig, nonpeaks, window=outputlen, max_regions=max_regions)
+    if pk.size == 0 or ng.size == 0:
+        return {}, [], np.array([]), np.array([])
+    q01 = float(np.quantile(pk, 0.01))
+
+    rows, viable, distinct = [], [], {}
+    for f in factors:
+        thr = q01 * f
+        kept = ng[ng < thr]
+        if kept.size == 0:
+            rows.append({"factor": f, "counts_threshold": thr, "n_after_cutoff": 0,
+                         "n_nonpeaks": 0, "verdict": "fail: cutoff admits no non-peaks"})
+            continue
+        upper = np.quantile(kept, outlier_threshold)
+        lower = np.quantile(kept, 1 - outlier_threshold)
+        n = int(((ng < upper) & (ng > lower)).sum())
+        verdict = ("fail: outlier quantiles collapse" if n == 0
+                   else "risky: very few non-peaks" if n < 1000 else "ok")
+        rows.append({"factor": f, "counts_threshold": thr, "n_after_cutoff": int(kept.size),
+                     "n_nonpeaks": n, "verdict": verdict})
+        if verdict == "ok":
+            viable.append(f)
+            distinct.setdefault(n, f)
+
+    summary = {
+        "peak_signal_q01": q01,
+        "bias_factors_viable": ",".join(str(f) for f in viable) or "NONE",
+        "bias_factors_distinct": ",".join(str(f) for f in distinct.values()) or "NONE",
+        "n_bias_factors_viable": len(viable),
+        "n_bias_factors_distinct": len(distinct),
+    }
+    return summary, rows, pk, ng
+
 def peak_width_summary(peaks, input_window: int = 2114):
     """Peak widths, disjointness, and how much sequence the model sees twice.
 

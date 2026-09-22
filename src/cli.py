@@ -26,12 +26,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib" / "python"))
 
 import click  # noqa: E402
+import numpy as np  # noqa: E402
 
 from utils import config as cfg  # noqa: E402
 from utils import (  # noqa: E402
     intervals,
     log,
     metadata,
+    palettes,
     pileup,
     references,
     shift,
@@ -665,6 +667,27 @@ def qc_signal(
                 bigwig, neg_rows, flank=input_window // 2
             )
             metrics["n_nonpeaks_profiled"] = neg_used
+
+            # Which bias_threshold_factor values 03.0 can actually train on.
+            # Everything needed is already loaded here, and the answer costs
+            # CPU minutes instead of one failed GPU job per bad factor.
+            bias_metrics, bias_rows, _bias_pk, _bias_ng = qc.bias_threshold_viability(
+                bigwig, peak_rows, neg_rows, outputlen=compare_window
+            )
+            metrics |= bias_metrics
+            if bias_rows:
+                _bias_tsv = out / f"{prefix}_bias_threshold_scan.tsv"
+                pd.DataFrame(bias_rows).to_csv(_bias_tsv, sep="\t", index=False)
+                md.add_output("qc", _bias_tsv)
+                logger.info(
+                    "bias_threshold_factor: %d viable, %d distinct training sets",
+                    bias_metrics.get("n_bias_factors_viable", 0),
+                    bias_metrics.get("n_bias_factors_distinct", 0),
+                )
+                logger.info(
+                    "  distinct factors worth sweeping: %s",
+                    bias_metrics.get("bias_factors_distinct"),
+                )
         else:
             logger.warning("no --negatives given; skipping the peak vs background QC")
 
@@ -794,6 +817,48 @@ def qc_signal(
             plotting.save_fig(fig, out / f"{prefix}_peaks_vs_background")
             plt.close(fig)
             md.add_output("peaks_vs_background", out / f"{prefix}_peaks_vs_background.pdf")
+
+        # ── how the bias threshold reshapes the background ────────────────
+        if bias_rows:
+            _sc = palettes.BIAS_SCAN_COLORS
+            fig, (axl, axr) = plt.subplots(1, 2, figsize=(8.4, 3.2))
+
+            # LEFT: the integer count distributions the cutoff slices through.
+            # Drawn as integer bars, not a smooth histogram, because the
+            # integer-ness IS the mechanism -- a cutoff landing between two
+            # bars selects exactly the same set as one landing anywhere else
+            # in that gap, which is why neighbouring factors are identical.
+            _hi = 12
+            _bins = np.arange(0, _hi + 1)
+            for _arr, _k, _lab in ((_bias_ng, "nonpeaks", "non-peaks"),
+                                   (_bias_pk, "peaks", "peaks")):
+                _h = np.array([(np.asarray(_arr) == b).mean() for b in _bins])
+                axl.bar(_bins, _h, width=0.85, alpha=0.55, color=_sc[_k], label=_lab)
+            for _r in bias_rows:
+                axl.axvline(_r["counts_threshold"], lw=0.8, ls="--",
+                            color=_sc["fail" if _r["n_nonpeaks"] == 0 else "ok"], alpha=0.5)
+            axl.set_xlabel(f"insertions in the {compare_window}bp window")
+            axl.set_ylabel("fraction of regions")
+            axl.set_title("cutoffs fall between integers", fontsize=9)
+            axl.legend(frameon=False, fontsize=7)
+
+            # RIGHT: the landscape itself -- how many non-peaks survive.
+            _f = [r["factor"] for r in bias_rows]
+            _n = [r["n_nonpeaks"] for r in bias_rows]
+            _c = [_sc["fail"] if r["n_nonpeaks"] == 0
+                  else _sc["risky"] if r["n_nonpeaks"] < 1000
+                  else _sc["ok"] for r in bias_rows]
+            axr.step(_f, _n, where="post", color=_sc["cutoff"], lw=0.8, zorder=1)
+            axr.scatter(_f, _n, c=_c, s=18, zorder=2)
+            axr.set_xlabel("bias_threshold_factor")
+            axr.set_ylabel("non-peaks left to train on")
+            axr.set_title("staircase, not a ramp", fontsize=9)
+            for _x in (0.5, 0.8):
+                axr.axvline(_x, color=OKABE_ITO["black"], lw=0.5, ls=":", alpha=0.6)
+            fig.tight_layout()
+            plotting.save_fig(fig, out / f"{prefix}_bias_threshold_scan")
+            plt.close(fig)
+            md.add_output("qc", out / f"{prefix}_bias_threshold_scan.pdf")
 
         if tss_metrics.get("profile"):
             fig, ax = plt.subplots(figsize=(4, 3))
