@@ -28,6 +28,8 @@ that was supplied as a bigwig in the first place.
 
 from __future__ import annotations
 
+from collections import defaultdict
+
 import numpy as np
 
 __all__ = [
@@ -321,14 +323,71 @@ def peak_vs_nonpeak_signal(bigwig, peaks, nonpeaks, window: int = 1000, **kw):
     return metrics, pos, neg
 
 
-def peak_width_summary(peaks):
-    widths = np.array([int(r[2]) - int(r[1]) for r in peaks], dtype=np.int64)
-    if widths.size == 0:
+def peak_width_summary(peaks, input_window: int = 2114):
+    """Peak widths, disjointness, and how much sequence the model sees twice.
+
+    Peak WIDTH does not reach the model: ChromBPNet extracts a fixed
+    `input_window`bp window centred on (start + summit), so a 500bp and a
+    4000bp peak produce the same sized training example. Width still matters
+    for a different reason -- with a synthesised midpoint summit, the wider the
+    peak the more arbitrary the window's placement within it, which is why
+    `peak_width_max` is worth reading next to `summit_offset_max`.
+
+    What does reach the model is WINDOW overlap. Peaks may be disjoint and
+    their windows still overlap, because neighbours can sit closer together
+    than the window is wide -- the same sequence then appears in several
+    training examples. `window_redundancy` is summed window bp over unique bp
+    covered: 1.0 means every example is disjoint sequence.
+    """
+    rows = [(str(r[0]), int(r[1]), int(r[2]), int(r[9]) if len(r) > 9 else None) for r in peaks]
+    if not rows:
         return {}
+    widths = np.array([e - s for _, s, e, _ in rows], dtype=np.int64)
     q = np.percentile(widths, [0, 50, 100])
-    return {
+    out = {
         "peak_width_min": int(q[0]),
         "peak_width_median": float(q[1]),
         "peak_width_max": int(q[2]),
+        "peak_width_distinct": int(np.unique(widths).size),
         "peak_bases_total": int(widths.sum()),
     }
+
+    def _n_overlapping(by_chrom):
+        n = 0
+        for spans in by_chrom.values():
+            prev_end = None
+            for a, b in sorted(spans):
+                if prev_end is not None and a < prev_end:
+                    n += 1
+                prev_end = b if prev_end is None else max(prev_end, b)
+        return n
+
+    peaks_by = defaultdict(list)
+    for c, s, e, _ in rows:
+        peaks_by[c].append((s, e))
+    out["n_peaks_overlapping"] = _n_overlapping(peaks_by)
+
+    if all(su is not None for _, _, _, su in rows):
+        half = input_window // 2
+        win_by = defaultdict(list)
+        for c, s, _, su in rows:
+            mid = s + su
+            win_by[c].append((mid - half, mid + half))
+        n_ov = _n_overlapping(win_by)
+        summed = covered = 0
+        for spans in win_by.values():
+            spans = sorted(spans)
+            summed += sum(b - a for a, b in spans)
+            cs, ce = spans[0]
+            for a, b in spans[1:]:
+                if a <= ce:
+                    ce = max(ce, b)
+                else:
+                    covered += ce - cs
+                    cs, ce = a, b
+            covered += ce - cs
+        out["input_window"] = int(input_window)
+        out["n_windows_overlapping"] = int(n_ov)
+        out["frac_windows_overlapping"] = round(n_ov / len(rows), 6)
+        out["window_redundancy"] = round(summed / covered, 4) if covered else None
+    return out

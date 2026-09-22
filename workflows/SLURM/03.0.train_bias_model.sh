@@ -109,7 +109,7 @@ out_dir="${results_path}/bias_models/bias_model${suffix}/${bias_dataset}_${peak_
 model_file="${out_dir}/models/${file_prefix}_bias.h5"
 
 
-metadata_inputs+=( "reads=${signal_file}" "peaks=${peaks_file}" "negatives=${negatives_file}" "fold_json=${fold_json}" )
+metadata_inputs+=( "${signal_type}=${signal_file}" "peaks=${peaks_file}" "negatives=${negatives_file}" "fold_json=${fold_json}" )
 require_input "${signal_file}" 00.0.prepare_signal.sh
 require_input "${peaks_file}" 00.1.preprocess_peaks.sh
 require_input "${negatives_file}" 01.0.preprocess_nonpeaks.sh

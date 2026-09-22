@@ -380,7 +380,10 @@ def prepare_bigwig(
     meta_dir = metadata_dir or (out / "metadata")
 
     with metadata.record("prepare_bigwig", out_dir=meta_dir) as md:
-        md.add_input("reads", signal_path)
+        # The parameter_name is the data type itself -- fragments, bam or
+        # tagalign -- not a generic "reads". signal_type is validated to be
+        # one of those three, and it is what the file actually holds.
+        md.add_input(signal_type, signal_path)
         if genome:
             md.add_input("genome", genome)
         md.add_param("signal_type", signal_type)
@@ -431,7 +434,8 @@ def prepare_bigwig(
             )
         md.add_metric("reads_kept", kept)
         if write_filtered:
-            md.add_output("reads", write_filtered)
+            # Filtering does not change what the data IS.
+            md.add_output(signal_type, write_filtered)
             logger.info("filtered reads -> %s", write_filtered)
         if skipped:
             logger.warning(
@@ -719,9 +723,20 @@ def qc_signal(
         pd.DataFrame([flat]).to_csv(tsv_out, sep="\t", index=False)
         md.add_output("qc", json_out)
         md.add_output("qc", tsv_out)
+        # Most of what qc-signal writes is MEASURED, but not all of it: the
+        # flat dict also carries the window the comparison used (a setting)
+        # and the dataset name (already a top-level field on every record).
+        # Classifying the whole dict as metrics put a setting and an identifier
+        # in the measurement bag.
+        QC_SETTINGS = {"compare_window"}
+        QC_NOT_A_PARAMETER = {"dataset"}
         for k, v in flat.items():
-            # Everything qc-signal writes is MEASURED, not configured.
-            md.add_metric(k, v)
+            if k in QC_NOT_A_PARAMETER:
+                continue
+            if k in QC_SETTINGS:
+                md.add_param(k, v)
+            else:
+                md.add_metric(k, v)
 
         # ── plots ─────────────────────────────────────────────────────────
         import matplotlib.pyplot as plt
