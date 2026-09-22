@@ -63,7 +63,7 @@ import sys
 import time
 import uuid
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from utils import log
@@ -132,7 +132,7 @@ def md5sum(path, chunk_bytes: int = CHUNK_BYTES) -> str:
 
 
 def _utc(ts: float) -> str:
-    return datetime.fromtimestamp(ts, tz=UTC).isoformat(timespec="seconds")
+    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(timespec="seconds")
 
 
 #: Multi-part extensions that mean something as a unit. Order matters: the
