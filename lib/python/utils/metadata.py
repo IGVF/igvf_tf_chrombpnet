@@ -152,6 +152,26 @@ FORMAT_ALIASES = {
 }
 
 
+
+def _peak_rss_gb() -> float | None:
+    """Peak resident memory of this process and its finished children, in GiB.
+
+    Never raises: provenance must not fail a step. Returns None where the
+    platform does not provide it.
+    """
+    try:
+        import resource
+
+        scale = 1 if sys.platform == "darwin" else 1024  # macOS reports bytes
+        peak = max(
+            resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+            resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,
+        )
+        return round(peak * scale / (1024**3), 3)
+    except Exception:  # pragma: no cover - platform dependent
+        return None
+
+
 def file_format(path) -> str | None:
     """The ENCODE-style file_format: how the bytes are encoded, nothing else.
 
@@ -467,6 +487,11 @@ class StepMetadata:
             "date_created": self.started_at,
             "date_completed": _utc(time.time()),
             "duration_s": round(time.monotonic() - self.started_monotonic, 3),
+            # Peak RSS, so SLURM --mem can be sized from measurement rather
+            # than from a guess that gets copied forward. SELF plus CHILDREN,
+            # because the heavy work is often a subprocess (chrombpnet,
+            # modisco, bedtools). ru_maxrss is KiB on Linux, bytes on macOS.
+            "peak_rss_gb": _peak_rss_gb(),
             "host": socket.gethostname(),
             # Flat scalars: `GROUP BY "user"` is the common query, so these do
             # not get buried in a struct.

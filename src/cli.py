@@ -260,6 +260,7 @@ def preprocess_peaks(
         # windows -- weaker than most of the genome -- and dropping 1.8% of
         # peaks moved q01 from 4 to 17.
         n_before_floor = len(kept)
+        dropped_pr = None
         floor_diag = {}
         signal_floor = None
         peak_signal = None
@@ -285,8 +286,9 @@ def preprocess_peaks(
                 signal, intervals.to_narrowpeak(kept).values.tolist(),
                 window=compare_window, max_regions=10_000_000,
             )
-            keep_mask = peak_signal >= signal_floor
-            kept = kept[np.asarray(keep_mask)]
+            keep_mask = np.asarray(peak_signal >= signal_floor)
+            dropped_pr = kept[~keep_mask]
+            kept = kept[keep_mask]
             logger.info(
                 "%d peak(s) dropped below the floor, %d kept",
                 n_before_floor - len(kept), len(kept),
@@ -341,6 +343,21 @@ def preprocess_peaks(
             "peaks_final": len(kept),
             **floor_diag,
         }
+        # The dropped peaks are kept as an artifact, not just a count. They do
+        # not vanish from the analysis: dropping a peak removes it from the
+        # exclusion list 01.0 builds, so the region becomes ELIGIBLE to be
+        # sampled as GC-matched background. Some of it comes back as a
+        # negative and the bias model then trains on regions we just judged
+        # too weak to be peaks. 02.0 measures how much; it needs this file to
+        # do so.
+        if dropped_pr is not None and len(dropped_pr):
+            dropped_bed = peaks_dir / f"{prefix}_peaks_dropped.bed"
+            dropped_pr[["Chromosome", "Start", "End"]].to_csv(
+                dropped_bed, sep="\t", header=False, index=False
+            )
+            md.add_output("peaks", dropped_bed)
+            logger.info(f"-> {dropped_bed} ({len(dropped_pr)} dropped)")
+
         sidecar_path = peaks_dir / "peaks.json"
         sidecar_path.write_text(_json.dumps(sidecar, indent=2) + "\n")
         md.add_output("peaks", sidecar_path)
@@ -836,6 +853,25 @@ def qc_signal(
                 bigwig, neg_rows, flank=input_window // 2
             )
             metrics["n_nonpeaks_profiled"] = neg_used
+
+            # Did what 00.1 discarded come back as background?
+            # Derive it from the peaks FILENAME, not from --prefix: 00.1 is
+            # called with prefix "<dataset>_<peak_type>" and 02.0 with
+            # "<dataset>", so composing the name here silently missed the file
+            # and reported nothing.
+            _dropped_bed = Path(str(peaks).replace(
+                "_peaks_no_blacklist.narrowPeak", "_peaks_dropped.bed"
+            ))
+            metrics |= qc.dropped_peaks_resampled(_dropped_bed, neg_rows, compare_window)
+            if metrics.get("n_dropped_peaks_resampled"):
+                logger.info(
+                    "%d of %d peaks dropped by the signal floor were re-sampled as "
+                    "background (%d negatives, %.3f%% of the background)",
+                    metrics["n_dropped_peaks_resampled"],
+                    metrics["n_peaks_dropped_by_floor"],
+                    metrics["n_negatives_in_dropped_peaks"],
+                    100 * metrics["frac_negatives_in_dropped_peaks"],
+                )
 
             # Which bias_threshold_factor values 03.0 can actually train on.
             # Everything needed is already loaded here, and the answer costs

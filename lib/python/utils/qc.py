@@ -28,6 +28,7 @@ that was supplied as a bigwig in the first place.
 
 from __future__ import annotations
 
+import logging
 import math
 from collections import defaultdict
 
@@ -323,6 +324,73 @@ def peak_vs_nonpeak_signal(bigwig, peaks, nonpeaks, window: int = 1000, **kw):
     }
     return metrics, pos, neg
 
+
+def dropped_peaks_resampled(dropped_bed, nonpeaks, window: int):
+    """How much of what 00.1 discarded came back as GC-matched background.
+
+    Dropping a peak does not remove the region from the analysis. It removes it
+    from the exclusion list `chrombpnet prep nonpeaks` builds, which makes the
+    region ELIGIBLE to be sampled as background -- so the bias model can end up
+    training on regions the pipeline just judged too weak to be peaks. That is
+    the opposite of what the floor is for, and nothing else measures it.
+
+    Reported both ways, because they answer different questions:
+      frac_negatives_...  how contaminated the background is (small by
+                          construction -- the sampler draws from the whole
+                          genome)
+      frac_dropped_...    how much of the discarded set came back (can be
+                          large, and is the number that says whether the floor
+                          actually removed those regions from training)
+    """
+    import bisect
+    from pathlib import Path
+
+    if not Path(dropped_bed).exists():
+        # Not an error: the floor is optional, so there is usually nothing to
+        # check. Say so rather than returning {} and looking like a clean
+        # result -- a silently missing metric reads as "measured, found none".
+        logging.getLogger(__name__).info(
+            "no dropped-peaks file at %s; signal floor not in use, "
+            "skipping the re-sampling check", dropped_bed
+        )
+        return {}
+    by = defaultdict(list)
+    n_dropped = 0
+    with open(dropped_bed) as fh:
+        for line in fh:
+            f = line.split("\t")
+            if len(f) < 3:
+                continue
+            by[f[0]].append((int(f[1]), int(f[2])))
+            n_dropped += 1
+    for c in by:
+        by[c].sort()
+    starts = {c: [x[0] for x in v] for c, v in by.items()}
+
+    n_neg = 0
+    hit_neg = 0
+    hit_regions = set()
+    for row in nonpeaks:
+        c = str(row[0])
+        mid = int(row[1]) + (int(row[9]) if len(row) > 9 else (int(row[2]) - int(row[1])) // 2)
+        n_neg += 1
+        v = by.get(c)
+        if not v:
+            continue
+        i = bisect.bisect_right(starts[c], mid)
+        if i and v[i - 1][1] > mid:
+            hit_neg += 1
+            hit_regions.add((c, v[i - 1][0]))
+
+    return {
+        "n_peaks_dropped_by_floor": n_dropped,
+        "n_negatives_in_dropped_peaks": hit_neg,
+        "frac_negatives_in_dropped_peaks": round(hit_neg / n_neg, 6) if n_neg else None,
+        "n_dropped_peaks_resampled": len(hit_regions),
+        "frac_dropped_peaks_resampled": (
+            round(len(hit_regions) / n_dropped, 6) if n_dropped else None
+        ),
+    }
 
 def background_signal_quantile(
     bigwig, quantile: float, window: int, blacklist_intervals=None,
