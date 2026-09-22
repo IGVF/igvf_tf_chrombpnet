@@ -27,6 +27,16 @@ The replacement *copies the prepared bigwig into place* rather than doing
 nothing. It has to: chrombpnet creates `auxiliary/` itself with
 `exist_ok=False`, so the file cannot be staged beforehand.
 
+Why not just pass the bigwig on the command line? chrombpnet 1.0.1 DOES have a
+`--bigwig` flag, but only on the subcommands that *read* one -- `qc`,
+`bias qc` and `pred_bw` (chrombpnet/parsers.py:146, 195, 226). The training
+subcommands, `pipeline` and `bias train`, take reads and nothing else: their
+required group is `-ibam | -ifrag | -itag`, and `--bigwig` there is rejected as
+an unrecognized argument. The ChromBPNet tutorial shows `chrombpnet pipeline
+--bigwig ...`, which documents GitHub main; the newest PyPI release is 1.0.1,
+so that form does not work against anything installable today. If a future
+chrombpnet adds `--bigwig` to `pipeline`, delete this module and pass the flag.
+
 Safety
 ------
 Reuse only happens when the prepared bigwig's sidecar records the same signal

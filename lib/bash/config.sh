@@ -151,6 +151,10 @@ predictions_dir="${results_path}/predictions"
 averaged_dir="${results_path}/contrib_scores"
 compendium_dir="${results_path}/compendium"
 log_dir="${results_path}/logs"
+# 02.0 writes this; 03.0 reads it to decide which bias factors are worth a GPU
+# job at all. See qc.bias_threshold_viability().
+signal_qc_dir="${results_path}/plots/signal_qc"
+bias_scan_file="${signal_qc_dir}/${bias_dataset}_bias_threshold_scan.tsv"
 # Per-dataset run metadata lives with that dataset's results; common.sh
 # defaulted it to the collaboration root for cross-dataset steps.
 metadata_dir="${METADATA_DIR:-${results_path}/metadata}"

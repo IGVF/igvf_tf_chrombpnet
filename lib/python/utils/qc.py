@@ -323,6 +323,20 @@ def peak_vs_nonpeak_signal(bigwig, peaks, nonpeaks, window: int = 1000, **kw):
     return metrics, pos, neg
 
 
+def bias_suffix(factor: float) -> str:
+    """The `_05` / `_08` suffix convention, extended past one decimal.
+
+    The existing configs spell 0.5 as `_05` and 0.8 as `_08` -- the factor with
+    its decimal point removed. Extending that rule gives `_055` for 0.55 and
+    `_105` for 1.05, and it keeps every existing suffix unchanged. A whole
+    number is written to one decimal first so 1.0 becomes `_10`, not `_1`.
+    """
+    text = f"{float(factor):g}"
+    if "." not in text:
+        text += ".0"
+    return "_" + text.replace(".", "")
+
+
 def bias_threshold_viability(
     bigwig, peaks, nonpeaks, factors=None,
     outputlen: int = 1000, outlier_threshold: float = 0.9999,
@@ -376,16 +390,20 @@ def bias_threshold_viability(
         thr = q01 * f
         kept = ng[ng < thr]
         if kept.size == 0:
-            rows.append({"factor": f, "counts_threshold": thr, "n_after_cutoff": 0,
-                         "n_nonpeaks": 0, "verdict": "fail: cutoff admits no non-peaks"})
+            rows.append({"factor": f, "suffix": bias_suffix(f),
+                         "counts_threshold": thr, "n_after_cutoff": 0,
+                         "n_nonpeaks": 0, "distinct": False,
+                         "verdict": "fail: cutoff admits no non-peaks"})
             continue
         upper = np.quantile(kept, outlier_threshold)
         lower = np.quantile(kept, 1 - outlier_threshold)
         n = int(((ng < upper) & (ng > lower)).sum())
         verdict = ("fail: outlier quantiles collapse" if n == 0
                    else "risky: very few non-peaks" if n < 1000 else "ok")
-        rows.append({"factor": f, "counts_threshold": thr, "n_after_cutoff": int(kept.size),
-                     "n_nonpeaks": n, "verdict": verdict})
+        is_distinct = verdict == "ok" and n not in distinct
+        rows.append({"factor": f, "suffix": bias_suffix(f),
+                     "counts_threshold": thr, "n_after_cutoff": int(kept.size),
+                     "n_nonpeaks": n, "distinct": is_distinct, "verdict": verdict})
         if verdict == "ok":
             viable.append(f)
             distinct.setdefault(n, f)
