@@ -1,6 +1,10 @@
 # The bias selector walks to the top of whatever range it is given
 
-**Status:** mechanism established on d0 fold 0, 2026-09-22. Not yet acted on.
+**Status:** mechanism established on d0 fold 0, 2026-09-22. A contributing
+cause -- an anchor set by background-level peaks -- was found afterwards and
+HAS been acted on (`peak_min_signal_quantile`, 00.1). The tie-break itself is
+unchanged and still unfixed; see "A CONTRIBUTING cause" below for what that
+leaves open.
 Bears directly on `docs/bias-factor-per-fold.md`, which observed the symptom
 without identifying the cause.
 
@@ -76,6 +80,44 @@ about what the score should reward, and should be settled deliberately.
    peaks_r differs by 0.03. Narrower; leaves the monotone bias latent.
 3. **An absolute guard on `peaks_r`**, independent of the tie-breaks.
 
+## A CONTRIBUTING cause, found afterwards: the anchor was set by non-peaks
+
+Every cutoff in the sweep is `quantile(peak_counts, 0.01) * factor`, so the
+sweep is only as meaningful as that q01. On d0 it was **4 insertions per
+1000bp window -- the 40.6th percentile of sampled genome windows.** The
+weakest 1% of "peaks" were weaker than most of the genome. About 2,800 of them
+were setting the scale for the entire sweep.
+
+With the anchor that low, a factor above 1.0 was needed just to assemble a
+background of usable size, so part of the drift was the selector compensating
+for a broken scale rather than preferring a worse model.
+
+00.1 now drops peaks below a quantile of the experiment's own genome-wide
+signal (`peak_min_signal_quantile`). On d0 at 0.75 that removes 1.81% of peaks
+and moves q01 from **4 to 17**; factor 1.0 then admits non-peaks up to 16
+insertions instead of 3, and the same factor 1.05 yields 206,065 background
+regions instead of 52,871. AUROC peaks-vs-background went 0.9811 -> 0.9932 and
+peaks with zero signal 0.52% -> 0.0026%.
+
+**This does not on its own retire the tie-break problem.** The monotone
+preference for higher `nonpeaks_pearsonr` in tie-break 3 is still there, and it
+will still walk to the top of any range whenever the primary score plateaus.
+Whether it still does so once the anchor is sound is an empirical question,
+being tested by retraining factors 0.6 / 1.05 / 1.5 against the floored peak
+set. Two outcomes:
+
+* `peaks_r` stays near zero at the recommended factor and only climbs later ->
+  the anchor was the substantive problem and the tie-break is a latent one.
+* `peaks_r` is already climbing at the recommendation -> the tie-break is an
+  independent defect and needs its own fix regardless.
+
+Note also that the floor changed the SHAPE of the sweep. With q01=4 each 0.05
+of factor moved the cutoff by 0.2 insertions, so neighbouring factors collapsed
+onto the same integer set: 6 distinct configurations. With q01=17 each step
+moves it by 0.85, and 32 of 40 grid points are distinct. The staircase became a
+ramp, which makes "sweep everything distinct" 32 GPU jobs rather than 6 and
+raises the value of the recommendation.
+
 ## What is NOT the cause
 
 Ruled out with measurements, so nobody re-treads them:
@@ -88,4 +130,5 @@ Ruled out with measurements, so nobody re-treads them:
   negative:peak ratio (1.79 vs 1.75).
 * **Not irregular peaks.** The reference set is far more irregular: 150-4182bp
   widths, 40.1% of peaks overlapping another, 1.74x window redundancy, against
-  d0's 0% and 1.08x.
+  d0's 0% and 1.08x. (It is worth noting these comparisons were made BEFORE the
+  signal floor, against the 156,178-peak set.)

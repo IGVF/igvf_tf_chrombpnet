@@ -297,6 +297,17 @@ say which of the two kinds of verification a change actually got.
     signal; the trap only survives SIGTERM.
   - Emission never fails a step, and `script_url` is misleading when `git.dirty`
     is true — filter on it. Query recipes are in `queries.sql`.
+- **00.1 can drop peaks by their own signal** (`peak_min_signal_quantile`, off
+  by default). The threshold is a quantile of the experiment's own genome-wide
+  windows, so it is depth-independent; blacklist regions are excluded from the
+  background sample but peaks are not, because it is the experiment's
+  distribution rather than a background model. It matters out of proportion to
+  the peaks it removes: chrombpnet anchors every bias threshold in the 03.0
+  sweep to `quantile(peak_counts, 0.01)`, and on d0 the weakest 1% of peaks sat
+  at the 40.6th percentile of genome windows, so dropping 1.81% of them moved
+  that anchor from 4 to 17. Needs 00.0's bigwig. Outputs go to
+  `preprocessing/peaks/` with a `peaks.json` sidecar recording what each filter
+  stage cost, and a plot in `plots/peaks_qc/`.
 - **QC runs on the artifacts, not the inputs.** `02.0` reads the prepared
   bigwig, the filtered narrowPeak and the negatives, so every number describes
   what ChromBPNet will actually see after all filtering. It is advisory and
