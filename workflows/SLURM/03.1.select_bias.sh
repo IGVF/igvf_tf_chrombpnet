@@ -53,11 +53,14 @@ set -euo pipefail
 # Bias labels to evaluate, derived from the sweep in dataset_config
 # (bias_suffixes_sweep entries like "_05" -> "05").
 biases=()
-
-metadata_params+=( "biases=${biases[*]}" )
 for s in "${bias_suffixes_sweep[@]}"; do
     biases+=( "${s#_}" )
 done
+# AFTER the loop, not before it. Sherlock's bash is 4.2, where ${arr[*]} on an
+# EMPTY array is an unbound-variable error under the `set -u` above -- so with
+# this line in its old position the step aborted here every time, before it ran
+# anything. It also recorded an empty value for a param it is meant to capture.
+metadata_params+=( "biases=${biases[*]}" )
 
 out_dir="${results_path}/plots/bias_model_selection/${bias_dataset}"
 
@@ -72,6 +75,12 @@ echo "  out_dir     : ${out_dir}"
 fold_bias_args=()
 if declare -p fold_bias_suffix &>/dev/null 2>&1; then
     for fold in "${!fold_bias_suffix[@]}"; do
+        # Skip folds that are still blank. Before 03.1 has ever run, every entry
+        # is "", and passing `0:` through makes select_bias_model.py log
+        # "Override bias '' ... not in evaluated biases" once per fold before
+        # falling back to auto-selection -- five confusing warnings on the one
+        # run where the user has nothing to override with yet.
+        [[ -n "${fold_bias_suffix[$fold]}" ]] || continue
         fold_bias_args+=( "${fold}:${fold_bias_suffix[$fold]}" )
     done
 fi
@@ -88,6 +97,6 @@ python "${src_dir}/select_bias_model.py" \
     --biases "${biases[@]}" \
     --folds "${folds[@]}" \
     --out-dir "${out_dir}" \
-    "${extra_args[@]}"
+    ${extra_args[@]+"${extra_args[@]}"}
 
 echo "[$(date)] Done. Review ${out_dir}/ then set fold_bias_suffix in dataset_config.sh."

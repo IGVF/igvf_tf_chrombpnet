@@ -3,6 +3,11 @@
 #SBATCH --mem=64G
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
+# Same GPU limits as 03.0/04.0: cuda/11.5 cannot drive Ada (8.9) or Hopper
+# (9.0), and 7.0/7.5 are excluded for speed. See 03.0 for the measurements.
+# This step previously carried NO constraint while loading the same cuda
+# module, so it could land on an H100 and fail obscurely.
+#SBATCH --constraint="GPU_CC:8.0|GPU_CC:8.6"
 #SBATCH --time=1-0
 #SBATCH --partition=gpu,owners
 #SBATCH --array=0-4
@@ -97,6 +102,8 @@ if [[ ! -f "${model_file}" ]]; then
     exit 1
 fi
 
+# No `set -e` in this step, and this is the last real command, so without the
+# guard a DeepLIFT/TF-MoDISco failure prints "Done." and exits 0.
 python "${src_dir}/run_bias_qc.py" \
     --bias-model "${model_file}" \
     --output-dir "${out_dir}" \
@@ -104,5 +111,9 @@ python "${src_dir}/run_bias_qc.py" \
     --genome "${genome_fa}" \
     --chrom-sizes "${chrom_sizes}" \
     --fold-json "${fold_json}"
+if [[ $? -ne 0 || ! -d "${out_dir}/evaluation" ]]; then
+    echo "ERROR: run_bias_qc.py failed for fold ${fold}; ${out_dir}/evaluation was not written." >&2
+    exit 1
+fi
 
 echo "[$(date)] [fold ${fold}] Done."

@@ -182,16 +182,39 @@ def select_best(group: pd.DataFrame) -> str:
     return group["bias"].iloc[0]
 
 
+def bias_factor(label: str) -> float:
+    """The numeric threshold factor a sweep label stands for.
+
+    The labels are shorthands with the decimal point dropped, and the LEADING
+    ZERO is what marks one: "05" is 0.5 and "09" is 0.9, while "1" is plain
+    1.0. A naive float() reads "05" as 5.0 and "1" as 1.0, which orders the
+    highest factor in the sweep *below* the lowest -- igvf11_h7_hesc sweeps
+    ["05","06","07","08","09","1"] and float-sorting yields
+    ['1','05','06','07','08','09'], so sweep_edge() called 1.0 the LOWEST and
+    told the user to extend the grid downward when the winner was at the top.
+
+    Rule: a label already containing "." is the factor written out. Otherwise a
+    leading "0" means "0.xx" (drop it and scale by the remaining width), and a
+    label with no leading zero is the factor itself.
+    """
+    label = str(label)
+    if "." in label:
+        return float(label)
+    if label.startswith("0") and len(label) > 1:
+        return float(f"0.{label[1:]}")
+    return float(label)
+
+
 def sweep_order(biases) -> list[str]:
     """The swept biases from lowest threshold factor to highest.
 
-    Sorted numerically, not lexically. The labels are factor shorthands -- "05"
-    for 0.5, or "0.5" written out -- and a lexical sort puts "10" before "5".
-    Falls back to the order given when a label is not a number at all.
+    Ordered by the factor each label denotes (see bias_factor), not by a naive
+    float() of the label and not lexically. Falls back to the order given when
+    a label is not a number at all.
     """
     biases = [str(b) for b in biases]
     try:
-        return sorted(biases, key=float)
+        return sorted(biases, key=bias_factor)
     except ValueError:
         return list(biases)
 
@@ -851,7 +874,11 @@ def plot_selection_heatmap(df: pd.DataFrame, selection: pd.DataFrame, out_stem: 
     ax.set_xlim(0, len(biases))
     ax.set_ylim(0, len(folds))
     ax.set_xticks([c + 0.5 for c in range(len(biases))])
-    ax.set_xticklabels([f"bias_{b}\n(thresh {int(b) / 10:.1f})" for b in biases], fontsize=10)
+    # bias_factor, not int(b)/10: the latter labels "1" as 0.1 (it means 1.0)
+    # and raises ValueError outright on a written-out label like "0.5".
+    ax.set_xticklabels(
+        [f"bias_{b}\n(thresh {bias_factor(b):.1f})" for b in biases], fontsize=10
+    )
     ax.set_yticks([r + 0.5 for r in range(len(folds))])
     ax.set_yticklabels([f"fold {f}" for f in folds], fontsize=10)
     ax.xaxis.tick_top()
@@ -1138,7 +1165,11 @@ def main():
 
     if df.empty:
         logger.error("No metrics found. Check that bias models have been evaluated.")
-        return
+        # Exit non-zero. A bare `return` here made 03.1 succeed while writing no
+        # selection table at all, and the manual hand-off that follows (copy the
+        # winners into fold_bias_suffix) then has nothing to read -- which only
+        # surfaces later, in 04.0, as a missing bias model for every fold.
+        raise SystemExit(1)
 
     overrides = {}
     for item in args.fold_bias or []:

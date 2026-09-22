@@ -117,7 +117,12 @@ preflight_check
 # bedGraphToBigWig on a 5M-fragment file, and verified interval-for-interval
 # identical against chrombpnet's own command in tests/test_pileup.py.
 # chrombpnet is not imported at all: shift detection is utils/shift.py.
-activate_env "${CONDA_ENV}"
+#
+# Hence the PREPROCESS env, not the chrombpnet one: this step's only Python is
+# src/cli.py, which needs click, pybigtools and pysam. The chrombpnet env has
+# none of the three, so activating it here fails on `import click` before any
+# work happens.
+activate_env "${preprocess_conda}"
 
 mkdir -p "${prepared_dir}"
 
@@ -186,6 +191,10 @@ else
     shift_args+=( --genome "${genome_fa}" )
 fi
 
+# The guard below is load-bearing: there is no `set -e` in this step, so without
+# it a traceback out of cli.py leaves no bigwig behind, prints "Done" and exits
+# 0 — SLURM records COMPLETED. 03.0 and 04.0 would then silently fall back to
+# converting the reads themselves, 25 times, on GPU nodes.
 python "${src_dir}/cli.py" prepare-bigwig \
     "${shift_args[@]}" \
     ${filtered_args[@]+"${filtered_args[@]}"} \
@@ -195,5 +204,9 @@ python "${src_dir}/cli.py" prepare-bigwig \
     --chrom-sizes  "${pileup_chrom_sizes}" \
     --out-dir      "${prepared_dir}" \
     --metadata-dir "${metadata_dir}"
+if [[ $? -ne 0 || ! -f "${prepared_dir}/data_unstranded.bw" ]]; then
+    echo "ERROR: prepare-bigwig failed; ${prepared_dir}/data_unstranded.bw was not written." >&2
+    exit 1
+fi
 
 echo "[$(date)] Done. 03.0 and 04.0 will reuse ${prepared_dir}/data_unstranded.bw"

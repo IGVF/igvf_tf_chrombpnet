@@ -3,10 +3,16 @@
 #SBATCH --mem=128G
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
-# Pin to GPUs the loaded cuda/11.5 supports (compute capability <= 8.6:
-# Volta/Turing/Ampere). Excludes Ada (GPU_CC 8.9) and Hopper H100/H200 (9.0),
-# which cuda 11.5 cannot drive efficiently.
-#SBATCH --constraint="GPU_CC:7.0|GPU_CC:7.5|GPU_CC:8.0|GPU_CC:8.6"
+# Two limits at once, an upper and a lower.
+#   upper: the loaded cuda/11.5 cannot drive Ada (GPU_CC 8.9, L40S) or Hopper
+#          (9.0, H100/H200), so those are excluded for correctness. Lifting
+#          that needs the env off tensorflow==2.8/CUDA 11, not a flag.
+#   lower: 7.0/7.5 (V100, TITAN_V, RTX_2080Ti) are ELIGIBLE for cuda 11.5 but
+#          are excluded on purpose. Identical bias_sweep jobs ran 4:37 on the
+#          fast silicon and 22:24 on the slow -- a 4.8x spread -- so waiting
+#          for an A100/A40/3090 beats landing on a V100 immediately.
+# Leaves GPU_CC 8.0 (A100_SXM4/A100_PCIE) and 8.6 (A40, RTX_3090).
+#SBATCH --constraint="GPU_CC:8.0|GPU_CC:8.6"
 #SBATCH --time=2-0
 #SBATCH --partition=gpu,owners
 #SBATCH --array=0-19
@@ -106,48 +112,79 @@ load_gpu_modules
 activate_env "${CONDA_ENV}"
 gpu_env
 metadata_outputs+=( "bias_model=${model_file}" )
+# The metrics JSON is a real output of this step and the ONLY thing 03.1 reads
+# from it, so it belongs in the record too -- otherwise a run that trains a
+# model but fails to score it looks complete in the metadata.
+metrics_json="${out_dir}/evaluation/${file_prefix}_bias_metrics.json"
+metadata_outputs+=( "bias_metrics=${metrics_json}" )
 metadata_params+=( "fold=${fold}" "bias_factor=${bf}" "bias_suffix=${suffix}" )
 echo "[$(date)] [fold ${fold} bias=${bf}] Training bias model"
 echo "  output dir : ${out_dir}"
 
-if [[ -f "${model_file}" ]]; then
-    echo "  Model already trained, skipping training."
-else
-    for f in "${signal_file}" "${peaks_file}" "${negatives_file}" "${fold_json}"; do
-        [[ -f "${f}" ]] || { echo "  Missing input: ${f}" >&2; exit 1; }
-    done
+# Require BOTH markers before skipping, the same rule 04.0 uses, and for the
+# same reason. ${model_file} alone does NOT mean training finished: chrombpnet
+# hands it to a Keras ModelCheckpoint with save_best_only=True
+# (chrombpnet/training/train.py), so it appears as soon as val_loss first
+# improves -- after epoch 1. This array runs on `owners`, where preemption
+# mid-training is routine, and the old check kept that epoch-1 model forever
+# and scored it as if it were the trained one. ${metrics_json} is only written
+# once training has returned and the scoring stage has run.
+#
+# The cost: if scoring fails for its own reasons, a complete model is retrained.
+# That is the trade 04.0 already makes deliberately, and scoring failures are
+# now loud (see the guard below) rather than silent.
+if [[ -f "${model_file}" && -f "${metrics_json}" ]]; then
+    echo "  Model trained and scored already, nothing to do."
+    exit 0
+elif [[ -f "${model_file}" ]]; then
+    echo "  Found ${model_file} but no ${metrics_json}." >&2
+    echo "  That model may be a mid-training checkpoint, so it is discarded and retrained." >&2
+fi
 
-    rm -rf "${out_dir}"
-    mkdir -p "${out_dir}"
+for f in "${signal_file}" "${peaks_file}" "${negatives_file}" "${fold_json}"; do
+    [[ -f "${f}" ]] || { echo "  Missing input: ${f}" >&2; exit 1; }
+done
 
-    python "${src_dir}/chrombpnet_train.py" \
-        --prepared-bigwig "${data_path}/signal" \
-        ${prepared_required:+--require-prepared} -- \
-        bias train \
-        "${signal_args[@]}" \
-        -d "${assay}" \
-        -g "${genome_fa}" \
-        -c "${chrom_sizes}" \
-        -p "${peaks_file}" \
-        -n "${negatives_file}" \
-        -fl "${fold_json}" \
-        -b "${bf}" \
-        -o "${out_dir}" \
-        -fp "${file_prefix}"
+rm -rf "${out_dir}"
+mkdir -p "${out_dir}"
 
-    if [[ $? -ne 0 || ! -f "${model_file}" ]]; then
-        echo "ERROR: chrombpnet bias train failed for fold ${fold} bias=${bf} (bias threshold factor may be too low/high for this fold - see stdout above)." >&2
-        exit 1
-    fi
+python "${src_dir}/chrombpnet_train.py" \
+    --prepared-bigwig "${data_path}/signal" \
+    ${prepared_args[@]+"${prepared_args[@]}"} -- \
+    bias train \
+    "${signal_args[@]}" \
+    -d "${assay}" \
+    -g "${genome_fa}" \
+    -c "${chrom_sizes}" \
+    -p "${peaks_file}" \
+    -n "${negatives_file}" \
+    -fl "${fold_json}" \
+    -b "${bf}" \
+    -o "${out_dir}" \
+    -fp "${file_prefix}"
+if [[ $? -ne 0 || ! -f "${model_file}" ]]; then
+    echo "ERROR: chrombpnet bias train failed for fold ${fold} bias=${bf} (bias threshold factor may be too low/high for this fold - see stdout above)." >&2
+    exit 1
 fi
 
 echo "[$(date)] [fold ${fold} bias=${bf}] Computing fast QC metrics."
 
+# This guard is the difference between a failed sweep cell and a WRONG bias
+# selection. There is no `set -e` here, and this is the last real command, so
+# without it a failure exits 0 and SLURM records COMPLETED. 03.1 then reads the
+# sweep through select_bias_model.load_metrics, which only logs
+# "missing metrics file" and `continue`s -- so the fold x factor cell silently
+# vanishes and a per-fold winner gets chosen from an incomplete grid.
 python "${src_dir}/predict_bias_metrics.py" \
     --bias-model "${model_file}" \
     --output-dir "${out_dir}" \
     --file-prefix "${file_prefix}" \
     --genome "${genome_fa}" \
     --fold-json "${fold_json}"
+if [[ $? -ne 0 || ! -f "${metrics_json}" ]]; then
+    echo "ERROR: predict_bias_metrics.py failed for fold ${fold} bias=${bf}; ${metrics_json} was not written." >&2
+    echo "       03.1 would silently drop this cell from the sweep rather than fail." >&2
+    exit 1
+fi
 
 echo "[$(date)] [fold ${fold} bias=${bf}] Done."

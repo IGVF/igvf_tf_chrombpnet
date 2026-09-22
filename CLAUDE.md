@@ -394,12 +394,18 @@ say which of the two kinds of verification a change actually got.
   this account regardless of the partition ceiling; `high_p` (7-day MaxWall) is what
   actually gets the longer runs some datasets need. Don't "fix" it back to `gpu`.
 
-- **`set -euo pipefail` is the exception, not the rule** — only `01`, `02` and `03.1`
-  use it, and in `02` and `03.1` it is placed *after* `activate_env`, not at the top.
+- **`set -euo pipefail` is the exception, not the rule** — only `01.0` and `03.1`
+  use it, and in `03.1` it is placed *after* `activate_env`, not at the top.
   Everything else relies on explicit `[[ -f ... ]]` guards and `$?` checks.
   `activate_env` deliberately does not set it. Keep the placement where it is unless
   you've tested the move on the cluster, and don't convert the guard-based scripts
   wholesale.
+  **`02.0` does not have it** — this note used to claim it did. It does not, and the
+  gap was real: a failed `cli.py qc-signal` printed "QC written to" and exited 0, and
+  because this QC is advisory and nothing waits on it, an empty `plots/signal_qc/`
+  reads as "QC was fine" rather than "QC never ran". `00.0` had the identical hole.
+  Both now carry an explicit `$?` + output-file guard after their python call; if you
+  add a step that shells out to `cli.py`, copy that guard.
 
 - **Idempotency markers are per-step and sometimes not the obvious file.** `04.0`
   requires *both* `models/chrombpnet_nobias.h5` and

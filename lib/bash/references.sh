@@ -9,13 +9,14 @@
 #
 # Override the root:  export REFERENCE_ROOT=/path/to/Data
 #
-# Rendered by the bare system python, before any conda env exists, so
-# references.py imports only the standard library.
+# Rendered before any conda env exists, so references.py imports only the
+# standard library. It still needs python >= 3.9 to parse (walrus, PEP 604),
+# which the system python3 on some clusters is not -- bootstrap_python (defined
+# in common.sh, which sources this file) probes for one.
 
-_refs_python="${BOOTSTRAP_PYTHON:-python3}"
-command -v "${_refs_python}" >/dev/null 2>&1 || {
-    echo "ERROR: need python3 on PATH to resolve the reference paths." >&2
-    echo "  Set BOOTSTRAP_PYTHON, or activate an environment first." >&2
+_refs_python="$(bootstrap_python)" || {
+    echo "ERROR: need python >= 3.9 on PATH to resolve the reference paths." >&2
+    echo "  Set BOOTSTRAP_PYTHON to one, or activate an environment first." >&2
     return 1
 }
 _refs_shell="$("${_refs_python}" "${REPO_ROOT}/lib/python/utils/references.py" export)" || {

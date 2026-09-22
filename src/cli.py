@@ -397,9 +397,11 @@ def prepare_bigwig(
                     "--minus-shift and no FASTA is needed."
                 )
             logger.info("detecting the Tn5 shift already present in the reads")
-            plus_shift, minus_shift = shift.detect_shift_raw(
-                signal_path, genome, signal_type=signal_type
-            )
+            # No signal_type here: detect_shift_raw infers single- vs paired-end
+            # itself, from whether the 6th column of the sampled reads is a
+            # strand. Passing it was a TypeError -- shift.py has no such
+            # parameter, so this path had never been executed.
+            plus_shift, minus_shift = shift.detect_shift_raw(signal_path, genome)
         logger.info("shift in the reads: %+d/%+d", plus_shift, minus_shift)
 
         # Adjust from the detected shift to chrombpnet's target: +4/-4 (ATAC),
@@ -468,6 +470,7 @@ def prepare_bigwig(
 
 
 @cli.command("download-references")
+@click.option("--dataset", default=None, help="Dataset name under config/.")
 @click.option(
     "--reference-root",
     default=None,

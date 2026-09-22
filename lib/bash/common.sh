@@ -33,13 +33,52 @@ motif_compendium_conda="${MOTIF_COMPENDIUM_ENV:-/home/groups/engreitz/Users/opus
 # none of the three envs above have. Create it with:
 #   conda env create -f envs/preprocess.yml
 # Path is a placeholder in the same location as the others until it exists.
-preprocess_conda="${PREPROCESS_ENV:-/home/groups/engreitz/Users/opushkar/.conda/envs/preprocess}"
+# NB this default differs from the other three: the `preprocess` env was added
+# with the lib/src refactor and never existed under the opushkar prefix, so
+# 00.0/00.1/02.0 pointed at a path that was never created and failed on import.
+# Built from envs/preprocess.yml on 2026-09-21.
+preprocess_conda="${PREPROCESS_ENV:-/home/groups/engreitz/Users/emattei/.conda/envs/preprocess}"
 
 # Default root for dataset data/results; config/site.sh usually repoints this
 # at a shared collaboration tree.
 # Where dataset data/ and results/ live. Defaults to the checkout, which is
 # fine for one dataset but not for a shared collaboration tree.
 data_root="${DATASET_ROOT:-${REPO_ROOT}}"
+
+# ── Bootstrap interpreter ─────────────────────────────────────────────────────
+# bootstrap_python — echo a python >= 3.9 usable BEFORE any conda env exists.
+#
+# config.sh and references.sh both render their settings by running a
+# stdlib-only module with this. They used to default to a bare `python3`, and
+# on Sherlock that is /usr/bin/python3 = 3.6.8, which cannot PARSE either
+# module: references.py uses a walrus (3.8+), config.py uses
+# `from __future__ import annotations` (3.7+) and emit_metadata.py uses
+# `tuple[str, str]` (3.9+). The result was that no per-dataset step ran at all
+# in the documented default configuration -- it died in references.sh, before
+# reaching any preflight check.
+#
+# Defined here, above the references.sh source, because that file needs it too.
+bootstrap_python() {
+    if [[ -n "${BOOTSTRAP_PYTHON}" ]]; then
+        echo "${BOOTSTRAP_PYTHON}"
+        return 0
+    fi
+    local _c
+    # PATH first (a module-loaded or already-active interpreter wins), then the
+    # conda envs this file has just configured. Those are >= 3.10 and are the
+    # reason the pipeline works on Sherlock at all, where /usr/bin/python3 is
+    # 3.6.8 and there is no newer python on the bare PATH -- without this
+    # fallback every step needs BOOTSTRAP_PYTHON exported by hand.
+    for _c in python3.13 python3.12 python3.11 python3.10 python3.9 python3 python \
+              "${preprocess_conda}/bin/python" "${CONDA_ENV}/bin/python"; do
+        [[ -n "${_c}" ]] || continue
+        command -v "${_c}" >/dev/null 2>&1 || continue
+        "${_c}" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' 2>/dev/null || continue
+        echo "${_c}"
+        return 0
+    done
+    return 1
+}
 
 # ── Shared references ─────────────────────────────────────────────────────────
 # Genome, chrom.sizes, blacklist and the motif DB all come from one place, shared
@@ -76,12 +115,28 @@ activate_env() {
     local env_path="${1:?activate_env: missing env path}"
     if [[ ! -f "${CONDA_INIT}" ]]; then
         echo "ERROR: conda init script not found: ${CONDA_INIT}" >&2
-        echo "  Set CONDA_INIT in config/site.sh (see config/site.example.sh)." >&2
+        echo "  Export CONDA_INIT to your conda's etc/profile.d/conda.sh." >&2
+        exit 1
+    fi
+    # Check the env exists before asking conda for it: `conda activate` on a
+    # missing prefix prints its own error but the step used to carry on in
+    # whatever env was already active, and then died much later on an import
+    # that looked like a missing dependency rather than a missing env. The
+    # defaults here point into a shared account, so an env that was never
+    # created on this cluster is the normal way this goes wrong.
+    if [[ ! -x "${env_path}/bin/python" ]]; then
+        echo "ERROR: conda env not found (no ${env_path}/bin/python)." >&2
+        echo "  Create it:  conda env create -f \${REPO_ROOT}/envs/<name>.yml -p ${env_path}" >&2
+        echo "  Or point the pipeline at an existing one with CHROMBPNET_ENV /" >&2
+        echo "  PREPROCESS_ENV / FINEMO_ENV / MOTIF_COMPENDIUM_ENV." >&2
         exit 1
     fi
     # shellcheck disable=SC1090  # path is a cluster location, not resolvable here
     source "${CONDA_INIT}"
-    conda activate "${env_path}"
+    if ! conda activate "${env_path}"; then
+        echo "ERROR: conda activate failed for ${env_path}" >&2
+        exit 1
+    fi
 }
 
 # load_render_modules — cairo/pango, needed by the motif-report rendering
@@ -173,7 +228,20 @@ metadata_emit() {
     for item in "${metadata_params[@]+"${metadata_params[@]}"}";  do args+=( --param  "${item}" ); done
     for item in "${metadata_tools[@]+"${metadata_tools[@]}"}";    do args+=( --tool   "${item}" ); done
 
-    python "${src_dir}/emit_metadata.py" "${args[@]}" || \
+    # Same interpreter rule as config.sh and references.sh. The EXIT trap fires
+    # wherever the step died, and preflight_check is deliberately ordered BEFORE
+    # activate_env -- so on the early-failure path there is no conda env yet and
+    # a bare `python` is Sherlock's /usr/bin/python 2.7.5, which cannot parse
+    # emit_metadata.py's `tuple[str, str]` annotations. That is precisely the
+    # path whose record matters most: the one reporting the outputs a failed run
+    # never wrote. Note /usr/bin/python3 (3.6.8) is no good either -- it rejects
+    # `from __future__ import annotations`, which 3.7 introduced.
+    local _meta_python
+    _meta_python="$(bootstrap_python)" || {
+        echo "[metadata] no python >= 3.9 found; run metadata not written" >&2
+        return 0
+    }
+    "${_meta_python}" "${src_dir}/emit_metadata.py" "${args[@]}" || \
         echo "[metadata] could not write run metadata (step still exited ${rc})" >&2
     return 0
 }
@@ -182,7 +250,15 @@ metadata_emit() {
 # ── ChromBPNet inputs ─────────────────────────────────────────────────────────
 
 # set_signal_args — populate ${signal_args[@]} with the chrombpnet input flag,
-# and ${prepared_required} when the signal can only be used via a prepared bigwig.
+# and ${prepared_args[@]} when the signal can only be used via a prepared bigwig.
+#
+# prepared_args is an ARRAY, not a 0/1 string, and that matters. It used to be
+# `prepared_required=0|1`, expanded at the call sites as
+# ${prepared_required:+--require-prepared} -- but `:+` tests for NON-NULL, not
+# for truth, and the string "0" is non-null. So --require-prepared was passed on
+# EVERY run, for every signal type, which silently disabled the fallback below
+# for fragments/bam/tagalign datasets and reported "the configured signal is a
+# bigwig" at them. An empty-vs-one-element array cannot be misread that way.
 #
 # signal_type is derived from the extension by lib/python/utils/config.py, so
 # this only maps a known kind to a flag; unknown extensions fail earlier.
@@ -195,20 +271,20 @@ metadata_emit() {
 # the parser still demands one of the three flags, so we pass the path under
 # -ifrag purely to satisfy it. That value is never read: reads_to_bigwig is
 # replaced before it runs. To make sure it stays never-read,
-# prepared_required=1 tells src/chrombpnet_train.py to abort rather than fall
-# back to converting, which would otherwise parse a bigwig as if it were
+# a non-empty prepared_args tells src/chrombpnet_train.py to abort rather than
+# fall back to converting, which would otherwise parse a bigwig as if it were
 # fragments and produce silent garbage.
 signal_args=()
-prepared_required=0
+prepared_args=()
 set_signal_args() {
-    prepared_required=0
+    prepared_args=()
     case "${signal_type}" in
         fragments) signal_args=( -ifrag "${signal_path}" ) ;;
         bam)       signal_args=( -ibam  "${signal_path}" ) ;;
         tagalign)  signal_args=( -itag  "${signal_path}" ) ;;
         bigwig)
             signal_args=( -ifrag "${signal_path}" )   # placeholder, never read
-            prepared_required=1
+            prepared_args=( --require-prepared )
             ;;
         *)
             echo "ERROR: unsupported signal_type '${signal_type}'" >&2

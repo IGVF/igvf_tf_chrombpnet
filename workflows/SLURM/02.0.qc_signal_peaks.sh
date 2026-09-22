@@ -115,6 +115,11 @@ fi
 
 mkdir -p "${qc_dir}"
 
+# This step has no `set -e` (despite what an older note claimed), so the guard
+# below is what stops a traceback out of cli.py from printing "QC written to"
+# and exiting 0. This QC is advisory and never blocks the pipeline -- which is
+# exactly why a silent failure here is dangerous: nobody is waiting on it, so
+# an empty plots/signal_qc/ reads as "QC was fine" rather than "QC never ran".
 python "${src_dir}/cli.py" qc-signal \
     --bigwig         "${signal_bw}" \
     --peaks          "${peaks_np}" \
@@ -125,6 +130,10 @@ python "${src_dir}/cli.py" qc-signal \
     --out-dir        "${qc_dir}" \
     --prefix         "${dataset}" \
     --metadata-dir   "${metadata_dir}"
+if [[ $? -ne 0 || ! -f "${qc_dir}/${dataset}_signal_qc.tsv" ]]; then
+    echo "ERROR: qc-signal failed; ${qc_dir}/${dataset}_signal_qc.tsv was not written." >&2
+    exit 1
+fi
 
 echo "[$(date)] QC written to ${qc_dir}/ — read it before the GPU steps in 03 and 04."
 echo "           Start with auroc_peaks_vs_nonpeaks in ${dataset}_signal_qc.tsv."

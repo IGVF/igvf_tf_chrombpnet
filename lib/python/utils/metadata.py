@@ -200,7 +200,15 @@ def git_info() -> dict:
 
     commit = run("rev-parse", "HEAD")
     status = run("status", "--porcelain")
-    repo_url = normalize_remote_url(run("remote", "get-url", "origin"))
+    # `git remote get-url` arrived in git 2.7; Sherlock ships 1.8.3.1, where it
+    # is an unknown subcommand and this returned None -- so commit_url and
+    # script_url, the whole point of recording the remote, were silently absent
+    # from every record. `git config --get` predates both and is what get-url
+    # reads anyway.
+    remote = run("config", "--get", "remote.origin.url")
+    if remote is None:
+        remote = run("remote", "get-url", "origin")
+    repo_url = normalize_remote_url(remote)
     return {
         "commit": commit,
         "short_commit": commit[:8] if commit else None,

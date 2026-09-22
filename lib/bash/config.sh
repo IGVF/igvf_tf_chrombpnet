@@ -66,12 +66,12 @@ fi
 dataset_dir="${DATASET_DIR:-${data_root}/${DATASET}}"
 
 # Dataset parameters come from YAML, rendered to shell assignments by a
-# stdlib-only loader: it has to run on whatever python3 is on PATH, before any
-# conda env is active, so it imports nothing third-party. ${...} inside values
-# is left for the shell to expand, which is why this is eval and not a pipe.
-_config_python="${BOOTSTRAP_PYTHON:-python3}"
-command -v "${_config_python}" >/dev/null 2>&1 || {
-    echo "ERROR: need python3 on PATH to read ${dataset_config}" >&2
+# stdlib-only loader: it runs before any conda env is active, so it imports
+# nothing third-party. It still needs python >= 3.9 to parse -- see
+# bootstrap_python in common.sh. ${...} inside values is left for the shell to
+# expand, which is why this is eval and not a pipe.
+_config_python="$(bootstrap_python)" || {
+    echo "ERROR: need python >= 3.9 on PATH to read ${dataset_config}" >&2
     echo "  Set BOOTSTRAP_PYTHON to one, or activate an environment first." >&2
     return 1
 }

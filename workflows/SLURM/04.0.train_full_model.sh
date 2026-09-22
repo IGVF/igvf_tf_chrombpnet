@@ -3,10 +3,16 @@
 #SBATCH --mem=128G
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
-# Pin to GPUs the loaded cuda/11.5 supports (compute capability <= 8.6:
-# Volta/Turing/Ampere). Excludes Ada (GPU_CC 8.9) and Hopper H100/H200 (9.0),
-# which cuda 11.5 cannot drive efficiently.
-#SBATCH --constraint="GPU_CC:7.0|GPU_CC:7.5|GPU_CC:8.0|GPU_CC:8.6"
+# Two limits at once, an upper and a lower.
+#   upper: the loaded cuda/11.5 cannot drive Ada (GPU_CC 8.9, L40S) or Hopper
+#          (9.0, H100/H200), so those are excluded for correctness. Lifting
+#          that needs the env off tensorflow==2.8/CUDA 11, not a flag.
+#   lower: 7.0/7.5 (V100, TITAN_V, RTX_2080Ti) are ELIGIBLE for cuda 11.5 but
+#          are excluded on purpose. Identical bias_sweep jobs ran 4:37 on the
+#          fast silicon and 22:24 on the slow -- a 4.8x spread -- so waiting
+#          for an A100/A40/3090 beats landing on a V100 immediately.
+# Leaves GPU_CC 8.0 (A100_SXM4/A100_PCIE) and 8.6 (A40, RTX_3090).
+#SBATCH --constraint="GPU_CC:8.0|GPU_CC:8.6"
 #SBATCH --time=2-0
 #SBATCH --partition=gpu,owners
 #SBATCH --array=0-4
@@ -124,7 +130,7 @@ for dataset in "${datasets[@]}"; do
 
     python "${src_dir}/chrombpnet_train.py" \
         --prepared-bigwig "${data_path}/signal" \
-        ${prepared_required:+--require-prepared} -- \
+        ${prepared_args[@]+"${prepared_args[@]}"} -- \
         pipeline \
         "${signal_args[@]}" \
         -d "${assay}" \
@@ -135,6 +141,17 @@ for dataset in "${datasets[@]}"; do
         -fl "${fold_json}" \
         -b "${bias_model}" \
         -o "${out_dir}"
+    # No `set -e` here. Guard on BOTH markers, the same pair the skip-check at
+    # the top of this block uses: the model alone is written partway through,
+    # and the profile PDF is the last file the evaluation stage emits. Without
+    # this a failed run prints "Done." and exits 0, and the next rerun sees a
+    # model with no eval, rm -rf's it and retrains from scratch -- silently
+    # burning a second GPU allocation to rediscover the same failure.
+    if [[ $? -ne 0 || ! -f "${model_file}" || ! -f "${eval_marker}" ]]; then
+        echo "ERROR: chrombpnet pipeline failed for ${dataset} fold ${fold} (bias ${suffix})." >&2
+        echo "       expected ${model_file} and ${eval_marker}" >&2
+        exit 1
+    fi
 
     echo "[$(date)] [${dataset} fold ${fold}] Done."
 done

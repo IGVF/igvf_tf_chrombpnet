@@ -28,7 +28,16 @@ Values are emitted for bash with ``${...}`` left intact, so the shell still does
 the interpolation it always did (``fragments_path: "${dataset_dir}/data"``).
 """
 
-from __future__ import annotations
+# NO `from __future__ import annotations` here, deliberately. This module is
+# the first thing lib/bash/config.sh runs, before any conda env exists, and on
+# Sherlock that interpreter is /usr/bin/python3 = 3.6.8 -- which rejects that
+# import outright ("future feature annotations is not defined", it arrived in
+# 3.7) and so could not even parse this file. tests/test_config.py's
+# test_loader_runs_on_bare_system_python pins the contract.
+#
+# Nothing here needs it: every function signature uses plain str/dict/int, and
+# the one modern annotation (`container: str | None` in _parse_builtin) is a
+# LOCAL variable annotation, which Python never evaluates at runtime.
 
 import json
 import re

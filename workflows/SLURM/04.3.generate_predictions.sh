@@ -3,6 +3,11 @@
 #SBATCH --mem=64G
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
+# Same GPU limits as 03.0/04.0: cuda/11.5 cannot drive Ada (8.9) or Hopper
+# (9.0), and 7.0/7.5 are excluded for speed. See 03.0 for the measurements.
+# This step previously carried NO constraint while loading the same cuda
+# module, so it could land on an H100 and fail obscurely.
+#SBATCH --constraint="GPU_CC:8.0|GPU_CC:8.6"
 #SBATCH --time=4:00:00
 #SBATCH --partition=gpu,owners
 #SBATCH --array=0
@@ -130,6 +135,14 @@ for mode in "bias_corrected" "uncorrected"; do
         --output-bed    True \
         --batch-size    64 \
         ${model_flags}
+    # No `set -e`, and this runs inside a `for mode` loop, so an unguarded
+    # failure both prints "Done." and lets the NEXT mode start as though this
+    # one had produced its bigwig. ${done_file} is the same marker the
+    # skip-check above uses.
+    if [[ $? -ne 0 || ! -f "${done_file}" ]]; then
+        echo "ERROR: predict_and_avg.py failed for ${dataset} ${mode}; ${done_file} was not written." >&2
+        exit 1
+    fi
 
     echo "[$(date)] [${dataset} ${mode}] Done."
 done

@@ -176,12 +176,16 @@ def get_nucleotide_freq(beds, genome, context_radius=20, paired=True):
     -------
 
     """
-    genome_seq = Fasta(genome.fetch_fa())
+    # `genome` is a FASTA PATH here, not scPrinter's genome object. Upstream
+    # called genome.fetch_fa() and genome.chrom_sizes; this pipeline has no such
+    # object, only the file, so both come from the path and its pyfaidx index.
+    genome_seq = Fasta(str(genome))
+    known_chroms = set(genome_seq.keys())
     forward_bias = []
     reverse_bias = []
     for frags in np.array(beds):
         chrom, start, end = frags[0], int(frags[1]), int(frags[2])
-        if chrom not in genome.chrom_sizes:
+        if chrom not in known_chroms:
             # print(f"Warning: Chromosome {chrom} not found in the genome file")
             continue
         if not paired:
