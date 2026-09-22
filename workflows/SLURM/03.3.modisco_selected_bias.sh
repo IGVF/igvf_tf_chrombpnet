@@ -1,20 +1,19 @@
 #!/bin/bash
-#SBATCH --job-name=qc_selected_bias
+#SBATCH --job-name=modisco_selected_bias
 #SBATCH --mem=64G
 #SBATCH --cpus-per-task=4
-#SBATCH --gres=gpu:1
 # Same GPU limits as 03.0/04.0: cuda/11.5 cannot drive Ada (8.9) or Hopper
 # (9.0), and 7.0/7.5 are excluded for speed. See 03.0 for the measurements.
 # This step previously carried NO constraint while loading the same cuda
 # module, so it could land on an H100 and fail obscurely.
-#SBATCH --constraint="GPU_CC:8.0|GPU_CC:8.6"
-#SBATCH --time=1-0
-#SBATCH --partition=gpu,owners
+#SBATCH --time=4-0
+#SBATCH --partition=engreitz
+#SBATCH --qos=high_p
 #SBATCH --array=0-4
 #SBATCH --output=%x_%j.log
 #SBATCH --error=%x_%j.log
 
-# 03.2.qc_selected_bias.sh
+# 03.3.modisco_selected_bias.sh
 # Purpose: Full QC (marginal footprinting + DeepLIFT interpretation +
 #   TF-MoDISco) on only the bias model selected per fold in
 #   dataset_config.sh (fold_bias_suffix), populated by 03.1.select_bias.sh.
@@ -69,7 +68,7 @@ fi
 
 
 
-metadata_start "03.2.qc_selected_bias"
+metadata_start "03.3.modisco_selected_bias"
 
 
 
@@ -104,11 +103,12 @@ fi
 
 # No `set -e` in this step, and this is the last real command, so without the
 # guard a DeepLIFT/TF-MoDISco failure prints "Done." and exits 0.
-# --stage gpu: predictions + DeepLIFT only. TF-MoDISco is CPU-only and is the
-# long pole, so it runs in 03.3 on a CPU partition rather than holding this
-# allocation's GPU idle for hours. Same reasoning as 08.0.
+# --stage modisco: TF-MoDISco motif discovery and the reports. No GPU is used
+# here at all, which is the whole reason this is a separate step -- 03.2 would
+# otherwise hold one idle for hours. Same reasoning as 08.0, and high_p is what
+# actually gets the longer walltime: the default QOS caps at 2 days.
 python "${src_dir}/run_bias_qc.py" \
-    --stage gpu \
+    --stage modisco \
     --bias-model "${model_file}" \
     --output-dir "${out_dir}" \
     --file-prefix "${file_prefix}" \
@@ -116,10 +116,10 @@ python "${src_dir}/run_bias_qc.py" \
     --chrom-sizes "${chrom_sizes}" \
     --fold-json "${fold_json}"
 _rc=$?
-_scores="${out_dir}/auxiliary/interpret_subsample/${file_prefix}_bias.profile_scores.h5"
-if [[ ${_rc} -ne 0 || ! -f "${_scores}" ]]; then
-    echo "ERROR: run_bias_qc.py --stage gpu failed for fold ${fold}; ${_scores} was not written." >&2
+_report="${out_dir}/evaluation/${file_prefix}_bias_profile.pdf"
+if [[ ${_rc} -ne 0 || ! -f "${_report}" ]]; then
+    echo "ERROR: run_bias_qc.py --stage modisco failed for fold ${fold}; ${_report} was not written." >&2
     exit 1
 fi
 
-echo "[$(date)] [fold ${fold}] Done. Next: 03.3.modisco_selected_bias.sh (CPU)."
+echo "[$(date)] [fold ${fold}] Done."

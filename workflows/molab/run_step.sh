@@ -113,6 +113,7 @@ container_exec() {
     APPTAINERENV_OPENBLAS_NUM_THREADS="${MOLAB_CPUS}" \
     APPTAINERENV_MKL_NUM_THREADS="${MOLAB_CPUS}" \
     APPTAINERENV_NUMEXPR_NUM_THREADS="${MOLAB_CPUS}" \
+    APPTAINERENV_NUMEXPR_MAX_THREADS="${MOLAB_CPUS}" \
     APPTAINERENV_TF_NUM_INTRAOP_THREADS="${MOLAB_CPUS}" \
     APPTAINERENV_TF_NUM_INTEROP_THREADS=1 \
     APPTAINERENV_TF_FORCE_GPU_ALLOW_GROWTH=true \
@@ -145,6 +146,7 @@ for idx in $(expand_array "${array_spec}"); do
           SLURM_ARRAY_TASK_ID="${idx}" SLURM_SUBMIT_DIR="${STEPS_DIR}" \
           SLURM_CPUS_PER_TASK="${MOLAB_CPUS}" \
           OMP_NUM_THREADS="${MOLAB_CPUS}" \
+          NUMEXPR_NUM_THREADS="${MOLAB_CPUS}" NUMEXPR_MAX_THREADS="${MOLAB_CPUS}" \
           pixi run -e preprocess bash "${STEPS_DIR}/${step}" "$@" ) 2>&1 | tee "${log}"
     else
         container_exec "${idx}" bash -c \

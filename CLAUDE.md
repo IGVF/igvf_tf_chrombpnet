@@ -134,6 +134,7 @@ derived output paths live in `config.sh`.
 | `03.0.train_bias_model.sh` | `fold_idx * n_factors + factor_idx` | yes |
 | `03.1.select_bias.sh` | no SBATCH header — run with `bash` | yes |
 | `03.2.qc_selected_bias.sh` | fold | yes |
+| `03.3.modisco_selected_bias.sh` | fold | yes |
 | `04.0.train_full_model.sh` | fold | yes |
 | `04.1.qc_run_full_model.sh` | — | yes |
 | `04.2.qc_combined_boxplot.sh` | — | no (hardcoded `CORE_PATH`) |
@@ -407,6 +408,15 @@ say which of the two kinds of verification a change actually got.
   Ada (8.9) or Hopper (9.0). `03.2`, `04.3.generate_predictions`, `05` and `10` load
   the same cuda/cudnn modules with no constraint. If a GPU step fails oddly on
   `owners`, that's the first thing to check.
+
+- **`03.2` is the GPU half and `03.3` the CPU half of the selected-bias QC.**
+  `pipelines.bias_model_qc()` runs predictions, DeepLIFT interpretation, then
+  TF-MoDISco and its reports in one call. Only the first two need a GPU;
+  TF-MoDISco is CPU-only and is the long pole, so running them together left a
+  GPU idle for hours. `src/run_bias_qc.py --stage {gpu,modisco,all}` splits
+  them and each stage skips work whose outputs exist, so a failed MoDISco
+  re-runs without redoing interpretation. `all` keeps the original behaviour.
+  Same reasoning as 08.0 below.
 
 - **`08.0.run_modisco.sh` is CPU-only on `engreitz` with `--qos=high_p`, on purpose.**
   tfmodisco-lite doesn't use a GPU, and the default QOS caps walltime at 2 days for

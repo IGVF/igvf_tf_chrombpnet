@@ -90,7 +90,8 @@ MSG
 fi
 
 # --- full model -------------------------------------------------------------
-${RUN} ${DRY} --array "0-${fold_max}" 03.2.qc_selected_bias.sh  || exit 1   # GPU + CPU MoDISco
+${RUN} ${DRY} --array "0-${fold_max}" 03.2.qc_selected_bias.sh      || exit 1   # GPU: predict + DeepLIFT
+${RUN} ${DRY} --array "0-${fold_max}" 03.3.modisco_selected_bias.sh || exit 1   # CPU: TF-MoDISco
 ${RUN} ${DRY} --array "0-${fold_max}" 04.0.train_full_model.sh  || exit 1   # GPU
 ${RUN} ${DRY} 04.1.qc_run_full_model.sh                         || exit 1
 
