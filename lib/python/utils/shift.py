@@ -25,10 +25,13 @@ Two deliberate changes from upstream:
 # Original code: https://github.com/buenrostrolab/scPrinter/blob/main/scprinter/shift_detection.py
 
 import gzip
+import logging
 import os
 
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 DNAmapping = np.zeros((128, 4), dtype=int)
 DNAmapping[65] = [1, 0, 0, 0]  # A
@@ -183,6 +186,7 @@ def get_nucleotide_freq(beds, genome, context_radius=20, paired=True):
     known_chroms = set(genome_seq.keys())
     forward_bias = []
     reverse_bias = []
+    skipped = 0
     for frags in np.array(beds):
         chrom, start, end = frags[0], int(frags[1]), int(frags[2])
         if chrom not in known_chroms:
@@ -192,24 +196,41 @@ def get_nucleotide_freq(beds, genome, context_radius=20, paired=True):
             strand = [frags[5]]
         else:
             strand = ["+", "-"]
+        # A cut site within context_radius of a contig end yields a SHORT
+        # sequence: pyfaidx clamps the slice rather than padding it. Upstream
+        # noticed the wrong shape, printed it, and appended the row anyway,
+        # which makes the stack below inhomogeneous and np.mean raise
+        # "setting an array element with a sequence". A truncated context has
+        # no meaningful per-position frequency, so drop it and count it.
         if "+" in strand:
             forward_context = DNA_one_hot(
                 genome_seq[chrom][start - context_radius : start + context_radius].seq.upper()
             ).T
             if forward_context.shape[0] != 2 * context_radius:
-                print(
-                    chrom, start, end, forward_context.shape
-                )  # was reverse_context (upstream bug)
-            forward_bias.append(forward_context)
+                skipped += 1
+            else:
+                forward_bias.append(forward_context)
         if "-" in strand:
             reverse_context = DNA_one_hot(
                 genome_seq[chrom][end - context_radius : end + context_radius].seq.upper()
             ).T
             if reverse_context.shape[0] != 2 * context_radius:
-                print(
-                    chrom, start, end, forward_context.shape
-                )  # was reverse_context (upstream bug)
-            reverse_bias.append(reverse_context)
+                skipped += 1
+            else:
+                reverse_bias.append(reverse_context)
+
+    if skipped:
+        logger.info(
+            f"shift detection: skipped {skipped} context(s) truncated by a contig edge"
+        )
+    if not forward_bias or not reverse_bias:
+        raise ValueError(
+            "shift detection: no usable cut-site contexts "
+            f"(forward={len(forward_bias)}, reverse={len(reverse_bias)}). "
+            "Every sampled fragment sat within "
+            f"{context_radius}bp of a contig end, or on a contig absent from the genome. "
+            "Set plus_shift/minus_shift in the dataset config to skip detection."
+        )
 
     forward_bias = np.mean(np.array(forward_bias), axis=0)
     reverse_bias = np.mean(np.array(reverse_bias), axis=0)
