@@ -138,19 +138,30 @@ def _utc(ts: float) -> str:
 #: Multi-part extensions that mean something as a unit. Order matters: the
 #: longest match wins, so "d0.fragments.tsv.gz" is tsv.gz, not gz.
 COMPOUND_SUFFIXES = (
-    ".bed.gz", ".tsv.gz", ".txt.gz", ".vcf.gz", ".fa.gz", ".fasta.gz",
-    ".narrowPeak.gz", ".bedGraph.gz", ".gtf.gz",
+    ".bed.gz",
+    ".tsv.gz",
+    ".txt.gz",
+    ".vcf.gz",
+    ".fa.gz",
+    ".fasta.gz",
+    ".narrowPeak.gz",
+    ".bedGraph.gz",
+    ".gtf.gz",
 )
 
 #: Extension -> the name people actually use for the format.
 FORMAT_ALIASES = {
-    ".bw": "bigwig", ".bigwig": "bigwig", ".bigWig": "bigwig",
-    ".fa": "fasta", ".fna": "fasta",
-    ".h5": "h5", ".hdf5": "h5",
-    ".tbi": "tbi", ".fai": "fai",
+    ".bw": "bigwig",
+    ".bigwig": "bigwig",
+    ".bigWig": "bigwig",
+    ".fa": "fasta",
+    ".fna": "fasta",
+    ".h5": "h5",
+    ".hdf5": "h5",
+    ".tbi": "tbi",
+    ".fai": "fai",
     ".narrowPeak": "narrowPeak",
 }
-
 
 
 def _peak_rss_gb() -> float | None:

@@ -350,8 +350,8 @@ def dropped_peaks_resampled(dropped_bed, nonpeaks, window: int):
         # check. Say so rather than returning {} and looking like a clean
         # result -- a silently missing metric reads as "measured, found none".
         logging.getLogger(__name__).info(
-            "no dropped-peaks file at %s; signal floor not in use, "
-            "skipping the re-sampling check", dropped_bed
+            "no dropped-peaks file at %s; signal floor not in use, skipping the re-sampling check",
+            dropped_bed,
         )
         return {}
     by = defaultdict(list)
@@ -392,9 +392,14 @@ def dropped_peaks_resampled(dropped_bed, nonpeaks, window: int):
         ),
     }
 
+
 def background_signal_quantile(
-    bigwig, quantile: float, window: int, blacklist_intervals=None,
-    n_sample: int = 50_000, seed: int = 0,
+    bigwig,
+    quantile: float,
+    window: int,
+    blacklist_intervals=None,
+    n_sample: int = 50_000,
+    seed: int = 0,
 ):
     """Signal level at `quantile` of this experiment's genome-wide windows.
 
@@ -475,6 +480,7 @@ def background_signal_quantile(
         diag[f"background_q{int(q * 100):02d}"] = float(np.quantile(g, q))
     return thr, diag, g
 
+
 def bias_suffix(factor: float) -> str:
     """The `_05` / `_08` suffix convention, extended past one decimal.
 
@@ -490,8 +496,12 @@ def bias_suffix(factor: float) -> str:
 
 
 def bias_threshold_viability(
-    bigwig, peaks, nonpeaks, factors=None,
-    outputlen: int = 1000, outlier_threshold: float = 0.9999,
+    bigwig,
+    peaks,
+    nonpeaks,
+    factors=None,
+    outputlen: int = 1000,
+    outlier_threshold: float = 0.9999,
     max_regions: int = 10_000_000,
 ):
     """Which bias_threshold_factor values 03.0 can actually train on.
@@ -542,20 +552,40 @@ def bias_threshold_viability(
         thr = q01 * f
         kept = ng[ng < thr]
         if kept.size == 0:
-            rows.append({"factor": f, "suffix": bias_suffix(f),
-                         "counts_threshold": thr, "n_after_cutoff": 0,
-                         "n_nonpeaks": 0, "distinct": False,
-                         "verdict": "fail: cutoff admits no non-peaks"})
+            rows.append(
+                {
+                    "factor": f,
+                    "suffix": bias_suffix(f),
+                    "counts_threshold": thr,
+                    "n_after_cutoff": 0,
+                    "n_nonpeaks": 0,
+                    "distinct": False,
+                    "verdict": "fail: cutoff admits no non-peaks",
+                }
+            )
             continue
         upper = np.quantile(kept, outlier_threshold)
         lower = np.quantile(kept, 1 - outlier_threshold)
         n = int(((ng < upper) & (ng > lower)).sum())
-        verdict = ("fail: outlier quantiles collapse" if n == 0
-                   else "risky: very few non-peaks" if n < 1000 else "ok")
+        verdict = (
+            "fail: outlier quantiles collapse"
+            if n == 0
+            else "risky: very few non-peaks"
+            if n < 1000
+            else "ok"
+        )
         is_distinct = verdict == "ok" and n not in distinct
-        rows.append({"factor": f, "suffix": bias_suffix(f),
-                     "counts_threshold": thr, "n_after_cutoff": int(kept.size),
-                     "n_nonpeaks": n, "distinct": is_distinct, "verdict": verdict})
+        rows.append(
+            {
+                "factor": f,
+                "suffix": bias_suffix(f),
+                "counts_threshold": thr,
+                "n_after_cutoff": int(kept.size),
+                "n_nonpeaks": n,
+                "distinct": is_distinct,
+                "verdict": verdict,
+            }
+        )
         if verdict == "ok":
             viable.append(f)
             distinct.setdefault(n, f)
@@ -601,6 +631,7 @@ def bias_threshold_viability(
         summary["bias_max_admitted_count"] = int(best_admitted)
 
     return summary, rows, pk, ng
+
 
 def peak_width_summary(peaks, input_window: int = 2114, genome_bases: int | None = None):
     """Peak widths, disjointness, and how much sequence the model sees twice.
@@ -704,7 +735,5 @@ def peak_width_summary(peaks, input_window: int = 2114, genome_bases: int | None
         out["genome_bases"] = int(genome_bases)
         out["frac_genome_in_peaks"] = round(out["peak_bases_merged"] / genome_bases, 6)
         if "window_bases_merged" in out:
-            out["frac_genome_in_windows"] = round(
-                out["window_bases_merged"] / genome_bases, 6
-            )
+            out["frac_genome_in_windows"] = round(out["window_bases_merged"] / genome_bases, 6)
     return out

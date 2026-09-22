@@ -76,7 +76,6 @@ def parse_args():
     return p.parse_args()
 
 
-
 def _run_gpu_stage(args, ns, fpx, output_dir):
     """Predictions + DeepLIFT contribution scores. Needs the GPU."""
     import chrombpnet.evaluation.interpret.interpret as interpret
@@ -209,7 +208,9 @@ def main():
 
     logger.info(
         "  stage '%s' complete for %s -> %s/evaluation/",
-        args.stage, args.file_prefix, output_dir,
+        args.stage,
+        args.file_prefix,
+        output_dir,
     )
 
 

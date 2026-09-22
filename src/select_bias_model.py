@@ -893,9 +893,7 @@ def plot_selection_heatmap(df: pd.DataFrame, selection: pd.DataFrame, out_stem: 
     ax.set_xticks([c + 0.5 for c in range(len(biases))])
     # bias_factor, not int(b)/10: the latter labels "1" as 0.1 (it means 1.0)
     # and raises ValueError outright on a written-out label like "0.5".
-    ax.set_xticklabels(
-        [f"bias_{b}\n(thresh {bias_factor(b):.1f})" for b in biases], fontsize=10
-    )
+    ax.set_xticklabels([f"bias_{b}\n(thresh {bias_factor(b):.1f})" for b in biases], fontsize=10)
     ax.set_yticks([r + 0.5 for r in range(len(folds))])
     ax.set_yticklabels([f"fold {f}" for f in folds], fontsize=10)
     ax.xaxis.tick_top()

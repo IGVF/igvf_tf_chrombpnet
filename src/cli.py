@@ -160,8 +160,19 @@ def cli():
 @verbose_opt
 @quiet_opt
 def preprocess_peaks(
-    peaks, blacklist, chrom_sizes, input_window, signal, min_signal_quantile,
-    compare_window, background_sample, out_dir, prefix, metadata_dir, verbose, quiet
+    peaks,
+    blacklist,
+    chrom_sizes,
+    input_window,
+    signal,
+    min_signal_quantile,
+    compare_window,
+    background_sample,
+    out_dir,
+    prefix,
+    metadata_dir,
+    verbose,
+    quiet,
 ):
     """Blacklist-filter peaks and write chrombpnet's narrowPeak.
 
@@ -274,24 +285,32 @@ def preprocess_peaks(
             md.add_param("compare_window", compare_window)
 
             signal_floor, floor_diag, bg = qc.background_signal_quantile(
-                signal, min_signal_quantile, compare_window,
-                blacklist_intervals=bl_raw_intervals, n_sample=background_sample,
+                signal,
+                min_signal_quantile,
+                compare_window,
+                blacklist_intervals=bl_raw_intervals,
+                n_sample=background_sample,
             )
             logger.info(
                 "background q%g over %dbp = %.1f insertions (%d windows sampled)",
-                min_signal_quantile * 100, compare_window, signal_floor,
+                min_signal_quantile * 100,
+                compare_window,
+                signal_floor,
                 floor_diag["background_n_sampled"],
             )
             peak_signal = qc.window_totals(
-                signal, intervals.to_narrowpeak(kept).values.tolist(),
-                window=compare_window, max_regions=10_000_000,
+                signal,
+                intervals.to_narrowpeak(kept).values.tolist(),
+                window=compare_window,
+                max_regions=10_000_000,
             )
             keep_mask = np.asarray(peak_signal >= signal_floor)
             dropped_pr = kept[~keep_mask]
             kept = kept[keep_mask]
             logger.info(
                 "%d peak(s) dropped below the floor, %d kept",
-                n_before_floor - len(kept), len(kept),
+                n_before_floor - len(kept),
+                len(kept),
             )
             md.add_metric("peaks_below_signal_floor", n_before_floor - len(kept))
             md.add_metric("signal_floor", signal_floor)
@@ -379,13 +398,23 @@ def preprocess_peaks(
             hi = float(np.quantile(peak_signal, 0.90))
             hi = max(hi, signal_floor * 4)
             bins = np.linspace(0, hi, 70)
-            ax.hist(bg, bins=bins, density=True, alpha=0.55,
-                    color=_sc["nonpeaks"], label="genome windows (sampled)")
-            ax.hist(peak_signal, bins=bins, density=True, alpha=0.55,
-                    color=_sc["peaks"], label="peaks")
-            ax.axvline(signal_floor, color=_sc["fail"], lw=1.6,
-                       label=f"floor = background q{min_signal_quantile*100:g} "
-                             f"({signal_floor:.0f})")
+            ax.hist(
+                bg,
+                bins=bins,
+                density=True,
+                alpha=0.55,
+                color=_sc["nonpeaks"],
+                label="genome windows (sampled)",
+            )
+            ax.hist(
+                peak_signal, bins=bins, density=True, alpha=0.55, color=_sc["peaks"], label="peaks"
+            )
+            ax.axvline(
+                signal_floor,
+                color=_sc["fail"],
+                lw=1.6,
+                label=f"floor = background q{min_signal_quantile * 100:g} ({signal_floor:.0f})",
+            )
             ax.set_xlim(0, hi)
             ax.set_xlabel(
                 f"insertions per {compare_window}bp window  "
@@ -394,7 +423,9 @@ def preprocess_peaks(
             ax.set_ylabel("density")
             ax.set_title(
                 f"{prefix}: {n_before_floor - len(kept)} of {n_before_floor} peaks "
-                f"below background q{min_signal_quantile*100:g}", fontsize=8.5)
+                f"below background q{min_signal_quantile * 100:g}",
+                fontsize=8.5,
+            )
             ax.legend(frameon=False, fontsize=7)
             fig.tight_layout()
             plotting.save_fig(fig, plots_dir / f"{prefix}_peak_signal_floor")
@@ -859,9 +890,9 @@ def qc_signal(
             # called with prefix "<dataset>_<peak_type>" and 02.0 with
             # "<dataset>", so composing the name here silently missed the file
             # and reported nothing.
-            _dropped_bed = Path(str(peaks).replace(
-                "_peaks_no_blacklist.narrowPeak", "_peaks_dropped.bed"
-            ))
+            _dropped_bed = Path(
+                str(peaks).replace("_peaks_no_blacklist.narrowPeak", "_peaks_dropped.bed")
+            )
             metrics |= qc.dropped_peaks_resampled(_dropped_bed, neg_rows, compare_window)
             if metrics.get("n_dropped_peaks_resampled"):
                 logger.info(
@@ -1044,8 +1075,7 @@ def qc_signal(
             _hi = 10
             _bins = np.arange(0, _hi + 1)
             _frac = np.array([(np.asarray(_bias_ng) == b).mean() for b in _bins])
-            axl.bar(_bins, _frac, width=0.8, color=_sc["nonpeaks"],
-                    label="non-peak regions")
+            axl.bar(_bins, _frac, width=0.8, color=_sc["nonpeaks"], label="non-peak regions")
 
             _seen, _marks = set(), []
             for _r in bias_rows:
@@ -1056,30 +1086,43 @@ def qc_signal(
                 if _r["counts_threshold"] > _hi:
                     continue
                 axl.axvline(_r["counts_threshold"], color=_sc["ok"], lw=1.1, ls="--")
-                axl.text(_r["counts_threshold"], max(_frac) * 1.02,
-                         f"{_r['factor']:g}", fontsize=6.5, rotation=90,
-                         color=_sc["ok"], va="bottom", ha="center")
+                axl.text(
+                    _r["counts_threshold"],
+                    max(_frac) * 1.02,
+                    f"{_r['factor']:g}",
+                    fontsize=6.5,
+                    rotation=90,
+                    color=_sc["ok"],
+                    va="bottom",
+                    ha="center",
+                )
             # Every cutoff is q01 * factor, so this is the anchor the whole
             # sweep is scaled from.
             axl.axvline(
-                bias_metrics["peak_signal_q01"], color=_sc["peaks"], lw=1.6,
+                bias_metrics["peak_signal_q01"],
+                color=_sc["peaks"],
+                lw=1.6,
                 label=f"peak q01 = {bias_metrics['peak_signal_q01']:g}  (x factor)",
             )
 
             axl.set_xticks(_bins)
             axl.set_xlabel(f"insertions per non-peak ({compare_window}bp window)")
             axl.set_ylabel("fraction of non-peaks")
-            axl.set_title("counts are integers, so cutoffs land in the gaps",
-                          fontsize=8.5)
+            axl.set_title("counts are integers, so cutoffs land in the gaps", fontsize=8.5)
             axl.set_ylim(0, max(_frac) * 1.22)
             axl.legend(frameon=False, fontsize=6.5, loc="upper right")
 
             # RIGHT: the landscape itself -- how many non-peaks survive.
             _f = [r["factor"] for r in bias_rows]
             _n = [r["n_nonpeaks"] for r in bias_rows]
-            _c = [_sc["fail"] if r["n_nonpeaks"] == 0
-                  else _sc["risky"] if r["n_nonpeaks"] < 1000
-                  else _sc["ok"] for r in bias_rows]
+            _c = [
+                _sc["fail"]
+                if r["n_nonpeaks"] == 0
+                else _sc["risky"]
+                if r["n_nonpeaks"] < 1000
+                else _sc["ok"]
+                for r in bias_rows
+            ]
             axr.step(_f, _n, where="post", color=_sc["cutoff"], lw=0.8, zorder=1)
             axr.scatter(_f, _n, c=_c, s=18, zorder=2)
             axr.set_xlabel("bias_threshold_factor")

@@ -220,9 +220,7 @@ def get_nucleotide_freq(beds, genome, context_radius=20, paired=True):
                 reverse_bias.append(reverse_context)
 
     if skipped:
-        logger.info(
-            f"shift detection: skipped {skipped} context(s) truncated by a contig edge"
-        )
+        logger.info(f"shift detection: skipped {skipped} context(s) truncated by a contig edge")
     if not forward_bias or not reverse_bias:
         raise ValueError(
             "shift detection: no usable cut-site contexts "
