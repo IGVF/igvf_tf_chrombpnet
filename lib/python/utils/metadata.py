@@ -63,14 +63,30 @@ import sys
 import time
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from utils import log
 
 logger = log.get_logger(__name__)
 
-SCHEMA_VERSION = 1
+# 2: ENCODE/IGVF-style field names. md5->md5sum, size_bytes->file_size,
+#    path->filepath (plus a `file` basename; NOT ENCODE's
+#    submitted_file_name -- a bare name is what you read in a
+#    query), tools->software_versions, run_id->uuid,
+#    started_at->date_created, ended_at->date_completed,
+#    status->run_status, inputs->derived_from,
+#    outputs->output_files.
+#    `status` is deliberately NOT reused for ok/failed: on the portal it means
+#    an object's lifecycle (released / in progress / archived), not whether a
+#    process exited 0, so run outcome lives in `run_status`. No @id, @type or
+#    accession is emitted -- those are portal-assigned, and inventing them
+#    would make a local record look like a registered IGVF object.
+#    Naming rule: every field is unambiguous ON ITS OWN, because UNNEST
+#    flattens these structs into one table where a bare `key`, `value`,
+#    `name` or `path` says nothing. Hence parameter_name/parameter_value,
+#    software_name/software_version, file_role/file/filepath/file_size.
+SCHEMA_VERSION = 2
 
 CHECKSUM_ENV_VAR = "METADATA_CHECKSUMS"
 CHUNK_BYTES = 8 << 20  # 8 MiB
@@ -116,34 +132,82 @@ def md5sum(path, chunk_bytes: int = CHUNK_BYTES) -> str:
 
 
 def _utc(ts: float) -> str:
-    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(timespec="seconds")
+    return datetime.fromtimestamp(ts, tz=UTC).isoformat(timespec="seconds")
 
 
-def file_record(role: str, path, checksums: bool | None = None) -> dict:
+#: Multi-part extensions that mean something as a unit. Order matters: the
+#: longest match wins, so "d0.fragments.tsv.gz" is tsv.gz, not gz.
+COMPOUND_SUFFIXES = (
+    ".bed.gz", ".tsv.gz", ".txt.gz", ".vcf.gz", ".fa.gz", ".fasta.gz",
+    ".narrowPeak.gz", ".bedGraph.gz", ".gtf.gz",
+)
+
+#: Extension -> the name people actually use for the format.
+FORMAT_ALIASES = {
+    ".bw": "bigwig", ".bigwig": "bigwig", ".bigWig": "bigwig",
+    ".fa": "fasta", ".fna": "fasta",
+    ".h5": "h5", ".hdf5": "h5",
+    ".tbi": "tbi", ".fai": "fai",
+    ".narrowPeak": "narrowPeak",
+}
+
+
+def file_format(path) -> str | None:
+    """The ENCODE-style file_format: how the bytes are encoded, nothing else.
+
+    Derived from the extension, never hand-written, because hand-written
+    formats drift into the semantic name -- the old vocabulary had roles like
+    "qc_tsv", "counts_h5" and "prepared_bigwig" that answered "what is this"
+    and "how is it encoded" in one string. Those are separate questions:
+    `parameter_name` answers the first, this answers the second.
+    """
+    p = Path(path)
+    if p.is_dir():
+        return "directory"
+    name = p.name
+    for suf in COMPOUND_SUFFIXES:
+        if name.endswith(suf):
+            return suf.lstrip(".")
+    suffix = p.suffix
+    if not suffix:
+        return None
+    return FORMAT_ALIASES.get(suffix, suffix.lstrip(".").lower())
+
+
+def file_record(
+    role: str, path, checksums: bool | None = None, parameter_type: str = "input"
+) -> dict:
     """Describe one input or output file. Never raises."""
     if checksums is None:
         checksums = checksums_enabled()
     p = Path(path)
+    resolved = str(p.resolve()) if p.exists() else str(p)
     rec = {
-        "role": role,
-        "path": str(p.resolve()) if p.exists() else str(p),
-        "exists": p.exists(),
-        "size_bytes": None,
-        "mtime": None,
-        "md5": None,
+        # WHAT the data is -- signal, fragments, peaks, contributions, genome.
+        # Never how it is encoded; that is file_format.
+        "parameter_name": role,
+        "parameter_value": resolved,
+        "parameter_type": parameter_type,
+        "file": p.name,
+        "filepath": resolved,
+        "file_format": file_format(p),
+        "file_exists": p.exists(),
+        "file_size": None,
+        "file_mtime": None,
+        "md5sum": None,
         "md5_skipped": None,
     }
     if not p.exists() or not p.is_file():
         rec["md5_skipped"] = "missing" if not p.exists() else "not_a_file"
         return rec
     st = p.stat()
-    rec["size_bytes"] = st.st_size
-    rec["mtime"] = _utc(st.st_mtime)
+    rec["file_size"] = st.st_size
+    rec["file_mtime"] = _utc(st.st_mtime)
     if not checksums:
         rec["md5_skipped"] = "disabled"
         return rec
     try:
-        rec["md5"] = md5sum(p)
+        rec["md5sum"] = md5sum(p)
     except OSError as exc:
         rec["md5_skipped"] = f"error: {exc}"
     return rec
@@ -307,15 +371,15 @@ def tool_versions(extra: dict[str, str] | None = None) -> list[dict]:
     from importlib.metadata import version as dist_version
 
     tools = [
-        {"name": "python", "version": platform.python_version()},
+        {"software_name": "python", "software_version": platform.python_version()},
     ]
     for name in TRACKED_DISTRIBUTIONS:
         try:
-            tools.append({"name": name, "version": dist_version(name)})
+            tools.append({"software_name": name, "software_version": dist_version(name)})
         except PackageNotFoundError:
             continue
     for name, ver in (extra or {}).items():
-        tools.append({"name": name, "version": str(ver)})
+        tools.append({"software_name": name, "software_version": str(ver)})
     return tools
 
 
@@ -351,7 +415,29 @@ class StepMetadata:
         self._outputs.append((role, Path(path)))
 
     def add_param(self, key: str, value) -> None:
-        self.params.append({"key": str(key), "value": "" if value is None else str(value)})
+        """A setting that CONTROLLED the run (assay, plus_shift, seed)."""
+        self._add_scalar(key, value, "param")
+
+    def add_metric(self, key: str, value) -> None:
+        """A quantity the run MEASURED (reads_kept, n_peaks). Not an input."""
+        self._add_scalar(key, value, "metric")
+
+    def _add_scalar(self, key: str, value, parameter_type: str) -> None:
+        self.params.append(
+            {
+                "parameter_name": str(key),
+                "parameter_value": "" if value is None else str(value),
+                "parameter_type": parameter_type,
+                "file": None,
+                "filepath": None,
+                "file_format": None,
+                "file_exists": None,
+                "file_size": None,
+                "file_mtime": None,
+                "md5sum": None,
+                "md5_skipped": None,
+            }
+        )
 
     def add_params(self, mapping) -> None:
         for k, v in dict(mapping).items():
@@ -372,14 +458,14 @@ class StepMetadata:
             rel_script = str(self.script) if self.script else None
         return {
             "schema_version": SCHEMA_VERSION,
-            "run_id": self.run_id,
+            "uuid": self.run_id,
             "step": self.step,
             "dataset": self.dataset,
-            "status": self.status,
+            "run_status": self.status,
             "exit_status": self.exit_status,
             "error": self.error,
-            "started_at": self.started_at,
-            "ended_at": _utc(time.time()),
+            "date_created": self.started_at,
+            "date_completed": _utc(time.time()),
             "duration_s": round(time.monotonic() - self.started_monotonic, 3),
             "host": socket.gethostname(),
             # Flat scalars: `GROUP BY "user"` is the common query, so these do
@@ -395,15 +481,35 @@ class StepMetadata:
             "script_url": script_url(self.script, git.get("commit"), git.get("remote_url")),
             "git": git,
             "slurm": slurm_info(),
-            "params": self.params,
-            "inputs": [file_record(r, p) for r, p in self._inputs],
-            "outputs": [file_record(r, p) for r, p in self._outputs],
-            "tools": tool_versions(self.extra_tools),
+            # ONE long-format list. parameter_type tells the four kinds apart:
+            #   input   a file the run consumed
+            #   output  a file the run produced
+            #   param   a setting that controlled it
+            #   metric  a quantity it measured
+            # UNNEST gives a flat table where every column is meaningful on its
+            # own -- which is why nothing here is called `key`, `value`, `name`
+            # or `path`.
+            "parameters": (
+                [file_record(r, p, parameter_type="input") for r, p in self._inputs]
+                + [file_record(r, p, parameter_type="output") for r, p in self._outputs]
+                + self.params
+            ),
+            "software_versions": tool_versions(self.extra_tools),
         }
 
     def path(self) -> Path:
+        # Flat: one directory, one file per invocation. The step is in the
+        # FILENAME, not a parent directory, because the directory tree was
+        # carrying two namespaces at once -- numbered job records
+        # ("00.0.prepare_signal") next to unnumbered tool records
+        # ("prepare_bigwig") -- which reads as an inconsistency when you list
+        # the directory, even though it is the deliberate job/tool split that
+        # queries.sql turns into its `jobs` and `tools` views. `step` is a
+        # column in every record, so DuckDB does the filtering either way, and
+        # a flat glob is simpler. The cost is that you can no longer count a
+        # step's runs with `ls metadata/<step>/`; use the `runs` view.
         stamp = self.started_at.replace(":", "").replace("-", "")
-        return Path(self.out_dir) / self.step / f"{stamp}_{self.run_id[:8]}.json"
+        return Path(self.out_dir) / f"{stamp}_{self.step}_{self.run_id[:8]}.json"
 
     def write(self, path=None) -> Path | None:
         """Write the record. Never raises -- provenance must not fail a step."""

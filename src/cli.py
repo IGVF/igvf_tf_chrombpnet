@@ -179,12 +179,12 @@ def preprocess_peaks(
         peaks_pr, off_contig = intervals.restrict_to_chromosomes(peaks_pr, chromsizes)
         if off_contig:
             logger.warning("%d peak(s) dropped: on contigs absent from %s", off_contig, chrom_sizes)
-        md.add_param("peaks_off_contig", off_contig)
+        md.add_metric("peaks_off_contig", off_contig)
 
         kept = intervals.remove_blacklisted(peaks_pr, bl)
-        md.add_param("peaks_in", len(peaks_pr))
-        md.add_param("peaks_kept", len(kept))
-        md.add_param("peaks_dropped", len(peaks_pr) - len(kept))
+        md.add_metric("peaks_in", len(peaks_pr))
+        md.add_metric("peaks_kept", len(kept))
+        md.add_metric("peaks_dropped", len(peaks_pr) - len(kept))
         logger.info(
             f"{len(peaks_pr) - len(kept)} peak(s) hit the slopped blacklist, {len(kept)} kept"
         )
@@ -198,7 +198,7 @@ def preprocess_peaks(
                 overhanging,
                 input_window,
             )
-        md.add_param("peaks_window_overhang", overhanging)
+        md.add_metric("peaks_window_overhang", overhanging)
 
         if len(kept) == 0:
             raise click.ClickException(
@@ -274,8 +274,8 @@ def filter_fragments(input_path, output_path, chroms, index, metadata_dir, verbo
                 kept += len(out)
                 fout.write(b"".join(out))  # BGZFile has no writelines()
 
-        md.add_param("fragments_in", total)
-        md.add_param("fragments_kept", kept)
+        md.add_metric("fragments_in", total)
+        md.add_metric("fragments_kept", kept)
         md.add_output("fragments", output_path)
 
         if kept == 0:
@@ -428,7 +428,7 @@ def prepare_bigwig(
             cuts, skipped, kept = pileup.collect_cuts(
                 signal_path, chromsizes, plus_delta, minus_delta, write_filtered=write_filtered
             )
-        md.add_param("reads_kept", kept)
+        md.add_metric("reads_kept", kept)
         if write_filtered:
             md.add_output("filtered_reads", write_filtered)
             logger.info("filtered reads -> %s", write_filtered)
@@ -719,7 +719,8 @@ def qc_signal(
         md.add_output("qc_json", json_out)
         md.add_output("qc_tsv", tsv_out)
         for k, v in flat.items():
-            md.add_param(k, v)
+            # Everything qc-signal writes is MEASURED, not configured.
+            md.add_metric(k, v)
 
         # ── plots ─────────────────────────────────────────────────────────
         import matplotlib.pyplot as plt

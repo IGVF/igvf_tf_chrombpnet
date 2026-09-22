@@ -256,20 +256,39 @@ say which of the two kinds of verification a change actually got.
   with its metric value; that text is the fallback for readers colour cannot serve,
   so keep it.
 - **Every step emits a run-metadata JSON.** One record per invocation under
-  `${metadata_dir}` (`<dataset>/results/metadata/<step>/<ts>_<runid>.json`;
-  cross-dataset steps use `${REPO_ROOT}/results/metadata`). It carries inputs and
-  outputs with md5/size/mtime, params, tool versions, SLURM ids, the git commit,
-  and **GitHub permalinks** (`commit_url`, `script_url`) to the exact code that ran.
+  `${metadata_dir}` (`<dataset>/results/metadata/<ts>_<step>_<runid>.json`, a flat directory;
+  cross-dataset steps use `${REPO_ROOT}/results/metadata`). Schema version 2.
   Python steps use `with metadata.record(...)`; bash steps call
   `metadata_start "<step>"` and append to `metadata_inputs`/`metadata_outputs`/
   `metadata_params`/`metadata_tools`, and an EXIT trap emits via
-  `src/emit_metadata.py`. **Both paths produce the same schema** — that is the
-  point, so don't add fields to one without the other.
-  - `params` is a list of `{key, value}` with string values *on purpose*: a plain
-    object would give every step a different STRUCT and DuckDB's union would go
-    ragged. `command` keeps the full argv.
+  `src/emit_metadata.py`. **Both paths produce the same schema** — they share
+  `StepMetadata`, so don't add fields to one without the other.
+  - **Everything a run consumed, produced, was configured with, or measured is
+    ONE long-format list, `parameters`.** `parameter_type` tells the four kinds
+    apart: `input` and `output` are files, `param` is a setting that controlled
+    the run, `metric` is a quantity it measured. One `UNNEST` answers every
+    question about a run; `queries.sql` exposes `run_parameters`, `run_files`,
+    `run_settings` and `run_metrics` over it.
+  - **Field names are ENCODE/IGVF-flavoured and unambiguous on their own**,
+    because UNNEST flattens these structs into one table where a bare `key`,
+    `value`, `name` or `path` says nothing: `parameter_name`/`parameter_value`,
+    `software_name`/`software_version`, `file`/`filepath`/`file_size`/`md5sum`,
+    `uuid`, `date_created`/`date_completed`. Run outcome is `run_status`, NOT
+    `status` — on the portal `status` means an object's lifecycle (released /
+    in progress / archived), not whether a process exited 0. No `@id`, `@type`
+    or `accession` is emitted: those are portal-assigned, and inventing them
+    would make a local record look like a registered IGVF object.
+  - **`parameter_name` says WHAT the data is; `file_format` says how it is
+    encoded.** Neither borrows the other's vocabulary. `file_format` is
+    DERIVED from the extension by `metadata.file_format()` and never
+    hand-written — hand-written formats drift into the semantic name, which is
+    how the old vocabulary ended up with roles like `qc_tsv`, `counts_h5` and
+    `prepared_bigwig` that answered both questions in one string.
+  - Values are strings *on purpose*: a plain object would give every step a
+    different STRUCT and DuckDB's union would go ragged. `command` keeps the
+    full argv.
   - Outputs are declared early but hashed at exit, so a failed run still records
-    what it meant to produce with `exists: false`.
+    what it meant to produce with `file_exists: false`.
   - md5 is on by default, streamed in 8 MiB chunks; `METADATA_CHECKSUMS=0`
     turns it off and the record says `md5_skipped: "disabled"` rather than going
     silently null.
