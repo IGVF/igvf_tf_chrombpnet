@@ -823,24 +823,43 @@ def qc_signal(
             _sc = palettes.BIAS_SCAN_COLORS
             fig, (axl, axr) = plt.subplots(1, 2, figsize=(8.4, 3.2))
 
-            # LEFT: the integer count distributions the cutoff slices through.
-            # Drawn as integer bars, not a smooth histogram, because the
-            # integer-ness IS the mechanism -- a cutoff landing between two
-            # bars selects exactly the same set as one landing anywhere else
-            # in that gap, which is why neighbouring factors are identical.
-            _hi = 12
+            # LEFT: WHY the staircase exists. Non-peak counts are integers,
+            # so the bars sit at 0, 1, 2 ... and a cutoff landing anywhere in
+            # the gap between two bars keeps exactly the same set. Only the
+            # cutoffs that actually change the training set are drawn -- one
+            # per distinct set -- because drawing all forty is a picket fence.
+            _hi = 10
             _bins = np.arange(0, _hi + 1)
-            for _arr, _k, _lab in ((_bias_ng, "nonpeaks", "non-peaks"),
-                                   (_bias_pk, "peaks", "peaks")):
-                _h = np.array([(np.asarray(_arr) == b).mean() for b in _bins])
-                axl.bar(_bins, _h, width=0.85, alpha=0.55, color=_sc[_k], label=_lab)
+            _frac = np.array([(np.asarray(_bias_ng) == b).mean() for b in _bins])
+            axl.bar(_bins, _frac, width=0.8, color=_sc["nonpeaks"],
+                    label="non-peak regions")
+
+            _seen, _marks = set(), []
             for _r in bias_rows:
-                axl.axvline(_r["counts_threshold"], lw=0.8, ls="--",
-                            color=_sc["fail" if _r["n_nonpeaks"] == 0 else "ok"], alpha=0.5)
-            axl.set_xlabel(f"insertions in the {compare_window}bp window")
-            axl.set_ylabel("fraction of regions")
-            axl.set_title("cutoffs fall between integers", fontsize=9)
-            axl.legend(frameon=False, fontsize=7)
+                if _r["n_nonpeaks"] and _r["n_nonpeaks"] not in _seen:
+                    _seen.add(_r["n_nonpeaks"])
+                    _marks.append(_r)
+            for _r in _marks:
+                if _r["counts_threshold"] > _hi:
+                    continue
+                axl.axvline(_r["counts_threshold"], color=_sc["ok"], lw=1.1, ls="--")
+                axl.text(_r["counts_threshold"], max(_frac) * 1.02,
+                         f"{_r['factor']:g}", fontsize=6.5, rotation=90,
+                         color=_sc["ok"], va="bottom", ha="center")
+            # Every cutoff is q01 * factor, so this is the anchor the whole
+            # sweep is scaled from.
+            axl.axvline(
+                bias_metrics["peak_signal_q01"], color=_sc["peaks"], lw=1.6,
+                label=f"peak q01 = {bias_metrics['peak_signal_q01']:g}  (x factor)",
+            )
+
+            axl.set_xticks(_bins)
+            axl.set_xlabel(f"insertions per non-peak ({compare_window}bp window)")
+            axl.set_ylabel("fraction of non-peaks")
+            axl.set_title("counts are integers, so cutoffs land in the gaps",
+                          fontsize=8.5)
+            axl.set_ylim(0, max(_frac) * 1.22)
+            axl.legend(frameon=False, fontsize=6.5, loc="upper right")
 
             # RIGHT: the landscape itself -- how many non-peaks survive.
             _f = [r["factor"] for r in bias_rows]
