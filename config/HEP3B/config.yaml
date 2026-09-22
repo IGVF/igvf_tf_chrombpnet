@@ -1,0 +1,60 @@
+# ChromBPNet configuration — HEP3B (nnfc_hep3b project)
+#
+#   export DATASET=HEP3B
+#   cd workflows/SLURM && sbatch 00.0.prepare_signal.sh
+#
+# The data lives in the nnfc_hep3b project tree, not in this checkout, so every
+# path below is absolute and `DATASET_ROOT` is not used.
+
+dataset_name: HEP3B
+
+# 155,267 fixed-width 500 bp peaks, plain 3-column BED. 00.1 blacklist-filters
+# this and writes the 10-column narrowPeak chrombpnet wants, taking the summit
+# as the peak midpoint — which is exactly right for fixed-width calls like these.
+regions: "/oak/stanford/groups/engreitz/Users/emattei/projects/nnfc_hep3b/data/peaks/HEP3B_all_peaks.bed"
+
+assay: ATAC
+
+# 10x multiome ATAC fragments. `.tsv.gz` -> signal_type=fragments -> chrombpnet -ifrag.
+signal_path: "/oak/stanford/groups/engreitz/Users/emattei/projects/nnfc_hep3b/data/processed/HEP3B/atac_fragments.tsv.gz"
+
+# These fragments are ALREADY main-chromosome only — the tabix index lists
+# exactly chr1-22, chrX, chrY, chrM and nothing else. The pileup bounds itself
+# by chrom_sizes_main regardless, so the filter would be a no-op pass over a
+# 645 MB file whose only product is a ~685 MB copy that no later step reads
+# (00.0 writes it for a chrombpnet fallback path; 03.0/04.0 take signal_path
+# plus --prepared-bigwig). Skipping it saves the pass and the disk.
+filter_main_chroms: false
+
+# Tn5 shift ALREADY PRESENT in these reads. MEASURED, not assumed: 00.0 ran
+# detection against the genome on 2026-09-21 (job 44572947) and reported +4/-5,
+# the conventional 10x CellRanger ATAC correction, which is corroborated by
+# these being CellRanger multiome fragments. The pipeline then applies delta
+# +0/+1 to reach chrombpnet's +4/-4 target.
+#
+# Recorded here so later runs skip detection entirely and open no FASTA. To
+# re-measure, comment both out; detection costs ~45s and needs genome_fa.
+plus_shift: 4
+minus_shift: -5
+
+# Everything the pipeline writes goes under here. A NEW directory: the July 2026
+# run's outputs under results/chrombpnet/ are from the pre-refactor pipeline and
+# are left untouched.
+output_dir: "/oak/stanford/groups/engreitz/Users/emattei/projects/nnfc_hep3b/results/chrombpnet_refactor"
+
+peak_type: all
+
+folds: ["0", "1", "2", "3", "4"]
+
+# Bias sweep (03.0). Positional: bias_factors[i] pairs with bias_suffixes_sweep[i].
+# 5 folds x 4 factors -> sbatch --array=0-19.
+bias_factors: ["0.5", "0.6", "0.7", "0.8"]
+bias_suffixes_sweep: ["_05", "_06", "_07", "_08"]
+
+# Filled in by hand after 03.1 writes selected_bias_per_fold.tsv.
+fold_bias_suffix:
+  "0": ""
+  "1": ""
+  "2": ""
+  "3": ""
+  "4": ""
