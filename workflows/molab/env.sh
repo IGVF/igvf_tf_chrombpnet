@@ -28,6 +28,25 @@
 MOLAB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export REPO_ROOT="${REPO_ROOT:-$(cd "${MOLAB_DIR}/../.." && pwd)}"
 
+# ── Local overrides and credentials ──────────────────────────────────────────
+# workflows/molab/.env is gitignored and holds anything machine- or
+# account-specific: GITHUB_TOKEN, MOLAB_CPUS, DATASET. Sourced FIRST so every
+# default below can be overridden from it. See .env.example.
+if [[ -f "${MOLAB_DIR}/.env" ]]; then
+    set -a
+    # shellcheck disable=SC1091  # untracked, machine-local
+    source "${MOLAB_DIR}/.env"
+    set +a
+fi
+
+# A GitHub token in the environment is enough to push: this credential helper
+# feeds it to git without writing it to disk or into .git/config. Configured
+# per-repo, and only when a token is actually present.
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+    git -C "${REPO_ROOT}" config credential.helper \
+        '!f() { echo username=x-access-token; echo "password=${GITHUB_TOKEN}"; }; f'
+fi
+
 # ── Which dataset ────────────────────────────────────────────────────────────
 export DATASET="${DATASET:-d0}"
 
