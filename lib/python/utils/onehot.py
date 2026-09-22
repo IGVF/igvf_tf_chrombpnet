@@ -33,15 +33,24 @@ Output is byte-identical to upstream, including the "anything not ACGT encodes
 to all zeros" rule. `install()` verifies that on a probe before swapping the
 function in, so a change in upstream semantics falls back rather than silently
 encoding differently.
+
+Two ways in, one implementation. On the cluster the container is the stock
+.sif, so `src/chrombpnet_train.py` calls `install()` at runtime. On molab,
+`workflows/molab/setup_molab.sh` copies this file into the unpacked sandbox
+as `chrombpnet/training/utils/igvf_onehot.py` and rebinds `one_hot.dna_to_one_hot`
+there, so every chrombpnet entry point uses it (interpretation and bigwig
+helpers too, not just training) and `install()` finds it already in place.
+That copy is why this module imports nothing from `utils`: it must run as a
+standalone file inside chrombpnet's package.
 """
 
 from __future__ import annotations  # py3.8 in the chrombpnet container
 
+import logging
+
 import numpy as np
 
-from . import log
-
-logger = log.get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 # Rows 0-3 are the ACGT identity; every other byte stays all-zero, which is
 # upstream's encoding for N and any other non-ACGT character.
@@ -77,6 +86,11 @@ def dna_to_one_hot(seqs) -> np.ndarray:
         buf = np.frombuffer("".join(block).encode("ascii", "replace"), dtype=np.uint8)
         np.take(_LUT, buf, axis=0, out=out[start : start + len(block)].reshape(-1, 4))
     return out
+
+
+# Carried by the function itself, so a copy baked into the container is
+# recognised by `install()` as already in place.
+dna_to_one_hot._igvf_low_memory = True
 
 
 def _matches_upstream(upstream) -> bool:
@@ -116,7 +130,6 @@ def install() -> bool:
         )
         return False
 
-    dna_to_one_hot._igvf_low_memory = True
     one_hot.dna_to_one_hot = dna_to_one_hot
     # data_utils imported the name directly (`from ... import one_hot` then
     # `one_hot.dna_to_one_hot`), but rebind any direct import too.

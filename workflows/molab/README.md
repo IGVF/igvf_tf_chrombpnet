@@ -88,11 +88,22 @@ in sequence rather than in parallel.
 
 ## The four files
 
-- **`setup_molab.sh`** — idempotent, run once. Generates the `en_US.UTF-8`
-  locale, installs Apptainer + its userspace mount helpers, downloads and
-  verifies the container (7.8 GiB, md5 checked), unpacks it to a sandbox
-  directory, installs the pixi `preprocess` environment, and fetches the shared
-  references. `--skip-references` if you already have them.
+- **`setup_molab.sh`** — idempotent, run once. Runs `apt-get update` +
+  `upgrade`, generates the `en_US.UTF-8` locale, installs Apptainer + its
+  userspace mount helpers, downloads the container from the private bucket
+  `gs://${GCP_BUCKET}` (7.8 GiB, md5 checked against the bucket), unpacks it to
+  a sandbox directory, checks the sandbox against the image's listing, bakes
+  the low-memory one-hot encoder (`lib/python/utils/onehot.py`) into it and
+  verifies it byte-for-byte against upstream inside the container, then
+  **deletes the `.sif`**. It then installs the pixi `qc` environment (and
+  clears pixi's package cache), and fetches the d0 test data into
+  `/marimo/data/test_data_d0/{config,inputs}/` and the shared references.
+  `--skip-references` if you already have them. Needs `GCP_BUCKET` and
+  `GCP_SA_JSON` (the service-account key as inline JSON) in a `.env`; there is
+  no gcloud — the token is minted with `openssl`. Disk: ~26 GB at peak,
+  ~17 GB once the image is gone. A rerun sees the sandbox's
+  `.igvf_molab/complete` marker and never touches the image again; to rebuild,
+  `rm -rf` the sandbox.
 - **`env.sh`** — every variable in one place. Source it per shell.
   **`git push` needs it too.** The credential helper it installs expands
   `${GITHUB_TOKEN}` at push time rather than storing it, so a shell that has

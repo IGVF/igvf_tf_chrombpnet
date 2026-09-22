@@ -29,15 +29,22 @@ MOLAB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export REPO_ROOT="${REPO_ROOT:-$(cd "${MOLAB_DIR}/../.." && pwd)}"
 
 # ── Local overrides and credentials ──────────────────────────────────────────
-# workflows/molab/.env is gitignored and holds anything machine- or
-# account-specific: GITHUB_TOKEN, MOLAB_CPUS, DATASET. Sourced FIRST so every
-# default below can be overridden from it. See .env.example.
-if [[ -f "${MOLAB_DIR}/.env" ]]; then
-    set -a
-    # shellcheck disable=SC1091  # untracked, machine-local
-    source "${MOLAB_DIR}/.env"
-    set +a
-fi
+# A .env holds anything machine- or account-specific: GITHUB_TOKEN,
+# GCP_BUCKET, GCP_SA_JSON, MOLAB_CPUS, DATASET. Sourced FIRST so every default
+# below can be overridden from it. See .env.example. The first that exists
+# wins: ${MOLAB_ENV_FILE}, workflows/molab/.env (gitignored), then the .env one
+# level above the checkout (/marimo/.env on molab), which lives outside git
+# entirely.
+for _molab_env in "${MOLAB_ENV_FILE:-}" "${MOLAB_DIR}/.env" "${REPO_ROOT}/../.env"; do
+    if [[ -n "${_molab_env}" && -f "${_molab_env}" ]]; then
+        set -a
+        # shellcheck disable=SC1090  # untracked, machine-local
+        source "${_molab_env}"
+        set +a
+        break
+    fi
+done
+unset _molab_env
 
 # A GitHub token in the environment is enough to push: this credential helper
 # feeds it to git without writing it to disk or into .git/config. Configured
@@ -51,12 +58,14 @@ fi
 export DATASET="${DATASET:-d0}"
 
 # The d0 config lives WITH its inputs, not in config/<dataset>/, so the test
-# dataset is self-contained: fragments, peaks and the parameters that describe
-# them in one directory. config/README.md supports this -- DATASET_CONFIG
+# dataset is self-contained: setup_molab.sh mirrors
+# gs://${GCP_BUCKET}/chrombpnet/test_data_d0/{config,inputs}/ to
+# /marimo/data/test_data_d0/, fragments, peaks and the parameters that describe
+# them together. config/README.md supports this -- DATASET_CONFIG
 # points at a config anywhere. Note the trade-off: a config outside the
 # checkout is not version-controlled, which is fine for a local test dataset
 # and would NOT be for a real one (see config/HEP3B/config.yaml, tracked).
-export DATASET_CONFIG="${DATASET_CONFIG:-/marimo/data/test_data_d0/inputs/config.yaml}"
+export DATASET_CONFIG="${DATASET_CONFIG:-/marimo/data/test_data_d0/config/config.yaml}"
 
 # ── No conda anywhere ────────────────────────────────────────────────────────
 # molab uses pixi for everything reproducible and Apptainer for chrombpnet.

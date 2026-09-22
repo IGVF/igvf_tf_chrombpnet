@@ -47,3 +47,6 @@ __pycache__/
 
 # Credentials and machine-local overrides (see workflows/molab/.env.example)
 workflows/molab/.env
+.env
+*.env
+!*.env.example
