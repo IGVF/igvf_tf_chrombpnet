@@ -114,6 +114,58 @@ metadata_dir="${METADATA_DIR:-${REPO_ROOT}/results/metadata}"
 # means converting those ~40 call sites in the same change, not leaving a second
 # way to do it.
 
+# load_bias_sweep — set bias_factors and bias_suffixes_sweep from 02.0's scan.
+#
+# 02.0 replays chrombpnet's own background-selection arithmetic over a fine
+# grid and writes ${bias_scan_file}, which knows two things a hand-written list
+# cannot: which factors leave ZERO non-peaks (those jobs cannot succeed), and
+# which are DUPLICATES of each other, because counts are integers and the
+# training set only changes when the cutoff crosses one.
+#
+# Shared by 03.0 and 03.1 deliberately. When only 03.0 read the scan, 03.1 went
+# on reading the config, the two disagreed, and 03.1 "selected" a winner from
+# whichever single model happened to overlap -- silently, because a selection
+# from one candidate looks exactly like a selection from six.
+#
+# Falls back to the config when there is no scan, so a cluster run that never
+# executed 02.0 is unaffected. BIAS_FACTORS_FROM_SCAN=0 forces the config.
+load_bias_sweep() {
+    if [[ "${BIAS_FACTORS_FROM_SCAN:-1}" != "1" || ! -s "${bias_scan_file}" ]]; then
+        # Falling back to the config, which may legitimately not list a sweep:
+        # a dataset that always runs 02.0 has no reason to. Say so, rather than
+        # letting n_factors=0 divide by zero three lines later.
+        if [[ ${#bias_factors[@]} -eq 0 ]]; then
+            echo "ERROR: no bias sweep to run." >&2
+            echo "  No scan at ${bias_scan_file}, and the dataset config sets no" >&2
+            echo "  bias_factors. Either run 02.0 to generate the scan, or set" >&2
+            echo "  bias_factors / bias_suffixes_sweep in the config." >&2
+            exit 1
+        fi
+        echo "[$(date)] bias sweep from the dataset config (no scan at ${bias_scan_file})"
+        return 0
+    fi
+    local _f _sfx _thr _nafter _nnon _distinct _verdict
+    local _factors=() _suffixes=()
+    while IFS=$'\t' read -r _f _sfx _thr _nafter _nnon _distinct _verdict; do
+        [[ "${_f}" == "factor" ]] && continue        # header
+        [[ "${_distinct}" == "True" ]] || continue   # one per DISTINCT training set
+        _factors+=( "${_f}" )
+        _suffixes+=( "${_sfx}" )
+    done < "${bias_scan_file}"
+
+    if [[ ${#_factors[@]} -eq 0 ]]; then
+        echo "ERROR: ${bias_scan_file} lists no viable bias factor." >&2
+        echo "  Every candidate leaves zero non-peaks after chrombpnet's outlier" >&2
+        echo "  filter, so no training can succeed. Widen the grid or raise the" >&2
+        echo "  outlier threshold, and re-run 02.0." >&2
+        exit 1
+    fi
+    bias_factors=( "${_factors[@]}" )
+    bias_suffixes_sweep=( "${_suffixes[@]}" )
+    echo "[$(date)] bias sweep from ${bias_scan_file}"
+    echo "           ${#bias_factors[@]} distinct factor(s): ${bias_factors[*]}"
+}
+
 # activate_env <conda-env-path> — initialise conda and activate an env.
 # Deliberately does NOT set -euo pipefail: conda's activation scripts are not
 # written against `set -u`, which is why the scripts that do use it set it

@@ -112,8 +112,12 @@ unset _required
 # DATASET picks the folder; dataset_name names the outputs. They can legitimately
 # differ when a config is selected by path, but when they differ under DATASET=
 # it is almost always a copied template that was not finished renaming.
+# Only meaningful when DATASET= picked the folder. With DATASET_CONFIG= the
+# path was given explicitly and the folder name carries no intent -- a config
+# that lives beside its inputs is a legitimate layout, and warning about it
+# every run trains people to ignore the warning.
 _config_folder="$(basename "$(dirname "${dataset_config}")")"
-if [[ -n "${dataset_name}" && "${dataset_name}" != "${_config_folder}" ]]; then
+if [[ -z "${DATASET_CONFIG:-}" && -n "${dataset_name}" && "${dataset_name}" != "${_config_folder}" ]]; then
     echo "WARNING: dataset_name is '${dataset_name}' but the config folder is" >&2
     echo "  '${_config_folder}' (${dataset_config})." >&2
     echo "  Outputs will be named '${dataset_name}'. Rename one to match if that" >&2

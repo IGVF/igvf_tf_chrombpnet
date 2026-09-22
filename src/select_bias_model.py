@@ -184,6 +184,14 @@ def select_best(group: pd.DataFrame) -> str:
     return group["bias"].iloc[0]
 
 
+#: Label -> threshold factor, populated from --bias-factors when the caller
+#: knows them. Parsing a factor back out of a label is lossy: "13" is 1.3 in a
+#: sweep written by qc.bias_suffix() but 13 under the old heuristic, and
+#: nothing in the label says which. When 02.0's scan chose the sweep it already
+#: knows both, so it passes them and no guessing happens.
+BIAS_FACTORS: dict[str, float] = {}
+
+
 def bias_factor(label: str) -> float:
     """The numeric threshold factor a sweep label stands for.
 
@@ -198,8 +206,15 @@ def bias_factor(label: str) -> float:
     Rule: a label already containing "." is the factor written out. Otherwise a
     leading "0" means "0.xx" (drop it and scale by the remaining width), and a
     label with no leading zero is the factor itself.
+
+    That heuristic CANNOT resolve a label like "13", which is 1.3 in a sweep
+    written by qc.bias_suffix() and 13 under the old convention -- the label
+    simply does not carry the answer. Pass --bias-factors (02.0's scan knows
+    them) and BIAS_FACTORS is consulted first, making this a fallback.
     """
     label = str(label)
+    if label in BIAS_FACTORS:
+        return BIAS_FACTORS[label]
     if "." in label:
         return float(label)
     if label.startswith("0") and len(label) > 1:
@@ -1107,6 +1122,15 @@ def parse_args():
         "<core-path>/<dataset>/results/bias_models. Ignored if --bias-models-dir is set.",
     )
     p.add_argument("--biases", nargs="+", default=["05", "06", "07", "08"])
+    p.add_argument(
+        "--bias-factors",
+        nargs="+",
+        type=float,
+        default=None,
+        help="The threshold factor each --biases label stands for, in the same "
+        "order. Without it the factor is parsed out of the label, which cannot "
+        "tell 1.3 from 13. 02.0's scan knows both, so 03.1 passes them.",
+    )
     p.add_argument("--folds", nargs="+", default=["0", "1", "2", "3", "4"])
     p.add_argument(
         "--dataset",
@@ -1136,6 +1160,13 @@ def parse_args():
 
 def main():
     args = parse_args()
+    if args.bias_factors:
+        if len(args.bias_factors) != len(args.biases):
+            raise SystemExit(
+                f"--bias-factors has {len(args.bias_factors)} values but "
+                f"--biases has {len(args.biases)}; they are positional."
+            )
+        BIAS_FACTORS.update(dict(zip(args.biases, args.bias_factors)))
     log.setup_from_args(args)
 
     # Resolve the bias_models root: explicit --bias-models-dir preferred, else the

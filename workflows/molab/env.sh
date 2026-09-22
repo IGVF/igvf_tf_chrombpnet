@@ -50,6 +50,14 @@ fi
 # ── Which dataset ────────────────────────────────────────────────────────────
 export DATASET="${DATASET:-d0}"
 
+# The d0 config lives WITH its inputs, not in config/<dataset>/, so the test
+# dataset is self-contained: fragments, peaks and the parameters that describe
+# them in one directory. config/README.md supports this -- DATASET_CONFIG
+# points at a config anywhere. Note the trade-off: a config outside the
+# checkout is not version-controlled, which is fine for a local test dataset
+# and would NOT be for a real one (see config/HEP3B/config.yaml, tracked).
+export DATASET_CONFIG="${DATASET_CONFIG:-/marimo/data/test_data_d0/inputs/config.yaml}"
+
 # ── No conda anywhere ────────────────────────────────────────────────────────
 # molab uses pixi for everything reproducible and Apptainer for chrombpnet.
 # There is no conda on the box and none is installed. Empty CONDA_INIT is the

@@ -83,43 +83,8 @@ export REPO_ROOT
 # shellcheck source=lib/bash/config.sh
 source "${REPO_ROOT}/lib/bash/config.sh" || exit 1
 
-# ── which factors to sweep ───────────────────────────────────────────────────
-# 02.0 replays chrombpnet's own background-selection arithmetic over a fine
-# grid and writes ${bias_scan_file}. Two things it knows that the config
-# cannot: which factors produce ZERO non-peaks (those jobs cannot succeed --
-# they die with an IndexError inside the one-hot encoder, after preprocessing),
-# and which factors are DUPLICATES of each other, because counts are integers
-# and the training set only changes when the cutoff crosses one.
-#
-# So prefer the scan when it exists, and fall back to the config otherwise --
-# a cluster run that never executed 02.0 keeps working unchanged. Set
-# BIAS_FACTORS_FROM_SCAN=0 to force the config.
-if [[ "${BIAS_FACTORS_FROM_SCAN:-1}" == "1" && -s "${bias_scan_file}" ]]; then
-    _scan_factors=()
-    _scan_suffixes=()
-    while IFS=$'\t' read -r _f _sfx _thr _nafter _nnon _distinct _verdict; do
-        [[ "${_f}" == "factor" ]] && continue          # header
-        [[ "${_distinct}" == "True" ]] || continue     # one per DISTINCT set
-        _scan_factors+=( "${_f}" )
-        _scan_suffixes+=( "${_sfx}" )
-    done < "${bias_scan_file}"
-
-    if [[ ${#_scan_factors[@]} -gt 0 ]]; then
-        bias_factors=( "${_scan_factors[@]}" )
-        bias_suffixes_sweep=( "${_scan_suffixes[@]}" )
-        echo "[$(date)] bias factors from ${bias_scan_file}"
-        echo "           ${#bias_factors[@]} distinct: ${bias_factors[*]}"
-        echo "           --array=0-$(( ${#bias_sweep_folds[@]} * ${#bias_factors[@]} - 1 ))"
-    else
-        echo "[$(date)] WARNING: ${bias_scan_file} lists no viable bias factor." >&2
-        echo "           Every candidate leaves zero non-peaks after chrombpnet's" >&2
-        echo "           outlier filter. Widen the grid or raise the outlier" >&2
-        echo "           threshold; training cannot succeed as configured." >&2
-        exit 1
-    fi
-else
-    echo "[$(date)] bias factors from dataset config (no scan at ${bias_scan_file})"
-fi
+# Which factors to sweep: 02.0's scan when it exists, else the config.
+load_bias_sweep
 
 n_factors=${#bias_factors[@]}
 fold_idx=$(( SLURM_ARRAY_TASK_ID / n_factors ))

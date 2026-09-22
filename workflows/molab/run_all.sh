@@ -44,14 +44,23 @@ for a in "$@"; do
     esac
 done
 
-# The 03.0 array is (folds x bias factors) - 1. Both come from the config, so
-# derive it rather than hardcoding sbatch's 0-19 default, which assumes 5x4.
+# The 03.0 array is (folds x bias factors) - 1. The factors come from 02.0's
+# scan, not the config -- that is what 03.0 and 03.1 will use, so counting the
+# config here would give a range that does not match the jobs.
 n_folds=$(python3 "${REPO_ROOT}/lib/python/utils/config.py" export \
-    "${REPO_ROOT}/config/${DATASET}/config.yaml" \
+    "${DATASET_CONFIG:-${REPO_ROOT}/config/${DATASET}/config.yaml}" \
     | sed -n 's/^bias_sweep_folds=( \(.*\) )$/\1/p' | wc -w)
-n_factors=$(python3 "${REPO_ROOT}/lib/python/utils/config.py" export \
-    "${REPO_ROOT}/config/${DATASET}/config.yaml" \
-    | sed -n 's/^bias_factors=( \(.*\) )$/\1/p' | wc -w)
+_scan=$(python3 "${REPO_ROOT}/lib/python/utils/config.py" export \
+    "${DATASET_CONFIG:-${REPO_ROOT}/config/${DATASET}/config.yaml}" \
+    | sed -n 's/^output_dir=//p' | tr -d '"')/plots/signal_qc/${DATASET}_bias_threshold_scan.tsv
+if [[ -s "${_scan}" ]]; then
+    n_factors=$(awk -F'\t' 'NR>1 && $6=="True"' "${_scan}" | wc -l)
+else
+    echo "NOTE: no bias scan at ${_scan}; run 02.0 first, or 03.0 falls back to the config."
+    n_factors=$(python3 "${REPO_ROOT}/lib/python/utils/config.py" export \
+        "${DATASET_CONFIG:-${REPO_ROOT}/config/${DATASET}/config.yaml}" \
+        | sed -n 's/^bias_factors=( \(.*\) )$/\1/p' | wc -w)
+fi
 sweep_max=$(( n_folds * n_factors - 1 ))
 fold_max=$(( n_folds - 1 ))
 

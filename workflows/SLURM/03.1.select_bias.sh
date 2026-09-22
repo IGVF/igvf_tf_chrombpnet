@@ -50,8 +50,13 @@ metadata_outputs+=( "metrics=${results_path}/plots/bias_model_selection/${bias_d
 
 set -euo pipefail
 
-# Bias labels to evaluate, derived from the sweep in dataset_config
-# (bias_suffixes_sweep entries like "_05" -> "05").
+# Which sweep to evaluate. MUST be the same list 03.0 trained, which is why
+# both steps call load_bias_sweep rather than each deriving its own: when only
+# 03.0 read 02.0's scan, 03.1 kept reading the config, and it "selected" a
+# winner from whichever single model happened to overlap the two lists.
+load_bias_sweep
+
+# Bias labels, from the suffixes ("_05" -> "05").
 biases=()
 for s in "${bias_suffixes_sweep[@]}"; do
     biases+=( "${s#_}" )
@@ -61,6 +66,7 @@ done
 # this line in its old position the step aborted here every time, before it ran
 # anything. It also recorded an empty value for a param it is meant to capture.
 metadata_params+=( "biases=${biases[*]}" )
+metadata_params+=( "bias_factors=${bias_factors[*]}" )
 
 out_dir="${results_path}/plots/bias_model_selection/${bias_dataset}"
 
@@ -95,6 +101,7 @@ python "${src_dir}/select_bias_model.py" \
     --dataset "${bias_dataset}" \
     --peak-type "${peak_type}" \
     --biases "${biases[@]}" \
+    --bias-factors "${bias_factors[@]}" \
     --folds "${folds[@]}" \
     --out-dir "${out_dir}" \
     ${extra_args[@]+"${extra_args[@]}"}
