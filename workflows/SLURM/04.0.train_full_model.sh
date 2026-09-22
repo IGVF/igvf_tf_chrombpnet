@@ -8,9 +8,14 @@
 #          (9.0, H100/H200), so those are excluded for correctness. Lifting
 #          that needs the env off tensorflow==2.8/CUDA 11, not a flag.
 #   lower: 7.0/7.5 (V100, TITAN_V, RTX_2080Ti) are ELIGIBLE for cuda 11.5 but
-#          are excluded on purpose. Identical bias_sweep jobs ran 4:37 on the
-#          fast silicon and 22:24 on the slow -- a 4.8x spread -- so waiting
-#          for an A100/A40/3090 beats landing on a V100 immediately.
+#          are excluded on purpose, to avoid the slowest silicon. The July 2026
+#          bias_sweep runs, by node: TITAN_V (7.0) 20:51 and 22:24; RTX_2080Ti
+#          (7.5) 12:09 and 05:45; A100_SXM4 (8.0) 08:31. So CC 7.0 is clearly
+#          the slow tier and worth excluding. Note the evidence does NOT show
+#          8.0 beating 7.5 -- the single fastest run was a 2080Ti -- and the
+#          runs differ by fold and bias factor, so this is a coarse signal, not
+#          a benchmark. If the 8.0|8.6 queue is deep, adding GPU_CC:7.5 back at
+#          submit time is defensible.
 # Leaves GPU_CC 8.0 (A100_SXM4/A100_PCIE) and 8.6 (A40, RTX_3090).
 #SBATCH --constraint="GPU_CC:8.0|GPU_CC:8.6"
 #SBATCH --time=2-0
