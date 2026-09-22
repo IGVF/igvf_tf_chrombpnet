@@ -68,7 +68,7 @@ out_dir="${core_path}/results/plots/full_model_qc_combined"
 
 metadata_start "04.2.qc_combined_boxplot"
 metadata_params+=( "datasets=${combined_datasets[*]}" )
-metadata_outputs+=( "metrics_plot=${out_dir}/cross_dataset_boxplot.pdf" )
+metadata_outputs+=( "metrics=${out_dir}/cross_dataset_boxplot.pdf" )
 
 activate_env "${CONDA_ENV}"
 

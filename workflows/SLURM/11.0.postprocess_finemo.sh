@@ -80,7 +80,7 @@ ml biology samtools
 
 
 metadata_start "11.0.postprocess_finemo"
-metadata_inputs+=( "hits_tsv=${hits_tsv}" "npz=${finemo_npz}" )
+metadata_inputs+=( "hits=${hits_tsv}" "npz=${finemo_npz}" )
 require_input "${hits_tsv}" 10.0.run_finemo_unified.sh
 require_input "${finemo_npz}" 10.0.run_finemo_unified.sh
 preflight_check

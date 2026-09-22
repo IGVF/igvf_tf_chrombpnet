@@ -99,8 +99,8 @@ require_input "${chrom_sizes}" "cli.py download-references"
 require_input "${blacklist}"   "cli.py download-references"
 for fold in "${folds[@]}"; do
     require_input "${folds_dir}/fold_${fold}.json" ""
-    metadata_inputs+=( "fold_${fold}_json=${folds_dir}/fold_${fold}.json" )
-    metadata_outputs+=( "negatives_fold_${fold}=${out_dir}/output_${peak_type}_fold_${fold}_negatives.bed" )
+    metadata_inputs+=( "fold=${folds_dir}/fold_${fold}.json" )
+    metadata_outputs+=( "negatives=${out_dir}/output_${peak_type}_fold_${fold}_negatives.bed" )
 done
 preflight_check
 

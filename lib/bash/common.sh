@@ -62,7 +62,11 @@ data_root="${DATASET_ROOT:-${REPO_ROOT}}"
 #
 # Defined here, above the references.sh source, because that file needs it too.
 bootstrap_python() {
-    if [[ -n "${BOOTSTRAP_PYTHON}" ]]; then
+    # `:-` matters: steps that use `set -u` (00.1, 01.0, 03.1) abort here on an
+    # unset BOOTSTRAP_PYTHON, and because this runs from the metadata EXIT trap
+    # the only symptom was "no python >= 3.9 found; run metadata not written" --
+    # a silently missing provenance record on an otherwise successful step.
+    if [[ -n "${BOOTSTRAP_PYTHON:-}" ]]; then
         echo "${BOOTSTRAP_PYTHON}"
         return 0
     fi

@@ -51,13 +51,12 @@ mkdir -p "${data_path}"
 peak_chrom_sizes="${chrom_sizes_main:-${chrom_sizes}}"
 
 metadata_start "00.1.preprocess_peaks"
-metadata_inputs+=( "regions=${regions}" )
+metadata_inputs+=( "peaks=${regions}" )
 metadata_inputs+=( "blacklist=${blacklist}" )
 metadata_inputs+=( "chrom_sizes=${peak_chrom_sizes}" )
 metadata_params+=( "peak_type=${peak_type}" "input_window=${chrombpnet_input_window}" )
 for dataset in "${datasets[@]}"; do
-    metadata_outputs+=( "narrowpeak_${dataset}=${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak" )
-    metadata_outputs+=( "bed_${dataset}=${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.bed" )
+    metadata_outputs+=( "peaks=${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak" )
 done
 
 require_input "${regions}" ""

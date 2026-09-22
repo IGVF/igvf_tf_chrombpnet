@@ -43,7 +43,7 @@ source "${REPO_ROOT}/lib/bash/config.sh" || exit 1
 activate_env "${CONDA_ENV}"
 
 metadata_start "03.1.select_bias"
-metadata_inputs+=( "bias_models=${results_path}/bias_models" )
+metadata_inputs+=( "bias_model=${results_path}/bias_models" )
 metadata_outputs+=( "selection=${results_path}/plots/bias_model_selection/${bias_dataset}/selected_bias_per_fold.tsv" )
 metadata_outputs+=( "metrics=${results_path}/plots/bias_model_selection/${bias_dataset}/all_bias_metrics.tsv" )
 

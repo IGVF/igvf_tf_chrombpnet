@@ -206,14 +206,15 @@ def preprocess_peaks(
                 "blacklist use the same chromosome naming (chr1 vs 1)."
             )
 
-        bed_out = out_dir / f"{prefix}_peaks_no_blacklist.bed"
-        kept[["Chromosome", "Start", "End"]].to_csv(bed_out, sep="\t", header=False, index=False)
+        # Only the narrowPeak is written. A plain 3-column BED used to be
+        # written beside it, but nothing ever read it -- every downstream step
+        # takes the narrowPeak -- and narrowPeak IS a BED6+4, so `cut -f1-3`
+        # reproduces the BED exactly. On d0 that was 3.7 MB duplicated per
+        # dataset, and one more artifact to explain.
         np_out = out_dir / f"{prefix}_peaks_no_blacklist.narrowPeak"
         intervals.to_narrowpeak(kept).to_csv(np_out, sep="\t", header=False, index=False)
 
-        md.add_output("bed", bed_out)
-        md.add_output("narrowpeak", np_out)
-        logger.info(f"-> {bed_out}")
+        md.add_output("peaks", np_out)
         logger.info(f"-> {np_out}")
 
 
@@ -287,7 +288,7 @@ def filter_fragments(input_path, output_path, chroms, index, metadata_dir, verbo
 
         if index:
             tbi = compression.tabix_index(output_path, preset="bed")
-            md.add_output("tabix_index", tbi)
+            md.add_output("fragments", tbi)
             logger.info(f"-> {tbi}")
 
 
@@ -379,7 +380,7 @@ def prepare_bigwig(
     meta_dir = metadata_dir or (out / "metadata")
 
     with metadata.record("prepare_bigwig", out_dir=meta_dir) as md:
-        md.add_input("signal", signal_path)
+        md.add_input("reads", signal_path)
         if genome:
             md.add_input("genome", genome)
         md.add_param("signal_type", signal_type)
@@ -430,7 +431,7 @@ def prepare_bigwig(
             )
         md.add_metric("reads_kept", kept)
         if write_filtered:
-            md.add_output("filtered_reads", write_filtered)
+            md.add_output("reads", write_filtered)
             logger.info("filtered reads -> %s", write_filtered)
         if skipped:
             logger.warning(
@@ -461,8 +462,8 @@ def prepare_bigwig(
             "minus_shift": int(minus_shift),
         }
         (out / "prepared_bigwig.json").write_text(_json.dumps(sidecar, indent=2) + "\n")
-        md.add_output("bigwig", bw)
-        md.add_output("sidecar", out / "prepared_bigwig.json")
+        md.add_output("signal", bw)
+        md.add_output("signal", out / "prepared_bigwig.json")
         logger.info("-> %s  (pass --prepared-bigwig %s to the training steps)", bw, out)
 
 
@@ -515,7 +516,7 @@ def download_references(dataset, reference_root, metadata_dir, verbose, quiet):
             "ref_db_meme",
         ):
             md.add_output(role, ref[role])
-        md.add_output("chrom_sizes_main_sidecar", ref["chrom_sizes_main"] + ".json")
+        md.add_output("chrom_sizes", ref["chrom_sizes_main"] + ".json")
         md.add_param("main_chromosomes", ",".join(references.main_chromosomes()))
 
 
@@ -614,7 +615,7 @@ def qc_signal(
     meta_dir = metadata_dir or (out.parent / "metadata")
 
     with metadata.record("qc_signal", dataset=prefix, out_dir=meta_dir) as md:
-        md.add_input("bigwig", bigwig)
+        md.add_input("signal", bigwig)
         md.add_input("peaks", peaks)
         if negatives:
             md.add_input("negatives", negatives)
@@ -716,8 +717,8 @@ def qc_signal(
         tsv_out = out / f"{prefix}_signal_qc.tsv"
         flat = {k: v for k, v in metrics.items() if not isinstance(v, list | dict)}
         pd.DataFrame([flat]).to_csv(tsv_out, sep="\t", index=False)
-        md.add_output("qc_json", json_out)
-        md.add_output("qc_tsv", tsv_out)
+        md.add_output("qc", json_out)
+        md.add_output("qc", tsv_out)
         for k, v in flat.items():
             # Everything qc-signal writes is MEASURED, not configured.
             md.add_metric(k, v)

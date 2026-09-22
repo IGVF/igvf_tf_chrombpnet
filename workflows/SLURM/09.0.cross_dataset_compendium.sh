@@ -100,8 +100,8 @@ fi
 activate_env "${motif_compendium_conda}"
 
 metadata_start "09.0.cross_dataset_compendium"
-metadata_inputs+=( "config_tsv=${config_tsv}" "ref_db=${ref_db_meme}" )
-metadata_outputs+=( "compiled_h5=${out_dir}/modisco_compiled.h5" "meme=${out_dir}/modisco_compendium.meme" "meta_tsv=${out_dir}/modisco_compendium_meta.tsv" )
+metadata_inputs+=( "config=${config_tsv}" "ref_db=${ref_db_meme}" )
+metadata_outputs+=( "motifs=${out_dir}/modisco_compiled.h5" "meme=${out_dir}/modisco_compendium.meme" "meta_tsv=${out_dir}/modisco_compendium_meta.tsv" )
 metadata_params+=( "threshold=${motif_compendium_threshold}" )
 
 

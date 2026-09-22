@@ -87,9 +87,9 @@ qc_fold="${folds[0]}"
 negatives_bed="${data_path}/${dataset}/output_${peak_type}_fold_${qc_fold}_negatives.bed"
 
 metadata_start "02.0.qc_signal_peaks"
-metadata_inputs+=( "bigwig=${signal_bw}" "peaks=${peaks_np}" "negatives=${negatives_bed}" )
-metadata_outputs+=( "qc_json=${qc_dir}/${dataset}_signal_qc.json" )
-metadata_outputs+=( "qc_tsv=${qc_dir}/${dataset}_signal_qc.tsv" )
+metadata_inputs+=( "signal=${signal_bw}" "peaks=${peaks_np}" "negatives=${negatives_bed}" )
+metadata_outputs+=( "qc=${qc_dir}/${dataset}_signal_qc.json" )
+metadata_outputs+=( "qc=${qc_dir}/${dataset}_signal_qc.tsv" )
 metadata_outputs+=( "profile_peaks=${qc_dir}/${dataset}_profile_peaks.pdf" )
 metadata_outputs+=( "profile_tss=${qc_dir}/${dataset}_profile_tss.pdf" )
 metadata_outputs+=( "peaks_vs_background=${qc_dir}/${dataset}_peaks_vs_background.pdf" )
