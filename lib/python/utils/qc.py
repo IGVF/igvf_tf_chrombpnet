@@ -28,6 +28,7 @@ that was supplied as a bigwig in the first place.
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 
 import numpy as np
@@ -415,9 +416,42 @@ def bias_threshold_viability(
         "n_bias_factors_viable": len(viable),
         "n_bias_factors_distinct": len(distinct),
     }
+    # ── the recommended factor ───────────────────────────────────────────
+    # The background should not contain regions STRONGER than the weakest
+    # peaks. chrombpnet admits non-peaks with count < q01*factor, so the
+    # largest count it lets in is ceil(q01*factor)-1; once that exceeds q01 the
+    # background holds regions above the weakest 1% of peaks, and the bias
+    # model starts learning accessibility instead of Tn5 preference.
+    #
+    # On d0 that boundary is exactly where the trained models break: peaks
+    # pearson r is -0.004, +0.003 while max_admitted <= q01, then jumps to
+    # +0.251, +0.369 the moment it exceeds it. A step, not a curve -- so the
+    # recommendation is the last factor before the step, not an optimum found
+    # by search.
+    #
+    # Among the factors sharing that training set, take the SMALLEST: they are
+    # identical, so parsimony costs nothing and keeps the cutoff furthest from
+    # the boundary.
+    recommended = None
+    best_admitted = -1
+    for r in rows:
+        if r["verdict"] != "ok":
+            continue
+        admitted = math.ceil(r["counts_threshold"]) - 1
+        if admitted <= q01 and admitted > best_admitted:
+            best_admitted, recommended = admitted, r["factor"]
+        elif admitted == best_admitted and r["factor"] < recommended:
+            recommended = r["factor"]
+    for r in rows:
+        r["recommended"] = r["factor"] == recommended
+    if recommended is not None:
+        summary["bias_factor_recommended"] = recommended
+        summary["bias_factor_recommended_suffix"] = bias_suffix(recommended)
+        summary["bias_max_admitted_count"] = int(best_admitted)
+
     return summary, rows, pk, ng
 
-def peak_width_summary(peaks, input_window: int = 2114):
+def peak_width_summary(peaks, input_window: int = 2114, genome_bases: int | None = None):
     """Peak widths, disjointness, and how much sequence the model sees twice.
 
     Peak WIDTH does not reach the model: ChromBPNet extracts a fixed
@@ -456,10 +490,27 @@ def peak_width_summary(peaks, input_window: int = 2114):
                 prev_end = b if prev_end is None else max(prev_end, b)
         return n
 
+    def _merged_bp(by_chrom):
+        total = 0
+        for spans in by_chrom.values():
+            spans = sorted(spans)
+            cs, ce = spans[0]
+            for a, b in spans[1:]:
+                if a <= ce:
+                    ce = max(ce, b)
+                else:
+                    total += ce - cs
+                    cs, ce = a, b
+            total += ce - cs
+        return total
+
     peaks_by = defaultdict(list)
     for c, s, e, _ in rows:
         peaks_by[c].append((s, e))
     out["n_peaks_overlapping"] = _n_overlapping(peaks_by)
+    # Merged, so this stays correct if the peaks ever DO overlap --
+    # peak_bases_total is a sum of widths and would double-count.
+    out["peak_bases_merged"] = _merged_bp(peaks_by)
 
     if all(su is not None for _, _, _, su in rows):
         half = input_window // 2
@@ -481,7 +532,28 @@ def peak_width_summary(peaks, input_window: int = 2114):
                     cs, ce = a, b
             covered += ce - cs
         out["input_window"] = int(input_window)
+        out["window_bases_merged"] = int(covered)
         out["n_windows_overlapping"] = int(n_ov)
         out["frac_windows_overlapping"] = round(n_ov / len(rows), 6)
         out["window_redundancy"] = round(summed / covered, 4) if covered else None
+
+    # How much of the genome the peak set claims. Two numbers, because they
+    # answer different questions:
+    #   frac_genome_in_peaks    the called peaks themselves. Comparable to what
+    #                           a peak caller reports; ~1-3% is typical for
+    #                           ATAC, and a permissive candidate-region set
+    #                           runs higher.
+    #   frac_genome_in_windows  the ${input_window}bp windows the model
+    #                           actually reads, merged. This is the number that
+    #                           bounds the background: GC-matched negatives are
+    #                           drawn from what is left, so as it grows the
+    #                           background is sampled from an ever smaller and
+    #                           less peak-like remainder.
+    if genome_bases:
+        out["genome_bases"] = int(genome_bases)
+        out["frac_genome_in_peaks"] = round(out["peak_bases_merged"] / genome_bases, 6)
+        if "window_bases_merged" in out:
+            out["frac_genome_in_windows"] = round(
+                out["window_bases_merged"] / genome_bases, 6
+            )
     return out

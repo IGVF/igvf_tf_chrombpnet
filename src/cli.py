@@ -633,7 +633,11 @@ def qc_signal(
 
         metrics = {"dataset": prefix}
         metrics |= qc.signal_summary(bigwig)
-        metrics |= qc.peak_width_summary(peak_rows)
+        # signal_summary first: it supplies genome_bases, which turns the peak
+        # coverage into a fraction.
+        metrics |= qc.peak_width_summary(
+            peak_rows, input_window=input_window, genome_bases=metrics.get("genome_bases")
+        )
         metrics |= qc.peak_signal_distribution(bigwig, peak_rows)
 
         # Fraction of all insertions that land in peaks -- the FRiP of the
@@ -688,6 +692,14 @@ def qc_signal(
                     "  distinct factors worth sweeping: %s",
                     bias_metrics.get("bias_factors_distinct"),
                 )
+                if bias_metrics.get("bias_factor_recommended") is not None:
+                    logger.info(
+                        "  RECOMMENDED: %s (%s) -- the largest factor whose background "
+                        "stays at or below q01=%g, the weakest 1%% of peaks",
+                        bias_metrics["bias_factor_recommended"],
+                        bias_metrics["bias_factor_recommended_suffix"],
+                        bias_metrics["peak_signal_q01"],
+                    )
         else:
             logger.warning("no --negatives given; skipping the peak vs background QC")
 
