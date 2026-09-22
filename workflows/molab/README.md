@@ -94,6 +94,11 @@ in sequence rather than in parallel.
   directory, installs the pixi `preprocess` environment, and fetches the shared
   references. `--skip-references` if you already have them.
 - **`env.sh`** — every variable in one place. Source it per shell.
+  **`git push` needs it too.** The credential helper it installs expands
+  `${GITHUB_TOKEN}` at push time rather than storing it, so a shell that has
+  not sourced `env.sh` (or `.env`) pushes an empty password and GitHub replies
+  `Invalid username or token` — which reads exactly like a bad token and is
+  not one. `set -a; source workflows/molab/.env; set +a` is enough.
 - **`run_step.sh`** — runs ONE step in the right environment. Knows which steps
   need which, emulates `--array`, writes a log per index to `$MOLAB_LOG_DIR`.
   `--list` prints every step with its environment, `--dry-run` shows what would
