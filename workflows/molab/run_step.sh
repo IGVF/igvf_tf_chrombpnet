@@ -35,7 +35,7 @@ STEPS_DIR="${REPO_ROOT}/workflows/SLURM"
 # which is the larger of the two and has chrombpnet in it.
 step_env() {
     case "$1" in
-        00.0.prepare_signal.sh|00.1.preprocess_peaks.sh|02.0.qc_signal_peaks.sh) echo pixi ;;
+        00.0.prepare_signal.sh|00.1.preprocess_peaks.sh|02.0.qc_training_data.sh) echo pixi ;;
         *) echo container ;;
     esac
 }

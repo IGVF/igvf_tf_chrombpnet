@@ -157,6 +157,8 @@ compendium_dir="${results_path}/compendium"
 log_dir="${results_path}/logs"
 # 02.0 writes this; 03.0 reads it to decide which bias factors are worth a GPU
 # job at all. See qc.bias_threshold_viability().
+# 00.1 writes the filtered narrowPeak and its sidecar here, beside signal/.
+peaks_dir="${data_path}/peaks"
 signal_qc_dir="${results_path}/plots/signal_qc"
 bias_scan_file="${signal_qc_dir}/${bias_dataset}_bias_threshold_scan.tsv"
 # Per-dataset run metadata lives with that dataset's results; common.sh

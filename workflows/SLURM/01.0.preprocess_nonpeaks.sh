@@ -77,7 +77,7 @@ source "${REPO_ROOT}/lib/bash/config.sh" || exit 1
 set -euo pipefail
 
 dataset="${datasets[0]}"
-peaks_np="${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
+peaks_np="${peaks_dir}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
 out_dir="${data_path}/${dataset}"
 
 metadata_start "01.0.preprocess_nonpeaks"
@@ -153,5 +153,5 @@ for fold in "${folds[@]}"; do
     echo "[$(date)] fold_${fold}: $(wc -l < "${negatives_file}") negatives -> ${negatives_file}"
 done
 
-echo "[$(date)] Done. Next: 02.0.qc_signal_peaks.sh compares the signal at these"
+echo "[$(date)] Done. Next: 02.0.qc_training_data.sh compares the signal at these"
 echo "           background regions against the signal at the peaks."

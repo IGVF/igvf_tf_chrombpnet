@@ -324,6 +324,89 @@ def peak_vs_nonpeak_signal(bigwig, peaks, nonpeaks, window: int = 1000, **kw):
     return metrics, pos, neg
 
 
+def background_signal_quantile(
+    bigwig, quantile: float, window: int, blacklist_intervals=None,
+    n_sample: int = 50_000, seed: int = 0,
+):
+    """Signal level at `quantile` of this experiment's genome-wide windows.
+
+    A floor for peak calling that is derived from the experiment itself rather
+    than assumed. Because it is a QUANTILE of the same signal the peaks are
+    measured in, it is depth-independent: a deeper library lifts the peaks and
+    the background together.
+
+    This is the experiment's distribution, not a background model -- peaks are
+    NOT excluded, because the question is "what signal level does this
+    experiment reach across the genome", and the peaks are part of it.
+    Blacklist regions ARE excluded: artifact pileups are not experimental
+    signal and they sit in the upper tail, exactly where a high quantile reads.
+
+    Sampled, not exhaustive. Quantiles do not need every bin, and an
+    exhaustive pass is ~200s per window size against ~2s here; 50k windows
+    pins q01..q99 far tighter than a filtering decision needs. `seed` makes it
+    reproducible, and the sample size is recorded so a run can be audited.
+
+    Returns (threshold, diagnostics).
+    """
+    bw = _open(bigwig)
+    try:
+        chroms = bw.chroms()
+        names = list(chroms)
+        sizes = np.array([chroms[c] for c in names], dtype=np.int64)
+        cum = np.cumsum(sizes)
+
+        bl = {}
+        for c, st, en in blacklist_intervals or []:
+            if c in chroms:
+                bl.setdefault(c, []).append((int(st), int(en)))
+        for c in bl:
+            a = np.array(sorted(bl[c]))
+            bl[c] = (a[:, 0], a[:, 1])
+
+        def hits_blacklist(c, s, e):
+            if c not in bl:
+                return False
+            starts, ends = bl[c]
+            i = int(np.searchsorted(starts, e))
+            return i > 0 and ends[i - 1] > s
+
+        rng = np.random.default_rng(seed)
+        half = window // 2
+        vals, tries, skipped_bl = [], 0, 0
+        while len(vals) < n_sample and tries < n_sample * 6:
+            tries += 1
+            pos = int(rng.integers(0, cum[-1]))
+            ci = int(np.searchsorted(cum, pos, side="right"))
+            c = names[ci]
+            off = pos - (cum[ci - 1] if ci else 0)
+            s, e = off - half, off + half
+            if s < 0 or e > chroms[c]:
+                continue
+            if hits_blacklist(c, s, e):
+                skipped_bl += 1
+                continue
+            v = bw.stats(c, s, e, type="sum", exact=True)[0]
+            vals.append(0.0 if v is None else float(v))
+    finally:
+        bw.close()
+
+    g = np.asarray(vals, dtype=np.float64)
+    if g.size == 0:
+        return None, {}
+    thr = float(np.quantile(g, quantile))
+    diag = {
+        "background_window": int(window),
+        "background_quantile": float(quantile),
+        "background_threshold": thr,
+        "background_n_sampled": int(g.size),
+        "background_n_blacklist_skipped": int(skipped_bl),
+        "background_seed": int(seed),
+        "background_frac_zero": round(float((g == 0).mean()), 6),
+    }
+    for q in (0.25, 0.50, 0.75, 0.90, 0.99):
+        diag[f"background_q{int(q * 100):02d}"] = float(np.quantile(g, q))
+    return thr, diag, g
+
 def bias_suffix(factor: float) -> str:
     """The `_05` / `_08` suffix convention, extended past one decimal.
 

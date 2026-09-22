@@ -117,7 +117,7 @@ metadata_start "03.0.train_bias_model"
 
 set_signal_args
 signal_file="${signal_path}"
-peaks_file="${data_path}/${bias_dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
+peaks_file="${peaks_dir}/${bias_dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
 negatives_file="${data_path}/${bias_dataset}/output_${peak_type}_fold_${fold}_negatives.bed"
 fold_json="${folds_dir}/fold_${fold}.json"
 file_prefix="${bias_dataset}_${peak_type}_fold_${fold}"

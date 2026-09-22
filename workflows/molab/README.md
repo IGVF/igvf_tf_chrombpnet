@@ -118,7 +118,7 @@ STEP                               ENV        ARRAY
 00.0.prepare_signal.sh             pixi       —
 00.1.preprocess_peaks.sh           pixi       —
 01.0.preprocess_nonpeaks.sh        container  —
-02.0.qc_signal_peaks.sh            pixi       —
+02.0.qc_training_data.sh            pixi       —
 03.0.train_bias_model.sh           container  0-19
 ...
 ```
@@ -179,7 +179,7 @@ source workflows/molab/env.sh
 bash workflows/molab/run_step.sh 00.0.prepare_signal.sh
 bash workflows/molab/run_step.sh 00.1.preprocess_peaks.sh
 bash workflows/molab/run_step.sh 01.0.preprocess_nonpeaks.sh
-bash workflows/molab/run_step.sh 02.0.qc_signal_peaks.sh      # advisory, never fails the run
+bash workflows/molab/run_step.sh 02.0.qc_training_data.sh      # advisory, never fails the run
 
 # 1 fold x 4 bias factors -> indices 0-3. See `cli.py config validate` for the range.
 bash workflows/molab/run_step.sh --array 0-3 03.0.train_bias_model.sh

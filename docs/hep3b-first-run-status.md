@@ -14,7 +14,7 @@ queued, and the order to pick things up in.
 | `00.0.prepare_signal` | **done** — bigwig + sidecar written |
 | `00.1.preprocess_peaks` | **done** — 155,207 of 155,267 peaks kept |
 | `01.0.preprocess_nonpeaks` | **done** — all 5 folds of GC-matched negatives |
-| `02.0.qc_signal_peaks` | **done** — QC written, and it passes |
+| `02.0.qc_training_data` | **done** — QC written, and it passes |
 | `03.0.train_bias_model` | **queued, never yet executed** |
 | `03.1` – `04.3` | not run; changed but only `bash -n` + source review |
 

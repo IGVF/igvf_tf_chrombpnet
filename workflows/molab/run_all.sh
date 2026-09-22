@@ -75,7 +75,7 @@ if [[ "${PHASE}" == "pre-bias" ]]; then
 
     # QC comes AFTER the negatives: the comparative half scores peaks against
     # them. Advisory, never fails the pipeline.
-    ${RUN} ${DRY} 02.0.qc_signal_peaks.sh       || exit 1   # pixi: TSS enrichment, AUROC
+    ${RUN} ${DRY} 02.0.qc_training_data.sh       || exit 1   # pixi: TSS enrichment, AUROC
 
     # --- bias sweep ---------------------------------------------------------
     ${RUN} ${DRY} --array "0-${sweep_max}" 03.0.train_bias_model.sh || exit 1   # GPU

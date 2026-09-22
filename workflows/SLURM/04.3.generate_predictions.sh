@@ -73,7 +73,7 @@ metadata_start "04.3.generate_predictions"
 
 gpu_env
 
-peaks_file="${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
+peaks_file="${peaks_dir}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
 
 metadata_inputs+=( "peaks=${peaks_file}" "genome=${genome_fa}" )
 require_input "${peaks_file}"  00.1.preprocess_peaks.sh

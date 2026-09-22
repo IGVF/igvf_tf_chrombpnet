@@ -25,6 +25,8 @@ from pathlib import Path
 # conda envs, under pixi, and under a bare python).
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib" / "python"))
 
+import json as _json  # noqa: E402
+
 import click  # noqa: E402
 import numpy as np  # noqa: E402
 
@@ -35,6 +37,8 @@ from utils import (  # noqa: E402
     metadata,
     palettes,
     pileup,
+    plotting,
+    qc,
     references,
     shift,
 )
@@ -112,6 +116,38 @@ def cli():
     "overlaps a blacklist region.",
 )
 @click.option(
+    "--signal",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Prepared bigwig from 00.0. Required for --min-signal-quantile.",
+)
+@click.option(
+    "--min-signal-quantile",
+    type=float,
+    default=None,
+    help="Drop peaks whose signal falls below this quantile of the experiment's "
+    "own genome-wide windows. Depth-independent, because both sides are the "
+    "same signal. Off by default.",
+)
+@click.option(
+    "--compare-window",
+    type=int,
+    default=1000,
+    show_default=True,
+    help="Window for the background quantile and the peak signal compared "
+    "against it. SAME NAME AND SAME CONFIG VALUE (qc_compare_window) as 02.0's, "
+    "on purpose: both measure 'peak signal', and two independently settable "
+    "knobs would let them disagree. Defaults to chrombpnet's outputlen, which "
+    "is the window the bias threshold is computed over.",
+)
+@click.option(
+    "--background-sample",
+    type=int,
+    default=50_000,
+    show_default=True,
+    help="Genome windows sampled to estimate the background quantile.",
+)
+@click.option(
     "--out-dir", required=True, type=click.Path(file_okay=False), help="Directory for both outputs."
 )
 @click.option("--prefix", required=True, help="Output basename stem, e.g. igvf3_cardiomyocyte_all.")
@@ -124,7 +160,8 @@ def cli():
 @verbose_opt
 @quiet_opt
 def preprocess_peaks(
-    peaks, blacklist, chrom_sizes, input_window, out_dir, prefix, metadata_dir, verbose, quiet
+    peaks, blacklist, chrom_sizes, input_window, signal, min_signal_quantile,
+    compare_window, background_sample, out_dir, prefix, metadata_dir, verbose, quiet
 ):
     """Blacklist-filter peaks and write chrombpnet's narrowPeak.
 
@@ -149,7 +186,8 @@ def preprocess_peaks(
             md.add_input("blacklist", blacklist)
 
         peaks_pr = intervals.read_bed(peaks)
-        logger.info(f"{len(peaks_pr)} peaks in from {peaks}")
+        n_in = len(peaks_pr)
+        logger.info(f"{n_in} peaks in from {peaks}")
         logger.info(f"blacklist: {references.describe_source(blacklist)}")
         try:
             bl = intervals.read_bed3(blacklist)
@@ -172,6 +210,9 @@ def preprocess_peaks(
             )
             bl = bl[known]
 
+        bl_raw_intervals = list(
+            zip(bl["Chromosome"], bl["Start"], bl["End"])
+        )  # un-slopped, for the background sampler
         bl = intervals.slop(bl, slop_bp, chromsizes)
         logger.info(f"blacklist extended +/-{slop_bp}bp (half the {input_window}bp window)")
 
@@ -183,7 +224,9 @@ def preprocess_peaks(
             logger.warning("%d peak(s) dropped: on contigs absent from %s", off_contig, chrom_sizes)
         md.add_metric("peaks_off_contig", off_contig)
 
+        n_after_contig = len(peaks_pr)
         kept = intervals.remove_blacklisted(peaks_pr, bl)
+        n_after_blacklist = len(kept)
         md.add_metric("peaks_in", len(peaks_pr))
         md.add_metric("peaks_kept", len(kept))
         md.add_metric("peaks_dropped", len(peaks_pr) - len(kept))
@@ -208,16 +251,138 @@ def preprocess_peaks(
                 "blacklist use the same chromosome naming (chr1 vs 1)."
             )
 
+        # ── signal floor ─────────────────────────────────────────────────
+        # A "peak" whose signal is below the level ordinary genome windows
+        # reach is not a peak. It matters far beyond its own row: chrombpnet
+        # anchors EVERY bias threshold to quantile(peak_counts, 0.01), so a
+        # handful of background-level peaks drag the whole sweep down. On d0
+        # the weakest 1% of peaks sat at the 40.6th percentile of genome
+        # windows -- weaker than most of the genome -- and dropping 1.8% of
+        # peaks moved q01 from 4 to 17.
+        n_before_floor = len(kept)
+        floor_diag = {}
+        signal_floor = None
+        peak_signal = None
+        if min_signal_quantile is not None:
+            if not signal:
+                raise click.ClickException("--min-signal-quantile needs --signal")
+            if not 0.0 <= min_signal_quantile < 1.0:
+                raise click.BadParameter("must be in [0, 1)", param_hint="--min-signal-quantile")
+            md.add_input("signal", signal)
+            md.add_param("min_signal_quantile", min_signal_quantile)
+            md.add_param("compare_window", compare_window)
+
+            signal_floor, floor_diag, bg = qc.background_signal_quantile(
+                signal, min_signal_quantile, compare_window,
+                blacklist_intervals=bl_raw_intervals, n_sample=background_sample,
+            )
+            logger.info(
+                "background q%g over %dbp = %.1f insertions (%d windows sampled)",
+                min_signal_quantile * 100, compare_window, signal_floor,
+                floor_diag["background_n_sampled"],
+            )
+            peak_signal = qc.window_totals(
+                signal, intervals.to_narrowpeak(kept).values.tolist(),
+                window=compare_window, max_regions=10_000_000,
+            )
+            keep_mask = peak_signal >= signal_floor
+            kept = kept[np.asarray(keep_mask)]
+            logger.info(
+                "%d peak(s) dropped below the floor, %d kept",
+                n_before_floor - len(kept), len(kept),
+            )
+            md.add_metric("peaks_below_signal_floor", n_before_floor - len(kept))
+            md.add_metric("signal_floor", signal_floor)
+            for k, v in floor_diag.items():
+                md.add_metric(k, v)
+            if len(kept) == 0:
+                raise click.ClickException(
+                    f"every peak fell below the signal floor ({signal_floor}). "
+                    "Lower --min-signal-quantile, or check that --signal is this "
+                    "dataset's bigwig."
+                )
+
         # Only the narrowPeak is written. A plain 3-column BED used to be
         # written beside it, but nothing ever read it -- every downstream step
         # takes the narrowPeak -- and narrowPeak IS a BED6+4, so `cut -f1-3`
         # reproduces the BED exactly. On d0 that was 3.7 MB duplicated per
         # dataset, and one more artifact to explain.
-        np_out = out_dir / f"{prefix}_peaks_no_blacklist.narrowPeak"
+        # peaks/ of its own, beside signal/. The two are the step-00 products
+        # and each gets a directory and a sidecar, so a later step can read
+        # what it is being given without re-deriving it.
+        peaks_dir = out_dir / "peaks"
+        peaks_dir.mkdir(parents=True, exist_ok=True)
+        np_out = peaks_dir / f"{prefix}_peaks_no_blacklist.narrowPeak"
         intervals.to_narrowpeak(kept).to_csv(np_out, sep="\t", header=False, index=False)
-
         md.add_output("peaks", np_out)
         logger.info(f"-> {np_out}")
+
+        # Sidecar: every filter this peak set went through, and what each one
+        # cost. Without it the only record of "why are there 153,347 peaks and
+        # not 156,236" is in a log that nothing keeps.
+        sidecar = {
+            "peaks_source": str(Path(peaks).resolve()),
+            "input_window": input_window,
+            "blacklist_source": references.describe_source(blacklist),
+            "blacklist_slop_bp": slop_bp,
+            "filters": [
+                {"filter": "input", "kept": n_in},
+                {"filter": "off_contig", "dropped": off_contig},
+                {"filter": "blacklist_slopped", "dropped": n_after_contig - n_after_blacklist},
+                {"filter": "window_overhang", "dropped": overhanging},
+                {
+                    "filter": "signal_floor",
+                    "dropped": n_before_floor - len(kept),
+                    "quantile": min_signal_quantile,
+                    "threshold": signal_floor,
+                    "window": compare_window if min_signal_quantile is not None else None,
+                },
+            ],
+            "peaks_final": len(kept),
+            **floor_diag,
+        }
+        sidecar_path = peaks_dir / "peaks.json"
+        sidecar_path.write_text(_json.dumps(sidecar, indent=2) + "\n")
+        md.add_output("peaks", sidecar_path)
+        logger.info(f"-> {sidecar_path}")
+
+        # QC plot, in plots/ with the other figures rather than beside the data.
+        if peak_signal is not None:
+            import matplotlib.pyplot as plt
+
+            plots_dir = out_dir.parent / "plots" / "peaks_qc"
+            plots_dir.mkdir(parents=True, exist_ok=True)
+            plotting.apply_style(font_size=10)
+            _sc = palettes.BIAS_SCAN_COLORS
+            fig, ax = plt.subplots(figsize=(5, 3.2))
+            # Clip to the peak q90: the peak tail runs to ~800 and squashes
+            # the part that matters -- the background mass, the floor, and
+            # where the two distributions separate -- into the first 5% of
+            # the axis.
+            hi = float(np.quantile(peak_signal, 0.90))
+            hi = max(hi, signal_floor * 4)
+            bins = np.linspace(0, hi, 70)
+            ax.hist(bg, bins=bins, density=True, alpha=0.55,
+                    color=_sc["nonpeaks"], label="genome windows (sampled)")
+            ax.hist(peak_signal, bins=bins, density=True, alpha=0.55,
+                    color=_sc["peaks"], label="peaks")
+            ax.axvline(signal_floor, color=_sc["fail"], lw=1.6,
+                       label=f"floor = background q{min_signal_quantile*100:g} "
+                             f"({signal_floor:.0f})")
+            ax.set_xlim(0, hi)
+            ax.set_xlabel(
+                f"insertions per {compare_window}bp window  "
+                f"(upper {100 * float((peak_signal > hi).mean()):.0f}% of peaks clipped)"
+            )
+            ax.set_ylabel("density")
+            ax.set_title(
+                f"{prefix}: {n_before_floor - len(kept)} of {n_before_floor} peaks "
+                f"below background q{min_signal_quantile*100:g}", fontsize=8.5)
+            ax.legend(frameon=False, fontsize=7)
+            fig.tight_layout()
+            plotting.save_fig(fig, plots_dir / f"{prefix}_peak_signal_floor")
+            plt.close(fig)
+            md.add_output("qc", plots_dir / f"{prefix}_peak_signal_floor.pdf")
 
 
 # ── filter-fragments ──────────────────────────────────────────────────────────

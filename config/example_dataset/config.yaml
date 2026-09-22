@@ -102,6 +102,21 @@ folds: ["0", "1", "2", "3", "4"]
 # nonpeak_stride: 1000      # -st  genome-wide GC bin stride
 # qc_compare_window: 1000   # fixed window for the peak-vs-background comparison
 
+# Drop peaks whose signal falls below this quantile of the experiment's OWN
+# genome-wide windows (00.1). Off by default. Depth-independent: both sides are
+# the same signal, so a deeper library lifts the peaks and the background
+# together.
+#
+# It matters far beyond the peaks it removes. chrombpnet anchors EVERY bias
+# threshold in the 03.0 sweep to quantile(peak_counts, 0.01), so a handful of
+# background-level peaks drag the whole sweep down. On the d0 test dataset the
+# weakest 1% of peaks sat at the 40.6th percentile of genome windows -- weaker
+# than most of the genome -- and dropping 1.8% of peaks moved q01 from 4 to 17.
+#
+# 0.75 drops ~1.8% on d0; 0.50 is the conservative choice at ~1.0%; 0.95 is too
+# aggressive at ~23%. Needs 00.0's bigwig, so 00.0 must run first.
+# peak_min_signal_quantile: 0.75
+
 # Bias sweep (03.0). Positional: bias_factors[i] pairs with bias_suffixes_sweep[i].
 # The array is len(bias_sweep_folds) x len(bias_factors) GPU jobs; uncomment
 # bias_sweep_folds to pilot on fewer folds first. `cli.py config validate`

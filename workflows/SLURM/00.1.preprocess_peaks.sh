@@ -56,7 +56,7 @@ metadata_inputs+=( "blacklist=${blacklist}" )
 metadata_inputs+=( "chrom_sizes=${peak_chrom_sizes}" )
 metadata_params+=( "peak_type=${peak_type}" "input_window=${chrombpnet_input_window}" )
 for dataset in "${datasets[@]}"; do
-    metadata_outputs+=( "peaks=${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak" )
+    metadata_outputs+=( "peaks=${peaks_dir}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak" )
 done
 
 require_input "${regions}" ""
@@ -71,11 +71,27 @@ for dataset in "${datasets[@]}"; do
     # --blacklist also accepts the ENCODE accession (${blacklist_accession}),
     # which fetches it directly; the local copy is the default because compute
     # nodes may have no outbound network.
+    # The signal floor is optional and OFF unless peak_min_signal_quantile is
+    # set. It needs 00.0's bigwig, which is why 00.0 runs first: a peak whose
+    # signal is below what ordinary genome windows reach is not a peak, and it
+    # does damage out of all proportion to its own row -- chrombpnet anchors
+    # every bias threshold to quantile(peak_counts, 0.01).
+    floor_args=()
+    if [[ -n "${peak_min_signal_quantile:-}" ]]; then
+        prepared_bw="${data_path}/signal/data_unstranded.bw"
+        require_input "${prepared_bw}" 00.0.prepare_signal.sh
+        preflight_check
+        floor_args+=( --signal "${prepared_bw}" )
+        floor_args+=( --min-signal-quantile "${peak_min_signal_quantile}" )
+        floor_args+=( --compare-window "${qc_compare_window}" )
+    fi
+
     python "${src_dir}/cli.py" preprocess-peaks \
         --peaks        "${regions}" \
         --blacklist    "${blacklist}" \
         --chrom-sizes  "${peak_chrom_sizes}" \
         --input-window "${chrombpnet_input_window}" \
+        ${floor_args[@]+"${floor_args[@]}"} \
         --out-dir      "${data_path}" \
         --prefix       "${dataset}_${peak_type}"
 done

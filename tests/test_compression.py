@@ -8,6 +8,7 @@ gzip is silent -- everything still reads, only indexing breaks.
 from __future__ import annotations
 
 import gzip
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -189,7 +190,20 @@ def test_cli_preprocess_peaks_runs_end_to_end(tmp_path):
         check=True,
         capture_output=True,
     )
-    rows = (out / "t_peaks_no_blacklist.narrowPeak").read_text().strip().split("\n")
+    # peaks/ of its own, beside signal/ -- both are step-00 products.
+    rows = (out / "peaks" / "t_peaks_no_blacklist.narrowPeak").read_text().strip().split("\n")
     assert len(rows) == 2  # the blacklisted peak is gone
     assert rows[0].split("\t")[3] == "peak_1"  # renumbered over the filtered set
     assert (tmp_path / "metadata").exists()  # and it recorded the run
+
+    # The sidecar states what every filter cost, so the peak count is
+    # explainable without the log.
+    car = json.loads((out / "peaks" / "peaks.json").read_text())
+    assert car["peaks_final"] == 2
+    stages = {f["filter"]: f for f in car["filters"]}
+    assert stages["input"]["kept"] == 3
+    assert stages["blacklist_slopped"]["dropped"] == 1
+    # No --signal given, so the floor did not run and says so rather than
+    # silently reporting zero dropped.
+    assert stages["signal_floor"]["threshold"] is None
+    assert stages["signal_floor"]["quantile"] is None

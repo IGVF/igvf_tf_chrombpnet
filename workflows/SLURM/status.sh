@@ -60,9 +60,9 @@ report() {
 }
 
 report 00.0.prepare_signal            "${data_path}/signal/data_unstranded.bw"
-report 00.1.preprocess_peaks          "${data_path}/${d}_${peak_type}_peaks_no_blacklist.narrowPeak"
+report 00.1.preprocess_peaks          "${peaks_dir}/${d}_${peak_type}_peaks_no_blacklist.narrowPeak"
 report 01.0.preprocess_nonpeaks      "${data_path}/${d}/output_${peak_type}_fold_${fold0}_negatives.bed"
-report 02.0.qc_signal_peaks          "${results_path}/plots/signal_qc/${d}_signal_qc.json"
+report 02.0.qc_training_data          "${results_path}/plots/signal_qc/${d}_signal_qc.json"
 report 03.0.train_bias_model          "${results_path}/bias_models"
 report 03.1.select_bias               "${results_path}/plots/bias_model_selection/${bias_dataset}/selected_bias_per_fold.tsv"
 report 03.2.qc_selected_bias          "${results_path}/bias_models"

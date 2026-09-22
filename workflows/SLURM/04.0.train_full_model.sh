@@ -93,7 +93,7 @@ require_input "${genome_fa}"   "cli.py download-references"
 require_input "${chrom_sizes}" "cli.py download-references"
 require_input "${folds_dir}/fold_${fold}.json" ""
 for _ds in "${datasets[@]}"; do
-    require_input "${data_path}/${_ds}_${peak_type}_peaks_no_blacklist.narrowPeak" 00.1.preprocess_peaks.sh
+    require_input "${peaks_dir}/${_ds}_${peak_type}_peaks_no_blacklist.narrowPeak" 00.1.preprocess_peaks.sh
     require_input "${data_path}/${_ds}/output_${peak_type}_fold_${fold}_negatives.bed" 01.0.preprocess_nonpeaks.sh
 done
 unset _ds
@@ -124,7 +124,7 @@ for dataset in "${datasets[@]}"; do
     fi
 
     set_signal_args
-    peaks_file="${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
+    peaks_file="${peaks_dir}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
     negatives_file="${data_path}/${dataset}/output_${peak_type}_fold_${fold}_negatives.bed"
     fold_json="${folds_dir}/fold_${fold}.json"
 

@@ -130,7 +130,7 @@ derived output paths live in `config.sh`.
 | `00.0.prepare_signal.sh` | — (loops internally) | no (hardcoded paths) |
 | `00.1.preprocess_peaks.sh` | — | yes |
 | `01.0.preprocess_nonpeaks.sh` | — | yes |
-| `02.0.qc_signal_peaks.sh` | — | yes |
+| `02.0.qc_training_data.sh` | — | yes |
 | `03.0.train_bias_model.sh` | `fold_idx * n_factors + factor_idx` | yes |
 | `03.1.select_bias.sh` | no SBATCH header — run with `bash` | yes |
 | `03.2.qc_selected_bias.sh` | fold | yes |

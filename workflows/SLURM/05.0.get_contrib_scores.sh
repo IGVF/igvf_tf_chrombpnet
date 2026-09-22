@@ -79,7 +79,7 @@ for dataset in "${datasets[@]}"; do
     fi
 
     interp_dir="${full_model_dir}/${dataset}_${peak_type}_fold_${fold}/interpretation"
-    peaks_file="${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
+    peaks_file="${peaks_dir}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
     done_file_h5="${interp_dir}/interpretation.counts_scores.h5"
     done_file_bw="${interp_dir}/interpretation.counts_scores.bw"
 
