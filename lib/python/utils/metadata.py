@@ -436,6 +436,13 @@ class StepMetadata:
         self.status = "ok"
         self.error: str | None = None
         self.exit_status = 0
+        # Peak RSS is only meaningful when the process filling in this record
+        # is the one that did the work. `record()` sets it on exit; the bash
+        # path leaves it None unless the step measured it and passed it in,
+        # because emit_metadata.py runs as a SIBLING of the real work and
+        # would otherwise report its own ~26 MB as the step's footprint. Same
+        # reasoning as `started_at` in emit_metadata.py.
+        self.peak_rss_gb: float | None = None
 
     # -- declaration -----------------------------------------------------
     def add_input(self, role: str, path) -> None:
@@ -502,7 +509,7 @@ class StepMetadata:
             # than from a guess that gets copied forward. SELF plus CHILDREN,
             # because the heavy work is often a subprocess (chrombpnet,
             # modisco, bedtools). ru_maxrss is KiB on Linux, bytes on macOS.
-            "peak_rss_gb": _peak_rss_gb(),
+            "peak_rss_gb": self.peak_rss_gb,
             "host": socket.gethostname(),
             # Flat scalars: `GROUP BY "user"` is the common query, so these do
             # not get buried in a struct.
@@ -582,9 +589,11 @@ def record(step: str, dataset: str | None = None, out_dir=None, script=None):
         if md.exit_status == 0:
             md.status = "ok"
             md.error = None
+        md.peak_rss_gb = _peak_rss_gb()
         md.write()
         raise
     else:
+        md.peak_rss_gb = _peak_rss_gb()
         md.write()
 
 

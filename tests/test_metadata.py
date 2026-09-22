@@ -290,3 +290,34 @@ def test_heterogeneous_records_union_into_one_duckdb_table(tmp_path, sample):
         f"WHERE p.parameter_type = 'param' ORDER BY p.parameter_name"
     ).fetchall()
     assert [k[0] for k in keys] == ["chroms", "index", "input_window"]
+
+
+def test_record_measures_its_own_peak_rss(tmp_path):
+    """The in-process path DID the work, so its RSS is the step's RSS."""
+    with metadata.record("99.0.fake", out_dir=tmp_path) as md:
+        md.add_param("x", 1)
+    rec = json.loads(next(tmp_path.glob("*.json")).read_text())
+    assert rec["peak_rss_gb"] is not None
+    assert rec["peak_rss_gb"] > 0
+
+
+def test_emit_metadata_cli_does_not_invent_a_peak_rss(tmp_path):
+    """emit_metadata.py runs as a SIBLING of the work it records.
+
+    Its own RSS is a few tens of MB regardless of what the step did, so
+    reporting it as the step's footprint is worse than reporting nothing --
+    it is wrong and it looks plausible. Same rule as `started_at`.
+    """
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO / "src" / "emit_metadata.py"),
+            "--step", "99.0.fake",
+            "--out-dir", str(tmp_path),
+            "--exit-status", "0",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    rec = json.loads(next(tmp_path.glob("*.json")).read_text())
+    assert rec["peak_rss_gb"] is None

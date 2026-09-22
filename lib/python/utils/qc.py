@@ -28,9 +28,11 @@ that was supplied as a bigwig in the first place.
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 from collections import defaultdict
+from pathlib import Path
 
 import numpy as np
 
@@ -251,6 +253,7 @@ def window_totals(
     kind: str = "narrowpeak",
     max_regions: int = DEFAULT_MAX_REGIONS,
     seed: int = 0,
+    keep_chroms=None,
 ) -> np.ndarray:
     """Total insertions in a FIXED ``window`` centred on each region's summit.
 
@@ -264,6 +267,9 @@ def window_totals(
     offset in column 10, so ``kind="narrowpeak"`` centres both correctly.
     """
     centres = _centres(regions, kind)
+    if keep_chroms is not None:
+        keep = set(keep_chroms)
+        centres = [c for c in centres if c[0] in keep]
     rng = np.random.default_rng(seed)
     if len(centres) > max_regions:
         idx = rng.choice(len(centres), size=max_regions, replace=False)
@@ -503,6 +509,7 @@ def bias_threshold_viability(
     outputlen: int = 1000,
     outlier_threshold: float = 0.9999,
     max_regions: int = 10_000_000,
+    fold_json=None,
 ):
     """Which bias_threshold_factor values 03.0 can actually train on.
 
@@ -541,8 +548,19 @@ def bias_threshold_viability(
     if factors is None:
         factors = [round(f, 2) for f in np.arange(0.05, 2.001, 0.05)]
 
-    pk = window_totals(bigwig, peaks, window=outputlen, max_regions=max_regions)
-    ng = window_totals(bigwig, nonpeaks, window=outputlen, max_regions=max_regions)
+    # chrombpnet thresholds train+valid only -- the test chromosomes are held
+    # out before any of this runs. Counting them here inflated every row by a
+    # constant ~13% on d0 (the test split is 11.7% of the negatives), which is
+    # invisible in the viability verdict and in the RANKING of factors, but
+    # wrong in the absolute counts the sweep table reports.
+    keep = None
+    if fold_json:
+        fold = json.loads(Path(fold_json).read_text())
+        keep = set(fold.get("train", [])) | set(fold.get("valid", []))
+    pk = window_totals(bigwig, peaks, window=outputlen, max_regions=max_regions, keep_chroms=keep)
+    ng = window_totals(
+        bigwig, nonpeaks, window=outputlen, max_regions=max_regions, keep_chroms=keep
+    )
     if pk.size == 0 or ng.size == 0:
         return {}, [], np.array([]), np.array([])
     q01 = float(np.quantile(pk, 0.01))

@@ -174,6 +174,12 @@ done
 rm -rf "${out_dir}"
 mkdir -p "${out_dir}"
 
+# Peak RSS has to be measured inside the process that allocates the training
+# arrays; the metadata trap runs in a sibling and would otherwise record its
+# own ~26 MB as this step's footprint. See docs/resource-measurements.md.
+METADATA_RSS_FILE="${out_dir}/.peak_rss_gb"
+export METADATA_RSS_FILE
+
 python "${src_dir}/chrombpnet_train.py" \
     --prepared-bigwig "${data_path}/signal" \
     ${prepared_args[@]+"${prepared_args[@]}"} -- \
@@ -188,7 +194,11 @@ python "${src_dir}/chrombpnet_train.py" \
     -b "${bf}" \
     -o "${out_dir}" \
     -fp "${file_prefix}"
-if [[ $? -ne 0 || ! -f "${model_file}" ]]; then
+_train_status=$?
+if [[ -s "${METADATA_RSS_FILE}" ]]; then
+    metadata_metrics+=( "peak_rss_gb=$(<"${METADATA_RSS_FILE}")" )
+fi
+if [[ ${_train_status} -ne 0 || ! -f "${model_file}" ]]; then
     echo "ERROR: chrombpnet bias train failed for fold ${fold} bias=${bf} (bias threshold factor may be too low/high for this fold - see stdout above)." >&2
     exit 1
 fi

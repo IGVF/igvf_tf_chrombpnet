@@ -263,6 +263,7 @@ metadata_step="${metadata_step:-}"
 metadata_inputs=()
 metadata_outputs=()
 metadata_params=()
+metadata_metrics=()
 metadata_tools=()
 
 # metadata_start <step-name> — record the start time and arrange for emission
@@ -295,6 +296,7 @@ metadata_emit() {
     for item in "${metadata_inputs[@]+"${metadata_inputs[@]}"}";  do args+=( --input  "${item}" ); done
     for item in "${metadata_outputs[@]+"${metadata_outputs[@]}"}"; do args+=( --output "${item}" ); done
     for item in "${metadata_params[@]+"${metadata_params[@]}"}";  do args+=( --param  "${item}" ); done
+    for item in "${metadata_metrics[@]+"${metadata_metrics[@]}"}"; do args+=( --metric "${item}" ); done
     for item in "${metadata_tools[@]+"${metadata_tools[@]}"}";    do args+=( --tool   "${item}" ); done
 
     # Same interpreter rule as config.sh and references.sh. The EXIT trap fires

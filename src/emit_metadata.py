@@ -72,6 +72,9 @@ def parse_args():
         "--param", dest="params", action="append", type=pair, default=[], metavar="KEY=VALUE"
     )
     p.add_argument(
+        "--metric", dest="metrics", action="append", type=pair, default=[], metavar="KEY=VALUE"
+    )
+    p.add_argument(
         "--tool", dest="tools", action="append", type=pair, default=[], metavar="NAME=VERSION"
     )
     p.add_argument("--command", default=None, help="The command the step ran, for the record")
@@ -104,6 +107,18 @@ def main():
         md.add_output(role, path)
     for key, value in args.params:
         md.add_param(key, value)
+    for key, value in args.metrics:
+        md.add_metric(key, value)
+        # peak_rss_gb is a top-level field, not just a metric: it is the one
+        # number SLURM sizing reads, and burying it in the parameters list
+        # would mean an UNNEST for every --mem question. The step measured it
+        # in the process that did the work, so unlike this emitter's own RSS
+        # it is real. See StepMetadata.peak_rss_gb.
+        if key == "peak_rss_gb":
+            try:
+                md.peak_rss_gb = float(value)
+            except (TypeError, ValueError):
+                pass
     for name, version in args.tools:
         md.add_tool(name, version)
     if args.command:
