@@ -42,7 +42,7 @@ from pathlib import Path
 # conda envs, under pixi, and under a bare python).
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib" / "python"))
 
-from utils import log, metadata  # noqa: E402
+from utils import log, metadata, regions  # noqa: E402
 
 logger = log.get_logger(__name__)
 
@@ -80,7 +80,6 @@ def _run_gpu_stage(args, ns, fpx, output_dir):
     """Predictions + DeepLIFT contribution scores. Needs the GPU."""
     import chrombpnet.evaluation.interpret.interpret as interpret
     import chrombpnet.training.predict as predict
-    import pandas as pd
     from chrombpnet.helpers.hyperparameters.param_utils import load_model_wrapper
 
     bias_md = load_model_wrapper(model_h5=str(args.bias_model))
@@ -93,11 +92,10 @@ def _run_gpu_stage(args, ns, fpx, output_dir):
     a.model_h5 = str(args.bias_model)
     predict.main(a)
 
-    # chrombpnet interprets a 30K subsample, seed 1234.
-    sub = output_dir / "auxiliary" / f"{fpx}30K_subsample_peaks.bed"
-    peaks_df = pd.read_csv(ns.peaks, sep="\t", header=None)
-    sub_peaks = peaks_df.sample(30000, random_state=1234) if len(peaks_df) > 30000 else peaks_df
-    sub_peaks.to_csv(sub, sep="\t", header=False, index=False)
+    # chrombpnet interprets a 30K subsample, seed 1234 (utils.regions keeps the rule).
+    sub = regions.subsample_regions(
+        ns.peaks, output_dir / "auxiliary" / f"{fpx}30K_subsample_peaks.bed"
+    )
 
     # exist_ok=True where chrombpnet uses False, so a killed job can be resumed
     # instead of dying on FileExistsError before doing any work.

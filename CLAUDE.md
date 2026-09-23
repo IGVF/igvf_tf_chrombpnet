@@ -139,6 +139,8 @@ derived output paths live in `config.sh`.
 | `04.1.qc_run_full_model.sh` | — | yes |
 | `04.2.qc_combined_boxplot.sh` | — | no (discovers `config/*/config.yaml` plus `DATASET_CONFIG`) |
 | `04.3.generate_predictions.sh` | dataset | yes |
+| `04.4.qc_full_model_interpret.sh` | fold | yes |
+| `04.5.modisco_full_model.sh` | fold | yes |
 | `05.0.get_contrib_scores.sh` | fold | yes |
 | `06.0.average_contrib_scores.sh` | dataset | yes |
 | `07.0.contribs_to_bigwig.sh` | dataset | yes |
@@ -152,8 +154,9 @@ derived output paths live in `config.sh`.
 All step scripts live in `workflows/SLURM/`. The Python they call lives in `src/`
 and is referenced as `${src_dir}/<name>.py`, never by a relative path:
 `predict_bias_metrics.py` (03.0),
-`select_bias_model.py` (03.1), `run_bias_qc.py` (03.2), `qc_full_model.py` (04.1 and
-04.2-combined), `predict_and_avg.py` (04.2), `average_contrib_scores.py` (06),
+`select_bias_model.py` (03.1), `run_bias_qc.py` (03.2, 03.3), `chrombpnet_train.py`
+(03.0, 04.0), `qc_full_model.py` (04.1 and 04.2-combined), `predict_and_avg.py` (04.3),
+`run_full_model_qc.py` (04.4, 04.5), `average_contrib_scores.py` (06),
 `contribs_to_bigwig.py` (07), `motif_compendium.py` (09 and `_10`),
 `qc_datasets.py` (`qc_datasets.sh`).
 
@@ -430,6 +433,21 @@ say which of the two kinds of verification a change actually got.
   re-runs without redoing interpretation. `all` keeps the original behaviour.
   Same reasoning as 08.0 below.
 
+- **The full model gets the same split: 04.0 trains, 04.4/04.5 interpret.**
+  `chrombpnet pipeline`, after training, predictions and marginal footprinting,
+  runs DeepLIFT on a 30K peak subsample and TF-MoDISco on the profile scores
+  inside the same GPU job. `chrombpnet_train.py --stop-before-interpretation`
+  (always passed by 04.0) replaces chrombpnet's interpretation entry point with
+  a stop, so everything before it is chrombpnet's unmodified code and nothing
+  after it runs; `src/run_full_model_qc.py --stage {gpu,modisco}` then does
+  exactly what pipeline would have, as 04.4 (DeepLIFT, profile head -- the
+  pipeline's counts run is commented out upstream) and 04.5 (TF-MoDISco,
+  report, PDF, and the pipeline-mode HTML report). The 30K subsample is
+  `utils.regions.subsample_regions`, chrombpnet's own rule (seed 1234), shared
+  with the bias QC. Nothing downstream waits on 04.4/04.5: they are per-fold
+  QC, while 05 gives analysis-grade scores on all peaks and 08 motifs on the
+  fold average -- which can hide a bad fold, which is what 04.5 is for.
+
 - **`08.0.run_modisco.sh` is CPU-only on `engreitz` with `--qos=high_p`, on purpose.**
   tfmodisco-lite doesn't use a GPU, and the default QOS caps walltime at 2 days for
   this account regardless of the partition ceiling; `high_p` (7-day MaxWall) is what
@@ -450,9 +468,12 @@ say which of the two kinds of verification a change actually got.
 
 - **Idempotency markers are per-step and sometimes not the obvious file.** `04.0`
   requires *both* `models/chrombpnet_nobias.h5` and
-  `evaluation/chrombpnet_nobias_profile.pdf` before skipping, because the second is the
-  last file the evaluation stage writes — a preempted job leaves the model but no
-  report, and the script `rm -rf`s the directory and retrains. That `rm -rf` on a
+  `auxiliary/chrombpnet_nobias_footprints.h5` before skipping, because the second is
+  the last file pipeline writes before the interpretation 04.0 stops at (after the
+  predictions and max-bias-response 04.1/04.3 read) — a preempted job leaves the
+  model but not that, and the script `rm -rf`s the directory and retrains. (It
+  used to key off `evaluation/chrombpnet_nobias_profile.pdf`, the TF-MoDISco report,
+  back when 04.0 ran interpretation itself; that is 04.5's output now.) That `rm -rf` on a
   seemingly-complete model is intentional. Other steps key off `hits.bed.gz` (10),
   `motif_report.tsv` (11), `interpretation.counts_scores.{h5,bw}` (05) or
   `*_negatives.bed` (02).

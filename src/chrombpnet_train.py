@@ -79,12 +79,15 @@ def _split_argv(argv):
     ours, theirs = argv[:cut], argv[cut + 1 :]
     prepared = None
     require = False
+    stop = False
     for i, token in enumerate(ours):
         if token == "--prepared-bigwig":
             prepared = ours[i + 1]
         elif token == "--require-prepared":
             require = True
-    return prepared, require, theirs
+        elif token == "--stop-before-interpretation":
+            stop = True
+    return prepared, require, stop, theirs
 
 
 def _sidecar_matches(prepared_dir: Path, signal_path: str | None, assay: str | None) -> bool:
@@ -111,8 +114,35 @@ def _sidecar_matches(prepared_dir: Path, signal_path: str | None, assay: str | N
     return True
 
 
+class _StopBeforeInterpretation(Exception):
+    """Raised in place of chrombpnet's interpretation step (--stop-before-interpretation)."""
+
+
+def _write_train_report(output_dir, data_type, file_prefix) -> None:
+    """chrombpnet's own `train`-mode HTML report, which needs no interpretation.
+
+    The `pipeline`-mode report needs the motif report too, so 04.5 writes it
+    once TF-MoDISco has run.
+    """
+    import argparse
+
+    import chrombpnet.helpers.generate_reports.make_html as make_html
+
+    make_html.main(
+        argparse.Namespace(
+            input_dir=output_dir,
+            command="train",
+            data_type=data_type,
+            file_prefix=file_prefix,
+            html_prefix="./",
+        )
+    )
+
+
 def main() -> int:
-    prepared, require_prepared, chrombpnet_argv = _split_argv(sys.argv[1:])
+    prepared, require_prepared, stop_before_interpretation, chrombpnet_argv = _split_argv(
+        sys.argv[1:]
+    )
     log.setup()
 
     def _arg(flag):
@@ -172,11 +202,34 @@ def main() -> int:
     # lib/python/utils/onehot.py and docs/resource-measurements.md.
     onehot.install()
 
+    # `chrombpnet pipeline` goes on, after training, predictions and marginal
+    # footprinting, to DeepLIFT on a 30K peak subsample and TF-MoDISco -- inside
+    # this GPU job, where TF-MoDISco (CPU-only, the long pole) holds the GPU
+    # idle for hours. With --stop-before-interpretation, chrombpnet's own
+    # interpretation entry point is replaced by a stop signal, so everything
+    # up to it runs as chrombpnet's unmodified code and nothing after it runs;
+    # 04.4 (DeepLIFT) and 04.5 (TF-MoDISco) do the rest from the outputs left.
+    # pipelines.py imports that module inside the function and calls
+    # `interpret.main`, so replacing the attribute here is enough.
+    if stop_before_interpretation:
+        if not chrombpnet_argv or chrombpnet_argv[0] != "pipeline":
+            logger.error("--stop-before-interpretation only applies to `chrombpnet pipeline`")
+            return 1
+        import chrombpnet.evaluation.interpret.interpret as interpret_module
+
+        def _stop(_args):
+            raise _StopBeforeInterpretation
+
+        interpret_module.main = _stop
+
     import chrombpnet.CHROMBPNET as chrombpnet_cli
 
     sys.argv = ["chrombpnet", *chrombpnet_argv]
     try:
         chrombpnet_cli.main()
+    except _StopBeforeInterpretation:
+        logger.info("stopped `chrombpnet pipeline` before interpretation (04.4/04.5 run it)")
+        _write_train_report(_arg("-o"), _arg("-d"), _arg("-fp"))
     finally:
         # This process is the one that allocated the training arrays, so its
         # peak RSS is the step's real footprint. The step's metadata trap runs

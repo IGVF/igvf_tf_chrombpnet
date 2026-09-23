@@ -30,6 +30,12 @@
 #
 # Output directory: ${full_model_dir_selected} (set in config.sh)
 #
+# Runs `chrombpnet pipeline` up to, not including, interpretation: training,
+# predictions and marginal footprinting -- what 04.1 and 04.3 read. DeepLIFT
+# and TF-MoDISco, which pipeline would otherwise run inside this GPU job with
+# the GPU idle through TF-MoDISco, are 04.4 (GPU) and 04.5 (CPU), the same
+# split 03.2/03.3 make for the bias model.
+#
 # Usage:
 #   export DATASET_DIR=/path/to/igvf_tf_collab/<dataset>
 #   sbatch 04.0.train_full_model.sh            # all folds (array 0-4)
@@ -128,10 +134,20 @@ echo "  output dir : ${full_model_dir_selected}"
 for dataset in "${datasets[@]}"; do
     out_dir="${full_model_dir_selected}/${dataset}_${peak_type}_fold_${fold}"
     model_file="${out_dir}/models/chrombpnet_nobias.h5"
-    # Last file written by the pipeline's evaluation stage; absence means
-    # training finished (model_file exists) but evaluation was cut short,
-    # e.g. by preemption.
-    eval_marker="${out_dir}/evaluation/chrombpnet_nobias_profile.pdf"
+    # This step stops `chrombpnet pipeline` just before interpretation
+    # (--stop-before-interpretation below; 04.4/04.5 do DeepLIFT and
+    # TF-MoDISco off this GPU job). The last thing pipeline does before that
+    # point is move the footprints file into auxiliary/, AFTER the predictions
+    # and max-bias-response 04.1/04.3 read -- so its presence means everything
+    # this step owes them was written. A preempted job leaves the model but
+    # not this, and is retrained.
+    eval_marker="${out_dir}/auxiliary/chrombpnet_nobias_footprints.h5"
+    metadata_outputs+=( "model=${model_file}" )
+    metadata_outputs+=( "model=${out_dir}/models/chrombpnet.h5" )
+    metadata_outputs+=( "metrics=${out_dir}/evaluation/chrombpnet_metrics.json" )
+    metadata_outputs+=( "predictions=${out_dir}/evaluation/chrombpnet_predictions.h5" )
+    metadata_outputs+=( "footprints=${out_dir}/evaluation/chrombpnet_nobias_max_bias_response.txt" )
+    metadata_outputs+=( "footprints=${eval_marker}" )
 
     if [[ -f "${model_file}" && -f "${eval_marker}" ]]; then
         echo "  [${dataset} fold ${fold}] Already done, skipping."
@@ -145,11 +161,14 @@ for dataset in "${datasets[@]}"; do
 
     rm -rf "${out_dir}"
     mkdir -p "${out_dir}"
+    METADATA_RSS_FILE="${out_dir}/.peak_rss_gb"   # see 03.0: the training process's real footprint
+    export METADATA_RSS_FILE
 
     echo "[$(date)] [${dataset} fold ${fold}] Training full model (bias ${suffix}, max epochs ${max_epochs:-50})..."
 
     python "${src_dir}/chrombpnet_train.py" \
         --prepared-bigwig "${data_path}/signal" \
+        --stop-before-interpretation \
         ${prepared_args[@]+"${prepared_args[@]}"} -- \
         pipeline \
         "${signal_args[@]}" \
@@ -168,7 +187,9 @@ for dataset in "${datasets[@]}"; do
     # this a failed run prints "Done." and exits 0, and the next rerun sees a
     # model with no eval, rm -rf's it and retrains from scratch -- silently
     # burning a second GPU allocation to rediscover the same failure.
-    if [[ $? -ne 0 || ! -f "${model_file}" || ! -f "${eval_marker}" ]]; then
+    _train_status=$?
+    [[ -s "${METADATA_RSS_FILE}" ]] && metadata_metrics+=( "peak_rss_gb=$(<"${METADATA_RSS_FILE}")" )
+    if [[ ${_train_status} -ne 0 || ! -f "${model_file}" || ! -f "${eval_marker}" ]]; then
         echo "ERROR: chrombpnet pipeline failed for ${dataset} fold ${fold} (bias ${suffix})." >&2
         echo "       expected ${model_file} and ${eval_marker}" >&2
         exit 1
