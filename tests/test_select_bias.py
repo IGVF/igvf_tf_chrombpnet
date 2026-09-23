@@ -158,3 +158,23 @@ def test_explanation_stays_quiet_when_the_winner_is_interior():
         [("0", "05", 0.30), ("0", "06", 0.90), ("0", "07", 0.50), ("0", "08", 0.30)]
     )
     assert "EDGE OF THE SWEPT RANGE" not in explanation_for(df)
+
+
+def test_explanation_names_the_scored_edge_not_the_requested_one():
+    """The d0 run: 02.0's scan requested 28 factors, 3 were trained. The winner
+    (065) is the highest *scored* factor, and the text used to say the fold
+    'chose the HIGHEST factor (bias_195)' -- a factor that never ran."""
+    df = metrics_frame([("0", "05", 0.30), ("0", "055", 0.40), ("0", "065", 0.90)])
+    requested = ["015", "03", "05", "055", "065", "07", "105", "195"]
+    sel = sb.build_selection_table(df)
+    text = sb.generate_explanation(df, sel, dataset="d", biases=requested, folds=["0"])
+    assert "HIGHEST factor (bias_065)" in text
+    assert "bias_195" not in text
+    assert "3 of 8 requested have metrics" in text
+
+
+def test_explanation_gives_the_yaml_key_not_config_sh():
+    df = metrics_frame([("0", "05", 0.30), ("0", "06", 0.90), ("0", "07", 0.50)])
+    text = explanation_for(df)
+    assert "config.sh" not in text
+    assert 'fold_bias_suffix:' in text and '"0": "_06"' in text

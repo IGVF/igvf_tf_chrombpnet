@@ -357,6 +357,11 @@ def generate_explanation(
     """
     df = df.copy()
     df["status"] = df.apply(classify_row, axis=1)
+    # What was actually compared: the biases with metrics. `biases` is what was
+    # REQUESTED -- 02.0's scan can list 28 factors of which a few were trained --
+    # and the edge check (build_selection_table) already uses the scored set, so
+    # the text must too, or it names a factor that never ran.
+    scored = sweep_order(df["bias"].unique())
 
     lines = [
         "ChromBPNet Bias Model Selection Report",
@@ -364,7 +369,12 @@ def generate_explanation(
         f"Generated : {datetime.now().strftime('%Y-%m-%d %H:%M')}",
         f"Dataset   : {dataset}",
         f"Folds     : {', '.join(map(str, folds))}",
-        f"Biases    : {', '.join(biases)}",
+        f"Biases    : {', '.join(scored)}"
+        + (
+            f"  ({len(scored)} of {len(biases)} requested have metrics)"
+            if len(scored) != len(biases)
+            else ""
+        ),
         "",
         "SELECTION CRITERIA (ChromBPNet developer guidelines)",
         "-" * 60,
@@ -459,7 +469,12 @@ def generate_explanation(
         "OVERALL RECOMMENDATION",
         "-" * 60,
         f"  bias_{top_bias} wins {top_n}/{len(selection)} folds.",
-        f'  → Set bias_suffix="_{top_bias}" in config.sh',
+        "  → In the dataset's config.yaml, set fold_bias_suffix per fold:",
+        "      fold_bias_suffix:",
+        *[
+            f'        "{f}": "_{selection.loc[f, "selected_bias"]}"'
+            for f in sorted(selection.index)
+        ],
     ]
 
     if warn_folds:
@@ -476,14 +491,14 @@ def generate_explanation(
             "    These folds require retraining with a higher --bias_threshold_factor.",
         ]
 
-    ordered = sweep_order(biases)
+    ordered = scored
     low_folds = [f for f in sorted(selection.index) if selection.loc[f, "sweep_edge"] == "low"]
     high_folds = [f for f in sorted(selection.index) if selection.loc[f, "sweep_edge"] == "high"]
     if low_folds or high_folds:
         lines += [
             "",
             "  ⚠ SELECTION AT THE EDGE OF THE SWEPT RANGE",
-            f"    Swept: {', '.join(f'bias_{b}' for b in ordered)}",
+            f"    Scored: {', '.join(f'bias_{b}' for b in ordered)}",
             "    A winner at an end of the range means the sweep may be mis-centred:",
             "    the better model could lie outside it, and no metric here can tell",
             "    'best of those tried' from 'best there is'.",
@@ -1100,7 +1115,7 @@ def print_summary(selection: pd.DataFrame) -> None:
     top_n = winner_counts.iloc[0]
     logger.info(
         f"\nOverall: bias_{top_bias} wins {top_n}/{len(selection)} folds → "
-        f'set bias_suffix="_{top_bias}" in config.sh\n'
+        f"set fold_bias_suffix in the dataset config.yaml (see bias_selection_explanation.txt)\n"
     )
 
 
