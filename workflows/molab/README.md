@@ -86,7 +86,7 @@ Likewise `--gres=gpu:1` grants nothing: the GPU is simply visible. Running two
 GPU steps at once will contend, which is why `run_step.sh` loops array indices
 in sequence rather than in parallel.
 
-## The four files
+## The files
 
 - **`setup_molab.sh`** — idempotent, run once. Runs `apt-get update`,
   generates the `en_US.UTF-8` locale, installs Apptainer + its
@@ -121,6 +121,19 @@ in sequence rather than in parallel.
 - **`run_all.sh`** — steps 00.0 → 04.1 in order, written out as literal
   commands you can read or copy one line at a time. Stops at 03.1 for the
   manual bias-model review; `--after-bias` resumes.
+- **`sync_to_gcs.sh`** — copies `results/`, a `repo.bundle` of every branch,
+  a `MANIFEST.txt` and the dataset config to
+  `gs://${GCP_BUCKET}/chrombpnet/test_data_d0/` (override the prefix with
+  `MOLAB_GCS_PREFIX`). **Run it after every step**: a session that dies
+  keeps only part of `/marimo`, and the commits on this box exist nowhere
+  else. Files the bucket already holds byte-for-byte (size + md5) are
+  skipped, uploads are md5-checked, and nothing remote is ever deleted.
+  `--bundle-only` for just the commits, `--dry-run` to list. Needs a service
+  account allowed to write under the prefix; no gcloud.
+- **`gcs.sh`** — the bucket helpers `setup_molab.sh` and `sync_to_gcs.sh`
+  share: an OAuth token minted from `GCP_SA_JSON` with `openssl` (scope
+  `read_only` for setup, `read_write` for the sync), downloads, uploads,
+  listings. Sourced, never run.
 
 ### Where are the step scripts?
 

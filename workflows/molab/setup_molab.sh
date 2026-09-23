@@ -136,85 +136,10 @@ if grep -q '^enable overlay = yes' /etc/apptainer/apptainer.conf 2>/dev/null; th
 fi
 
 # ── 3. GCS access ────────────────────────────────────────────────────────────
-# The bucket is private and there is no gcloud on the box, so a read-only
-# OAuth token is minted from the service-account key with openssl. The key
-# reaches openssl through a pipe (process substitution) and never touches
-# disk; the token reaches curl the same way, so neither shows in `ps`.
-sa_field() {
-    printf '%s' "${GCP_SA_JSON}" \
-        | python3 -c 'import json, sys; sys.stdout.write(json.load(sys.stdin)[sys.argv[1]])' "$1"
-}
-b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
-
-gcs_token() {
-    local now header claims unsigned sig
-    now=$(date +%s)
-    header=$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)
-    claims=$(printf '{"iss":"%s","scope":"https://www.googleapis.com/auth/devstorage.read_only","aud":"https://oauth2.googleapis.com/token","iat":%d,"exp":%d}' \
-        "$(sa_field client_email)" "${now}" "$((now + 3600))" | b64url)
-    unsigned="${header}.${claims}"
-    sig=$(printf '%s' "${unsigned}" | openssl dgst -sha256 -sign <(sa_field private_key) | b64url)
-    curl -fsS https://oauth2.googleapis.com/token \
-        --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer" \
-        --data-urlencode "assertion@"<(printf '%s' "${unsigned}.${sig}") \
-        | python3 -c 'import json, sys; sys.stdout.write(json.load(sys.stdin)["access_token"])'
-}
-
-GCS_TOKEN=""
-auth_header() { printf 'Authorization: Bearer %s\n' "${GCS_TOKEN}"; }
-urlenc() { python3 -c 'import sys, urllib.parse; sys.stdout.write(urllib.parse.quote(sys.argv[1], safe=""))' "$1"; }
-gcs_api() { curl -fsS -H @<(auth_header) "https://storage.googleapis.com/storage/v1/b/${GCP_BUCKET}/o$1"; }
-
-# "<size> <md5>" of one object; md5 is "-" for composite objects, which have none.
-gcs_meta() {
-    gcs_api "/$(urlenc "$1")?fields=size,md5Hash" \
-        | python3 -c 'import json, sys; j = json.load(sys.stdin); print(j["size"], j.get("md5Hash") or "-")'
-}
-
-# Every object name under a prefix, one per line, directory placeholders skipped.
-gcs_list() {
-    local page="" out
-    while :; do
-        out=$(gcs_api "?prefix=$(urlenc "$1")&fields=items(name),nextPageToken${page:+&pageToken=$(urlenc "${page}")}")
-        printf '%s' "${out}" | python3 -c 'import json, sys; [print(i["name"]) for i in json.load(sys.stdin).get("items", []) if not i["name"].endswith("/")]'
-        page=$(printf '%s' "${out}" | python3 -c 'import json, sys; sys.stdout.write(json.load(sys.stdin).get("nextPageToken", ""))')
-        [[ -n "${page}" ]] || break
-    done
-}
-
-md5_b64() { openssl dgst -md5 -binary "$1" | base64; }
-
-# Does <file> match the bucket's <size> and <md5>? md5 "-" means size only.
-matches() {
-    [[ -f "$1" ]] && [[ "$(stat -c %s "$1")" == "$2" ]] || return 1
-    [[ "$3" == "-" ]] || [[ "$(md5_b64 "$1")" == "$3" ]]
-}
-
-# Download <object> to <dest> unless it is already there and intact. Resumes a
-# partial <dest>.part; mints a fresh token between attempts because each lasts
-# an hour, which a slow 8 GB download can outlive.
-gcs_fetch() {
-    local obj="$1" dest="$2" size md5 attempt
-    read -r size md5 < <(gcs_meta "${obj}")
-    if matches "${dest}" "${size}" "${md5}"; then
-        log "present: ${dest}"
-        return 0
-    fi
-    rm -f "${dest}"
-    mkdir -p "$(dirname "${dest}")"
-    [[ -f "${dest}.part" ]] && (( $(stat -c %s "${dest}.part") > size )) && rm -f "${dest}.part"
-    log "downloading gs://${GCP_BUCKET}/${obj} ($(numfmt --to=iec "${size}"))"
-    for attempt in 1 2 3; do
-        (( attempt == 1 )) || GCS_TOKEN=$(gcs_token)
-        curl -fL --retry 5 --retry-all-errors -sS -C - -H @<(auth_header) -o "${dest}.part" \
-            "https://storage.googleapis.com/storage/v1/b/${GCP_BUCKET}/o/$(urlenc "${obj}")?alt=media" && break
-        (( attempt < 3 )) || { echo "ERROR: download of ${obj} failed" >&2; return 1; }
-    done
-    matches "${dest}.part" "${size}" "${md5}" \
-        || { echo "ERROR: ${dest}.part does not match gs://${GCP_BUCKET}/${obj} (size ${size}, md5 ${md5})" >&2; rm -f "${dest}.part"; return 1; }
-    mv "${dest}.part" "${dest}"
-}
-
+# The bucket is private and there is no gcloud on the box; gcs.sh mints an
+# OAuth token from the service-account key with openssl (read-only here).
+# shellcheck source=workflows/molab/gcs.sh
+source "${SCRIPT_DIR}/gcs.sh"
 GCS_TOKEN=$(gcs_token)
 log "authenticated to gs://${GCP_BUCKET} as $(sa_field client_email)"
 
@@ -330,10 +255,14 @@ log "installing the pixi qc environment"
 
 # ── 8. d0 test data ──────────────────────────────────────────────────────────
 log "fetching test data into ${MOLAB_DATA_DIR}"
+# Only config/ and inputs/: sync_to_gcs.sh writes results/, repo.bundle and
+# the manifest under the same prefix, and none of that is setup's to fetch.
 # fd 3, not stdin: gcs_fetch runs commands that read stdin.
-while read -r obj <&3; do
-    gcs_fetch "${obj}" "${MOLAB_DATA_DIR}/${obj#"${TEST_DATA_PREFIX}"}"
-done 3< <(gcs_list "${TEST_DATA_PREFIX}")
+for sub in config/ inputs/; do
+    while read -r obj <&3; do
+        gcs_fetch "${obj}" "${MOLAB_DATA_DIR}/${obj#"${TEST_DATA_PREFIX}"}"
+    done 3< <(gcs_list "${TEST_DATA_PREFIX}${sub}")
+done
 
 # ── 9. shared references ─────────────────────────────────────────────────────
 if [[ "${SKIP_REFERENCES}" == "1" ]]; then
