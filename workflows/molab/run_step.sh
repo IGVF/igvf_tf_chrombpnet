@@ -48,6 +48,15 @@ source "${SCRIPT_DIR}/env.sh"
 
 STEPS_DIR="${REPO_ROOT}/workflows/SLURM"
 
+# A step's Python must come from its own environment, never from the shell
+# that launched it. marimo's kernel -- and every terminal or subprocess it
+# starts -- exports PYTHONPATH=/tmp/uv-venv/lib/python3.13/site-packages, and
+# Apptainer binds /tmp and passes the host environment through, so the
+# container's python 3.8 imported the notebook's numpy 2.x (built for 3.13)
+# and 01.0 died in `import pandas`. pixi's python 3.13 would not even fail:
+# it would silently prefer the notebook's packages over its own lock.
+unset PYTHONPATH PYTHONHOME PYTHONSAFEPATH VIRTUAL_ENV
+
 # Which environment each step needs. Steps not listed default to the container,
 # which is the larger of the two and has chrombpnet in it.
 step_env() {
