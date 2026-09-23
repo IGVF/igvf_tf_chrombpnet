@@ -133,6 +133,12 @@ folds: ["0", "1", "2", "3", "4"]
 # prints the --array range.
 bias_factors: ["0.5", "0.6", "0.7", "0.8"]
 bias_suffixes_sweep: ["_05", "_06", "_07", "_08"]
+
+# Batch size for `chrombpnet bias train` (03.0). Unset = chrombpnet's default,
+# 64. A different size trains a different model, so it goes to its own
+# directory (bias_model<suffix>_bs<N>/) and 03.1 does not select among those.
+# BIAS_BATCH_SIZE in the environment overrides this for a one-off test.
+# bias_batch_size: 128
 # bias_sweep_folds: ["0"]
 
 # Filled in by hand after 03.1 writes selected_bias_per_fold.tsv.

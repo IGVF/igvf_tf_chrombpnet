@@ -53,6 +53,8 @@
 #   export DATASET_DIR=/path/to/igvf_tf_collab/<dataset>
 #   sbatch 03.0.train_bias_model.sh              # all folds x factors
 #   sbatch --array=0 03.0.train_bias_model.sh    # fold 0, first bias factor only (quick test)
+#   BIAS_BATCH_SIZE=128 sbatch --export=ALL --array=2 03.0.train_bias_model.sh
+#                                                # one factor at batch 128 -> bias_model<sfx>_bs128/
 #
 # After all jobs complete, run 03.1.select_bias.sh, then 03.2.qc_selected_bias.sh,
 # then 04.0.train_full_model.sh.
@@ -121,7 +123,21 @@ peaks_file="${peaks_dir}/${bias_dataset}_${peak_type}_peaks_no_blacklist.narrowP
 negatives_file="${data_path}/${bias_dataset}/output_${peak_type}_fold_${fold}_negatives.bed"
 fold_json="${folds_dir}/fold_${fold}.json"
 file_prefix="${bias_dataset}_${peak_type}_fold_${fold}"
-out_dir="${results_path}/bias_models/bias_model${suffix}/${bias_dataset}_${peak_type}_fold_${fold}"
+# Batch size: chrombpnet's default (64) unless the config sets bias_batch_size
+# or the environment sets BIAS_BATCH_SIZE (the environment wins, so a one-off
+# test needs no config edit). A different batch size trains a different model,
+# so it gets its own directory -- `_bs<N>` after the factor suffix -- and can
+# never overwrite, or be skipped as, the default-size model. 03.1 selects among
+# the default-size directories only; the `_bs<N>` runs are for comparison.
+batch_size="${BIAS_BATCH_SIZE:-${bias_batch_size:-}}"
+batch_args=()
+batch_tag=""
+if [[ -n "${batch_size}" ]]; then
+    [[ "${batch_size}" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: batch size must be a positive integer, got '${batch_size}'" >&2; exit 1; }
+    batch_args=( -bs "${batch_size}" )
+    batch_tag="_bs${batch_size}"
+fi
+out_dir="${results_path}/bias_models/bias_model${suffix}${batch_tag}/${bias_dataset}_${peak_type}_fold_${fold}"
 model_file="${out_dir}/models/${file_prefix}_bias.h5"
 
 
@@ -143,7 +159,7 @@ metadata_outputs+=( "bias_model=${model_file}" )
 # model but fails to score it looks complete in the metadata.
 metrics_json="${out_dir}/evaluation/${file_prefix}_bias_metrics.json"
 metadata_outputs+=( "bias_metrics=${metrics_json}" )
-metadata_params+=( "fold=${fold}" "bias_factor=${bf}" "bias_suffix=${suffix}" )
+metadata_params+=( "fold=${fold}" "bias_factor=${bf}" "bias_suffix=${suffix}" "batch_size=${batch_size:-64}" )
 echo "[$(date)] [fold ${fold} bias=${bf}] Training bias model"
 echo "  output dir : ${out_dir}"
 
@@ -193,7 +209,8 @@ python "${src_dir}/chrombpnet_train.py" \
     -fl "${fold_json}" \
     -b "${bf}" \
     -o "${out_dir}" \
-    -fp "${file_prefix}"
+    -fp "${file_prefix}" \
+    ${batch_args[@]+"${batch_args[@]}"}
 _train_status=$?
 if [[ -s "${METADATA_RSS_FILE}" ]]; then
     metadata_metrics+=( "peak_rss_gb=$(<"${METADATA_RSS_FILE}")" )
