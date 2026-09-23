@@ -139,6 +139,13 @@ bias_suffixes_sweep: ["_05", "_06", "_07", "_08"]
 # directory (bias_model<suffix>_bs<N>/) and 03.1 does not select among those.
 # BIAS_BATCH_SIZE in the environment overrides this for a one-off test.
 # bias_batch_size: 128
+
+# Cap the full-model training (04.0) for a pipeline TEST. Unset = chrombpnet's
+# default of 50 epochs with early stopping, which takes hours. A capped model
+# is written where the real one would be (04.1/04.3 read it there), and the
+# run records max_epochs; retrain with --force for a real model.
+# FULL_MODEL_EPOCHS in the environment overrides this.
+# full_model_epochs: 2
 # bias_sweep_folds: ["0"]
 
 # Filled in by hand after 03.1 writes selected_bias_per_fold.tsv.

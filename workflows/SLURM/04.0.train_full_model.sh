@@ -103,6 +103,21 @@ load_gpu_modules
 activate_env "${CONDA_ENV}"
 metadata_params+=( "fold=${fold}" "bias_suffix=${suffix}" )
 
+# Epoch cap. chrombpnet trains up to 50 epochs and early stopping decides; at
+# ~11 min an epoch on molab that is 3-9 hours, which a pipeline TEST does not
+# need. full_model_epochs (config) or FULL_MODEL_EPOCHS (environment, which
+# wins) passes -e. The model lands in the SAME directory -- 04.1 and 04.3 look
+# for it there, and exercising them is the point of a capped run -- so the
+# cap is recorded as max_epochs, and a real training afterwards needs a
+# forced rerun (run_step.sh --force).
+max_epochs="${FULL_MODEL_EPOCHS:-${full_model_epochs:-}}"
+epoch_args=()
+if [[ -n "${max_epochs}" ]]; then
+    [[ "${max_epochs}" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: epoch cap must be a positive integer, got '${max_epochs}'" >&2; exit 1; }
+    epoch_args=( -e "${max_epochs}" )
+fi
+metadata_params+=( "max_epochs=${max_epochs:-50}" )
+
 
 gpu_env
 
@@ -131,7 +146,7 @@ for dataset in "${datasets[@]}"; do
     rm -rf "${out_dir}"
     mkdir -p "${out_dir}"
 
-    echo "[$(date)] [${dataset} fold ${fold}] Training full model (bias ${suffix})..."
+    echo "[$(date)] [${dataset} fold ${fold}] Training full model (bias ${suffix}, max epochs ${max_epochs:-50})..."
 
     python "${src_dir}/chrombpnet_train.py" \
         --prepared-bigwig "${data_path}/signal" \
@@ -145,7 +160,8 @@ for dataset in "${datasets[@]}"; do
         -n "${negatives_file}" \
         -fl "${fold_json}" \
         -b "${bias_model}" \
-        -o "${out_dir}"
+        -o "${out_dir}" \
+        ${epoch_args[@]+"${epoch_args[@]}"}
     # No `set -e` here. Guard on BOTH markers, the same pair the skip-check at
     # the top of this block uses: the model alone is written partway through,
     # and the profile PDF is the last file the evaluation stage emits. Without
