@@ -145,6 +145,10 @@ fi
 
 # Variables the step needs that must survive into the container. Apptainer only
 # forwards names prefixed APPTAINERENV_, so they are set per-invocation below.
+# Every thread pool is capped at MOLAB_CPUS, because the box reports the HOST's
+# cores (os.cpu_count() = 20 on a 4-CPU slice). NUMBA_NUM_THREADS is the easy
+# one to miss: TF-MoDISco (03.3) runs on numba, and without it ran 24 threads
+# at ~1,660% CPU on 4 cores, beside the GPU training that needs one of them.
 container_exec() {
     local idx="$1"; shift
     APPTAINERENV_SLURM_ARRAY_TASK_ID="${idx}" \
@@ -161,6 +165,7 @@ container_exec() {
     APPTAINERENV_MKL_NUM_THREADS="${MOLAB_CPUS}" \
     APPTAINERENV_NUMEXPR_NUM_THREADS="${MOLAB_CPUS}" \
     APPTAINERENV_NUMEXPR_MAX_THREADS="${MOLAB_CPUS}" \
+    APPTAINERENV_NUMBA_NUM_THREADS="${MOLAB_CPUS}" \
     APPTAINERENV_TF_NUM_INTRAOP_THREADS="${MOLAB_CPUS}" \
     APPTAINERENV_TF_NUM_INTEROP_THREADS=1 \
     APPTAINERENV_TF_FORCE_GPU_ALLOW_GROWTH=true \
@@ -200,6 +205,7 @@ for idx in $(expand_array "${array_spec}"); do
           SLURM_CPUS_PER_TASK="${MOLAB_CPUS}" \
           OMP_NUM_THREADS="${MOLAB_CPUS}" \
           NUMEXPR_NUM_THREADS="${MOLAB_CPUS}" NUMEXPR_MAX_THREADS="${MOLAB_CPUS}" \
+          NUMBA_NUM_THREADS="${MOLAB_CPUS}" \
           pixi run -e preprocess bash "${STEPS_DIR}/${step}" "$@" ) 2>&1 | tee "${log}"
     else
         container_exec "${idx}" bash -c \

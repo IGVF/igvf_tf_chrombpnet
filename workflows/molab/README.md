@@ -209,7 +209,9 @@ pipeline "doesn't run on this GPU" as written.
 `nproc` and `free` report the host (20+ cores, 160 GB), not the slice you get
 (4 CPUs, 32 GB). Unpinned, TensorFlow and OpenMP size their thread pools to the
 phantom count and thrash. `env.sh` sets `MOLAB_CPUS=4` and `run_step.sh`
-propagates it to `OMP_NUM_THREADS`, `TF_NUM_INTRAOP_THREADS` and friends.
+propagates it to `OMP_NUM_THREADS`, `TF_NUM_INTRAOP_THREADS`, `NUMBA_NUM_THREADS`
+and friends. Numba is the one that gets missed: TF-MoDISco (03.3) sized its pool
+from the host's 20 cores and ran 24 threads on 4 CPUs until it was capped.
 **Change `MOLAB_CPUS` if your box differs.**
 
 ## Order to run
