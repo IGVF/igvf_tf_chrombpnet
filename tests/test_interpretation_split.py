@@ -56,3 +56,31 @@ def test_wrapper_parses_stop_before_interpretation():
     assert (prepared, require, stop) == ("/p", False, True)
     assert theirs == ["pipeline", "-o", "/out"]
     assert ct._split_argv(["--", "bias", "train"])[2] is False
+
+
+def test_stop_never_imports_the_real_interpret_module(monkeypatch):
+    """The real module turns eager execution off at import; importing it before
+    training broke find_chrombpnet_hyperparams. The stop must be a stand-in."""
+    import chrombpnet_train as ct
+
+    import types
+
+    monkeypatch.delitem(sys.modules, ct.INTERPRET_MODULE, raising=False)
+    # chrombpnet is not installed here: stand in its (empty) parent packages.
+    for name in ("chrombpnet", "chrombpnet.evaluation", "chrombpnet.evaluation.interpret"):
+        if name not in sys.modules:
+            monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+    stub = ct._install_interpretation_stop()
+    parent = sys.modules["chrombpnet.evaluation.interpret"]
+    assert parent.interpret is stub  # what `import ... as interpret` binds on py3.8
+    try:
+        assert sys.modules[ct.INTERPRET_MODULE] is stub
+        assert "tensorflow" not in getattr(stub, "__dict__", {})
+        try:
+            stub.main(None)
+        except ct._StopBeforeInterpretation:
+            pass
+        else:  # pragma: no cover
+            raise AssertionError("stand-in main did not stop the pipeline")
+    finally:
+        sys.modules.pop(ct.INTERPRET_MODULE, None)

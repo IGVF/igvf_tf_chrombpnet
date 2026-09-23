@@ -118,6 +118,49 @@ class _StopBeforeInterpretation(Exception):
     """Raised in place of chrombpnet's interpretation step (--stop-before-interpretation)."""
 
 
+INTERPRET_MODULE = "chrombpnet.evaluation.interpret.interpret"
+
+
+def _install_interpretation_stop():
+    """Make chrombpnet's interpretation step raise instead of running.
+
+    The real module must NOT be imported to do it: interpret.py calls
+    tf.compat.v1.disable_eager_execution() at import time (for SHAP's deep
+    explainer), which switches the whole process out of eager mode -- the
+    first attempt at this imported it to swap `main` and training died in
+    find_chrombpnet_hyperparams on "numpy() is only available when eager
+    execution is enabled". So a stand-in module is registered under its name
+    instead. pipelines.py imports it inside the function (`import ... as
+    interpret`), which resolves through sys.modules and gets the stand-in;
+    the only other importer, CHROMBPNET.py's contribs_bw branch, does not run
+    here, and both package __init__.py files are empty.
+    """
+    import types
+
+    if INTERPRET_MODULE in sys.modules and not getattr(
+        sys.modules[INTERPRET_MODULE], "_igvf_stop", False
+    ):
+        raise RuntimeError(
+            f"{INTERPRET_MODULE} was already imported; eager execution is already off"
+        )
+
+    def _stop(_args):
+        raise _StopBeforeInterpretation
+
+    stub = types.ModuleType(INTERPRET_MODULE)
+    stub.main = _stop
+    stub._igvf_stop = True
+    sys.modules[INTERPRET_MODULE] = stub
+    # `import a.b.c as x` binds x by getattr on the parent package (py3.8), so
+    # the parent packages must exist and carry the stand-in as an attribute.
+    # They are empty __init__.py files: importing them imports nothing else.
+    import importlib
+
+    parent_name, _, leaf = INTERPRET_MODULE.rpartition(".")
+    setattr(importlib.import_module(parent_name), leaf, stub)
+    return stub
+
+
 def _write_train_report(output_dir, data_type, file_prefix) -> None:
     """chrombpnet's own `train`-mode HTML report, which needs no interpretation.
 
@@ -209,18 +252,11 @@ def main() -> int:
     # interpretation entry point is replaced by a stop signal, so everything
     # up to it runs as chrombpnet's unmodified code and nothing after it runs;
     # 04.4 (DeepLIFT) and 04.5 (TF-MoDISco) do the rest from the outputs left.
-    # pipelines.py imports that module inside the function and calls
-    # `interpret.main`, so replacing the attribute here is enough.
     if stop_before_interpretation:
         if not chrombpnet_argv or chrombpnet_argv[0] != "pipeline":
             logger.error("--stop-before-interpretation only applies to `chrombpnet pipeline`")
             return 1
-        import chrombpnet.evaluation.interpret.interpret as interpret_module
-
-        def _stop(_args):
-            raise _StopBeforeInterpretation
-
-        interpret_module.main = _stop
+        _install_interpretation_stop()
 
     import chrombpnet.CHROMBPNET as chrombpnet_cli
 
