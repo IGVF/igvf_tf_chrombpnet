@@ -321,3 +321,19 @@ def test_emit_metadata_cli_does_not_invent_a_peak_rss(tmp_path):
     )
     rec = json.loads(next(tmp_path.glob("*.json")).read_text())
     assert rec["peak_rss_gb"] is None
+
+
+def test_report_peak_rss_writes_gib_when_asked(tmp_path, monkeypatch):
+    """03.0, 03.2 and 03.3 read this file into their peak_rss_gb metric."""
+    target = tmp_path / ".peak_rss_gb"
+    monkeypatch.setenv("METADATA_RSS_FILE", str(target))
+    metadata.report_peak_rss()
+    peak = float(target.read_text())
+    assert 0 < peak < 1024  # a test process: some MB, never zero, never TB
+
+
+def test_report_peak_rss_is_silent_when_not_asked(tmp_path, monkeypatch):
+    monkeypatch.delenv("METADATA_RSS_FILE", raising=False)
+    monkeypatch.chdir(tmp_path)
+    metadata.report_peak_rss()
+    assert list(tmp_path.iterdir()) == []

@@ -84,6 +84,11 @@ require_input "${genome_fa}" "cli.py download-references"
 require_input "${fold_json}"
 require_input "${chrom_sizes}" "cli.py download-references"
 metadata_outputs+=( "bias_qc=${out_dir}/evaluation" )
+for _kind in profile counts; do
+    metadata_outputs+=( "motifs=${out_dir}/auxiliary/interpret_subsample/${file_prefix}_modisco_results_${_kind}_scores.h5" )
+    metadata_outputs+=( "motif_report=${out_dir}/evaluation/${file_prefix}_bias_${_kind}.pdf" )
+done
+unset _kind
 preflight_check
 
 load_gpu_modules
@@ -107,6 +112,8 @@ fi
 # here at all, which is the whole reason this is a separate step -- 03.2 would
 # otherwise hold one idle for hours. Same reasoning as 08.0, and high_p is what
 # actually gets the longer walltime: the default QOS caps at 2 days.
+METADATA_RSS_FILE="${out_dir}/.peak_rss_gb_033"   # TF-MoDISco runs as a child; its peak counts
+export METADATA_RSS_FILE
 python "${src_dir}/run_bias_qc.py" \
     --stage modisco \
     --bias-model "${model_file}" \
@@ -116,6 +123,7 @@ python "${src_dir}/run_bias_qc.py" \
     --chrom-sizes "${chrom_sizes}" \
     --fold-json "${fold_json}"
 _rc=$?
+[[ -s "${METADATA_RSS_FILE}" ]] && metadata_metrics+=( "peak_rss_gb=$(<"${METADATA_RSS_FILE}")" )
 _report="${out_dir}/evaluation/${file_prefix}_bias_profile.pdf"
 if [[ ${_rc} -ne 0 || ! -f "${_report}" ]]; then
     echo "ERROR: run_bias_qc.py --stage modisco failed for fold ${fold}; ${_report} was not written." >&2

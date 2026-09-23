@@ -42,7 +42,7 @@ from pathlib import Path
 # conda envs, under pixi, and under a bare python).
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib" / "python"))
 
-from utils import log  # noqa: E402
+from utils import log, metadata  # noqa: E402
 
 logger = log.get_logger(__name__)
 
@@ -215,4 +215,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        metadata.report_peak_rss()  # DeepLIFT (03.2) and TF-MoDISco (03.3) peaks

@@ -85,6 +85,11 @@ require_input "${genome_fa}" "cli.py download-references"
 require_input "${fold_json}"
 require_input "${chrom_sizes}" "cli.py download-references"
 metadata_outputs+=( "bias_qc=${out_dir}/evaluation" )
+# The files, not only their directory: 03.3 consumes the two score files, and a
+# record that names only evaluation/ cannot say whether they were written.
+metadata_outputs+=( "bias_metrics=${out_dir}/evaluation/${file_prefix}_bias_metrics.json" )
+metadata_outputs+=( "contributions=${out_dir}/auxiliary/interpret_subsample/${file_prefix}_bias.counts_scores.h5" )
+metadata_outputs+=( "contributions=${out_dir}/auxiliary/interpret_subsample/${file_prefix}_bias.profile_scores.h5" )
 preflight_check
 
 load_gpu_modules
@@ -107,6 +112,8 @@ fi
 # --stage gpu: predictions + DeepLIFT only. TF-MoDISco is CPU-only and is the
 # long pole, so it runs in 03.3 on a CPU partition rather than holding this
 # allocation's GPU idle for hours. Same reasoning as 08.0.
+METADATA_RSS_FILE="${out_dir}/.peak_rss_gb_032"   # see 03.0: the step's real footprint
+export METADATA_RSS_FILE
 python "${src_dir}/run_bias_qc.py" \
     --stage gpu \
     --bias-model "${model_file}" \
@@ -116,6 +123,7 @@ python "${src_dir}/run_bias_qc.py" \
     --chrom-sizes "${chrom_sizes}" \
     --fold-json "${fold_json}"
 _rc=$?
+[[ -s "${METADATA_RSS_FILE}" ]] && metadata_metrics+=( "peak_rss_gb=$(<"${METADATA_RSS_FILE}")" )
 _scores="${out_dir}/auxiliary/interpret_subsample/${file_prefix}_bias.profile_scores.h5"
 if [[ ${_rc} -ne 0 || ! -f "${_scores}" ]]; then
     echo "ERROR: run_bias_qc.py --stage gpu failed for fold ${fold}; ${_scores} was not written." >&2

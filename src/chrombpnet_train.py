@@ -182,26 +182,8 @@ def main() -> int:
         # peak RSS is the step's real footprint. The step's metadata trap runs
         # in a SIBLING process (emit_metadata.py) that cannot see it, so hand
         # the number over through a file. See docs/resource-measurements.md.
-        _report_peak_rss()
+        metadata.report_peak_rss()
     return 0
-
-
-def _report_peak_rss() -> None:
-    """Write peak RSS (GiB) to $METADATA_RSS_FILE, if the step asked for it."""
-    target = os.environ.get("METADATA_RSS_FILE")
-    if not target:
-        return
-    try:
-        import resource
-
-        scale = 1 if sys.platform == "darwin" else 1024  # macOS reports bytes
-        peak = max(
-            resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
-            resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,
-        )
-        Path(target).write_text(f"{peak * scale / 2**30:.3f}\n")
-    except Exception:  # noqa: BLE001  # provenance must not fail a step
-        logger.debug("could not record peak RSS", exc_info=True)
 
 
 if __name__ == "__main__":

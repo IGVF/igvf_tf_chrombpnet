@@ -55,6 +55,7 @@ from __future__ import annotations
 import getpass
 import hashlib
 import json
+import logging
 import os
 import platform
 import socket
@@ -605,3 +606,29 @@ def default_dir(results_path=None) -> Path | None:
     if results_path:
         return Path(results_path) / "metadata"
     return None
+
+
+def report_peak_rss() -> None:
+    """Write this process's peak RSS (GiB) to $METADATA_RSS_FILE, if the step asked.
+
+    The process that allocates the big arrays is the one whose peak is the
+    step's real footprint. A bash step's metadata trap runs in a SIBLING
+    (emit_metadata.py), which cannot see it, so the number is handed over
+    through a file the step then reads into `metadata_metrics`. Children the
+    process waited for count too (RUSAGE_CHILDREN) -- TF-MoDISco runs as one.
+    See docs/resource-measurements.md.
+    """
+    target = os.environ.get("METADATA_RSS_FILE")
+    if not target:
+        return
+    try:
+        import resource
+
+        scale = 1 if sys.platform == "darwin" else 1024  # macOS reports bytes
+        peak = max(
+            resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+            resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,
+        )
+        Path(target).write_text(f"{peak * scale / 2**30:.3f}\n")
+    except Exception:  # noqa: BLE001  # provenance must not fail a step
+        logging.getLogger(__name__).debug("could not record peak RSS", exc_info=True)
