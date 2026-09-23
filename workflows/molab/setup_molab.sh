@@ -25,13 +25,24 @@
 # makes `apptainer build --sandbox` delete its own output, which is why this
 # script calls unsquashfs directly.
 #
-# Why the .sif is DELETED afterwards: the box has no disk quota it reports
-# (`df` says 8.0E) but kills the session when the real one is hit, and the
-# image (8.4 GB) plus the sandbox (16 GB) is most of it. The .sif is never
-# read again once unpacked, so it goes -- but only after the sandbox's entry
-# count matches the image's listing and the patch below has been verified.
-# The sandbox then carries a `.igvf_molab/complete` marker, and a rerun skips
-# the image entirely rather than re-downloading 8.4 GB to md5 it.
+# Why the .sif is DELETED as soon as it is unpacked: the box reports no disk
+# quota (`df` says 8.0E), so nothing here can see how close it is to a real
+# one, and the image is dead weight once unpacked. Its md5 is checked against
+# the bucket and its entry count taken BEFORE extraction, so nothing reads it
+# after unsquashfs returns; a failed count means re-downloading, which is what
+# gcs_fetch's resume path is for. Peak: ~24 GB at the end of the unpack (image
+# + sandbox), ~16 GB from then on. Two markers under `.igvf_molab/`:
+# `unpacked` (sandbox matches the image) and `complete` (encoder verified), so
+# a rerun never touches the image again and a failed bake re-bakes only.
+#
+# Why output goes to ${MOLAB_SETUP_LOG} and unsquashfs runs -no-progress: runs
+# from marimo's web terminal repeatedly killed the whole session during the
+# unpack, while the same script with output going to a file got through the
+# same 24 GB peak. The cause is not proven, but the ~400k progress-bar redraws
+# are the obvious difference, and if a session dies anyway the log in /marimo
+# shows how far it got. Each line carries the space used on /: the memory
+# figures gVisor exposes stay flat while files are written, so that is the
+# only counter that moves.
 #
 # Why the one-hot encoder is baked in here but monkey-patched on the cluster:
 # the cluster runs the stock .sif, so `src/chrombpnet_train.py` calls
@@ -49,7 +60,9 @@
 #         bash workflows/molab/setup_molab.sh --skip-references
 # Prerequisites: root (for apt), outbound HTTPS, and GCP_BUCKET + GCP_SA_JSON
 #   (the service-account key as inline JSON) in the .env env.sh sources. Disk:
-#   ~26 GB at peak (image + sandbox), ~17 GB after the image is deleted.
+#   ~24 GB at the end of the unpack (image + sandbox), ~17 GB after it.
+
+# shellcheck disable=SC2218  # 0.11.0 false positive (see CLAUDE.md): log() is defined before use
 
 set -euo pipefail
 
@@ -67,18 +80,22 @@ APT=(env DEBIAN_FRONTEND=noninteractive apt-get -y -qq
 SKIP_REFERENCES=0
 [[ "${1:-}" == "--skip-references" ]] && SKIP_REFERENCES=1
 
-log() { echo "[$(date '+%F %T')] $*"; }
+MOLAB_SETUP_LOG="${MOLAB_SETUP_LOG:-/marimo/setup_molab.log}"
+mkdir -p "$(dirname "${MOLAB_SETUP_LOG}")"
+exec > >(tee -a "${MOLAB_SETUP_LOG}") 2>&1
+
+log() { echo "[$(date '+%F %T')] [/ used: $(df -h --output=used / | tail -1 | tr -d ' ')] $*"; }
+log "setup_molab.sh started (log: ${MOLAB_SETUP_LOG})"
 
 [[ -n "${GCP_BUCKET:-}" ]]  || { echo "ERROR: GCP_BUCKET is not set (see workflows/molab/.env.example)" >&2; exit 1; }
 [[ -n "${GCP_SA_JSON:-}" ]] || { echo "ERROR: GCP_SA_JSON is not set (see workflows/molab/.env.example)" >&2; exit 1; }
 
 # ── 0. apt ────────────────────────────────────────────────────────────────────
 # The image ships with empty package lists, so every install below fails
-# without this. force-confold keeps our edited apptainer.conf across upgrades.
-log "apt: update + upgrade"
+# without this. No `upgrade`: nothing here needs newer packages, and on a box
+# whose every written byte counts against a hidden limit it is pure cost.
+log "apt: update"
 "${APT[@]}" update
-"${APT[@]}" upgrade >/dev/null
-"${APT[@]}" clean
 
 # ── 1. locale ─────────────────────────────────────────────────────────────────
 # The image sets LC_ALL=en_US.UTF-8 but ships no generated locale, so every
@@ -202,10 +219,18 @@ GCS_TOKEN=$(gcs_token)
 log "authenticated to gs://${GCP_BUCKET} as $(sa_field client_email)"
 
 # ── 4. container: image -> sandbox ──────────────────────────────────────────
+# Two markers: `unpacked` once the sandbox matches the image (the image is
+# gone from then on), `complete` once the baked encoder has verified too. A
+# rerun after a failed bake therefore re-bakes without re-downloading.
+UNPACKED="${MOLAB_SANDBOX}/.igvf_molab/unpacked"
 MARKER="${MOLAB_SANDBOX}/.igvf_molab/complete"
-if [[ -f "${MARKER}" ]]; then
-    log "sandbox present and verified: ${MOLAB_SANDBOX} (image not needed)"
+# `complete` alone is a sandbox from before `unpacked` existed; it was verified.
+if [[ -f "${UNPACKED}" || -f "${MARKER}" ]]; then
+    log "sandbox present and matches its image: ${MOLAB_SANDBOX} (image not needed)"
 else
+    # Whatever is here without the marker is a killed unpack: start clean,
+    # before the download, so the two never add up on disk.
+    rm -rf "${MOLAB_SANDBOX}"
     mkdir -p "$(dirname "${MOLAB_SIF}")"
     gcs_fetch "${SIF_OBJECT}" "${MOLAB_SIF}"
 
@@ -213,22 +238,31 @@ else
     offset=$(apptainer sif list "${MOLAB_SIF}" | awk -F'|' '/Squashfs/ {split($4,a,"-"); gsub(/ /,"",a[1]); print a[1]}')
     [[ -n "${offset}" ]] || { echo "ERROR: could not find the squashfs offset in ${MOLAB_SIF}" >&2; exit 1; }
 
-    if [[ ! -x "${MOLAB_SANDBOX}/bin/sh" ]]; then
-        log "unpacking container to ${MOLAB_SANDBOX} (squashfs at offset ${offset})"
-        rm -rf "${MOLAB_SANDBOX}"
-        # -no-exit-code: gVisor forbids mknod, so device nodes fail and
-        # unsquashfs would exit 2 on an otherwise complete extraction.
-        unsquashfs -no-exit-code -ignore-errors -p "${MOLAB_CPUS}" \
-            -d "${MOLAB_SANDBOX}" -o "${offset}" "${MOLAB_SIF}"
-    fi
-
     # Every entry in the image, less its root and the device nodes gVisor
-    # cannot create, must exist in the sandbox. Streamed: nothing is written.
+    # cannot create, must exist in the sandbox. Counted BEFORE extraction, so
+    # the image can be deleted the moment unsquashfs returns. Streamed.
     want=$(unsquashfs -o "${offset}" -lls "${MOLAB_SIF}" 2>/dev/null \
         | awk '/^[-dlps][rwxsStT-]{9}/ {n++} END {print n - 1}')
+    [[ "${want}" -gt 0 ]] || { echo "ERROR: could not list ${MOLAB_SIF}" >&2; exit 1; }
+
+    log "unpacking container to ${MOLAB_SANDBOX} (squashfs at offset ${offset}, ${want} entries)"
+    # -no-exit-code: gVisor forbids mknod, so device nodes fail and
+    # unsquashfs would exit 2 on an otherwise complete extraction.
+    # -no-progress: the bar redraws ~400k times, which buries the log and is
+    # a lot to push through marimo's web terminal.
+    unsquashfs -no-exit-code -ignore-errors -no-progress -p "${MOLAB_CPUS}" \
+        -d "${MOLAB_SANDBOX}" -o "${offset}" "${MOLAB_SIF}"
+    log "removing ${MOLAB_SIF} (md5-checked and listed; not read again)"
+    rm -f "${MOLAB_SIF}" "${MOLAB_SIF}.part"
+
     have=$(find "${MOLAB_SANDBOX}" -mindepth 1 -not -path "${MOLAB_SANDBOX}/.igvf_molab*" | wc -l)
-    [[ "${want}" == "${have}" ]] \
-        || { echo "ERROR: sandbox has ${have} entries, image has ${want}; rm -rf ${MOLAB_SANDBOX} and rerun" >&2; exit 1; }
+    if [[ "${want}" != "${have}" ]]; then
+        echo "ERROR: sandbox has ${have} entries, image has ${want}; removing it, rerun to re-download" >&2
+        rm -rf "${MOLAB_SANDBOX}"
+        exit 1
+    fi
+    mkdir -p "$(dirname "${UNPACKED}")"
+    date -Is > "${UNPACKED}"
     log "sandbox matches image: ${have} entries"
 fi
 
@@ -272,12 +306,9 @@ then
 fi
 
 # ── 6. keep only what is needed ─────────────────────────────────────────────
-mkdir -p "$(dirname "${MARKER}")"
 [[ -f "${MARKER}" ]] || date -Is > "${MARKER}"
-if [[ -f "${MOLAB_SIF}" || -f "${MOLAB_SIF}.part" ]]; then
-    log "removing ${MOLAB_SIF} (sandbox verified; the image is not read again)"
-    rm -f "${MOLAB_SIF}" "${MOLAB_SIF}.part"
-fi
+# The image went right after the unpack; this only catches a stray one.
+rm -f "${MOLAB_SIF}" "${MOLAB_SIF}.part"
 log "sandbox: $(du -sh "${MOLAB_SANDBOX}" | cut -f1)"
 
 mkdir -p "${MOLAB_CUDA_CACHE}" "${MOLAB_MPLCONFIG}"
@@ -290,10 +321,12 @@ if ! command -v pixi >/dev/null 2>&1; then
 fi
 log "pixi: $(pixi --version)"
 log "installing the pixi qc environment"
-(cd "${REPO_ROOT}" && pixi install -e qc)
+# Every pixi call runs from REPO_ROOT: pixi resolves a manifest from the cwd
+# upwards even for `clean cache`, and /marimo (the usual cwd here) holds
+# marimo's own pyproject.toml with no [tool.pixi], which pixi refuses.
 # The env is hardlinked out of the package cache, so clearing the cache frees
 # the downloaded archives (~1.5 GB) without touching the installed env.
-pixi clean cache --yes >/dev/null
+(cd "${REPO_ROOT}" && pixi install -e qc && pixi clean cache --yes >/dev/null)
 
 # ── 8. d0 test data ──────────────────────────────────────────────────────────
 log "fetching test data into ${MOLAB_DATA_DIR}"
@@ -307,7 +340,7 @@ if [[ "${SKIP_REFERENCES}" == "1" ]]; then
     log "skipping references (--skip-references)"
 else
     log "fetching references into ${REFERENCE_ROOT}"
-    (cd "${REPO_ROOT}" && pixi run -e qc python src/cli.py download-references --dataset "${DATASET}")
+    (cd "${REPO_ROOT}" && pixi run -e qc python src/cli.py download-references --path "${DATASET_CONFIG}")
 fi
 
 log "setup complete."

@@ -691,6 +691,7 @@ def prepare_bigwig(
 
 @cli.command("download-references")
 @click.option("--dataset", default=None, help="Dataset name under config/.")
+@click.option("--path", default=None, type=click.Path(), help="Explicit config.yaml.")
 @click.option(
     "--reference-root",
     default=None,
@@ -700,7 +701,7 @@ def prepare_bigwig(
 @click.option("--metadata-dir", default=None, type=click.Path(file_okay=False))
 @verbose_opt
 @quiet_opt
-def download_references(dataset, reference_root, metadata_dir, verbose, quiet):
+def download_references(dataset, path, reference_root, metadata_dir, verbose, quiet):
     """Fetch the shared genome, chrom.sizes, blacklist and motif DB.
 
     Run once per cluster. Idempotent: files already present are left alone, and
@@ -712,10 +713,8 @@ def download_references(dataset, reference_root, metadata_dir, verbose, quiet):
     from, so the two cannot disagree.
     """
     _setup_logging(verbose, quiet)
-    if reference_root is None and dataset:
-        reference_root = cfg.load(REPO_ROOT / "config" / dataset / "config.yaml").get(
-            "reference_root"
-        )
+    if reference_root is None and (dataset or path):
+        reference_root = cfg.load(_config_path(dataset, path)).get("reference_root")
     ref = references.layout(reference_root)
     meta_dir = metadata_dir or (Path(ref["REFERENCE_ROOT"]) / "metadata")
 

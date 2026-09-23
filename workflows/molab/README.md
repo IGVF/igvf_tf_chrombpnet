@@ -88,21 +88,25 @@ in sequence rather than in parallel.
 
 ## The four files
 
-- **`setup_molab.sh`** — idempotent, run once. Runs `apt-get update` +
-  `upgrade`, generates the `en_US.UTF-8` locale, installs Apptainer + its
+- **`setup_molab.sh`** — idempotent, run once. Runs `apt-get update`,
+  generates the `en_US.UTF-8` locale, installs Apptainer + its
   userspace mount helpers, downloads the container from the private bucket
   `gs://${GCP_BUCKET}` (7.8 GiB, md5 checked against the bucket), unpacks it to
-  a sandbox directory, checks the sandbox against the image's listing, bakes
-  the low-memory one-hot encoder (`lib/python/utils/onehot.py`) into it and
-  verifies it byte-for-byte against upstream inside the container, then
-  **deletes the `.sif`**. It then installs the pixi `qc` environment (and
+  a sandbox directory, **deletes the `.sif`** the moment the unpack returns,
+  checks the sandbox against the image's listing (counted before extraction),
+  then bakes the low-memory one-hot encoder (`lib/python/utils/onehot.py`)
+  into it and verifies it byte-for-byte against upstream inside the container.
+  It then installs the pixi `qc` environment (and
   clears pixi's package cache), and fetches the d0 test data into
-  `/marimo/data/test_data_d0/{config,inputs}/` and the shared references.
+  `/marimo/data/test_data_d0/{config,inputs}/` and the shared references
+  (reading `reference_root` from `$DATASET_CONFIG`).
   `--skip-references` if you already have them. Needs `GCP_BUCKET` and
   `GCP_SA_JSON` (the service-account key as inline JSON) in a `.env`; there is
-  no gcloud — the token is minted with `openssl`. Disk: ~26 GB at peak,
-  ~17 GB once the image is gone. A rerun sees the sandbox's
-  `.igvf_molab/complete` marker and never touches the image again; to rebuild,
+  no gcloud — the token is minted with `openssl`. Disk: ~24 GB at the end of
+  the unpack, ~16 GB after it, ~22 GB with the references. Everything is also
+  written to `/marimo/setup_molab.log` (override with `MOLAB_SETUP_LOG`), which
+  is where to look if the session dies. A rerun sees the sandbox's
+  `.igvf_molab/unpacked` marker and never touches the image again; to rebuild,
   `rm -rf` the sandbox.
 - **`env.sh`** — every variable in one place. Source it per shell.
   **`git push` needs it too.** The credential helper it installs expands
@@ -229,3 +233,5 @@ outside the checkout, `reference_root` pointing at the local reference tree.
 | First GPU step hangs for ~2 min | sm_120 PTX JIT on a cold cache. See **The GPU**. |
 | `bedtools: command not found` in 00.x | Step dispatched to pixi but needs the container — check the table in `run_step.sh`. |
 | `FileExistsError: ..._auxiliary/` in 01.0 | A killed `chrombpnet prep nonpeaks`; 01.0 clears a stale one, so re-run the step. |
+| `found pyproject.toml without tool.pixi section at directory /marimo` | pixi run from `/marimo`, which holds marimo's own `pyproject.toml`. Run pixi from the checkout, or pass `--manifest-path`. |
+| Session dies during setup's unpack | Read `/marimo/setup_molab.log`; each line records the space used on `/`. Rerun: the image and a partial sandbox are cleared and redone. |
