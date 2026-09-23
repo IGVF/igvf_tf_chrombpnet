@@ -228,14 +228,14 @@ def density_scatter(ax, x, y, bins=30):
 
 
 # %%
-def load_combined_metrics(core_path: Path, datasets: list[str]) -> pd.DataFrame:
+def load_combined_metrics(tables: dict[str, Path]) -> pd.DataFrame:
     """
-    Read model_metrics.tsv from each dataset's QC output directory.
+    Read each dataset's model_metrics.tsv ({dataset: path}).
     Skips missing files with a warning.
     """
     frames = []
-    for ds in datasets:
-        tsv = core_path / ds / "results" / "plots" / "full_model_qc" / "model_metrics.tsv"
+    for ds, tsv in tables.items():
+        tsv = Path(tsv)
         if not tsv.exists():
             logger.warning(f"  [MISSING] {tsv}")
             continue
@@ -351,7 +351,7 @@ def parse_args():
     )
     # No default: the dataset names are real directory names and a wrong guess
     # silently produces an empty plot. They come from the config via the step.
-    p.add_argument("--datasets", nargs="+", required=True)
+    p.add_argument("--datasets", nargs="+", default=None)
     p.add_argument("--folds", nargs="+", default=["0"])
     p.add_argument("--peak-type", default="all")
     p.add_argument("--out-dir", default="qc")
@@ -366,7 +366,16 @@ def parse_args():
     p.add_argument(
         "--core-path",
         default=None,
-        help="Project root (required with --combined); datasets live at <core-path>/<dataset>/",
+        help="With --combined: project root where datasets live at <core-path>/<dataset>/. "
+        "Prefer --metrics, which does not assume that layout.",
+    )
+    p.add_argument(
+        "--metrics",
+        nargs="+",
+        default=None,
+        metavar="DATASET=PATH",
+        help="With --combined: each dataset's model_metrics.tsv, wherever its config put "
+        "its results. 04.2 resolves these through lib/bash/config.sh.",
     )
     log.add_logging_args(p)
     return p.parse_args()
@@ -381,12 +390,27 @@ def main():
     if not args.combined and (not args.full_model_dir or not args.data_path):
         logger.error("--full-model-dir and --data-path are required unless --combined is set")
         sys.exit(1)
+    if not args.combined and not args.datasets:
+        logger.error("--datasets is required (the names are real directory names; no default)")
+        sys.exit(1)
 
     if args.combined:
-        if not args.core_path:
-            logger.warning("ERROR: --core-path is required with --combined")
+        if args.metrics:
+            tables = dict(m.split("=", 1) for m in args.metrics)
+        elif args.core_path:
+            tables = {
+                ds: Path(args.core_path)
+                / ds
+                / "results"
+                / "plots"
+                / "full_model_qc"
+                / "model_metrics.tsv"
+                for ds in args.datasets
+            }
+        else:
+            logger.error("--combined needs --metrics DATASET=PATH ... (or --core-path)")
             sys.exit(1)
-        combined_df = load_combined_metrics(Path(args.core_path), args.datasets)
+        combined_df = load_combined_metrics(tables)
         if combined_df.empty:
             logger.warning("No metrics found for any dataset. Exiting.")
             return

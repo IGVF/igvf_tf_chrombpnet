@@ -137,7 +137,7 @@ derived output paths live in `config.sh`.
 | `03.3.modisco_selected_bias.sh` | fold | yes |
 | `04.0.train_full_model.sh` | fold | yes |
 | `04.1.qc_run_full_model.sh` | — | yes |
-| `04.2.qc_combined_boxplot.sh` | — | no (hardcoded `CORE_PATH`) |
+| `04.2.qc_combined_boxplot.sh` | — | no (discovers `config/*/config.yaml` plus `DATASET_CONFIG`) |
 | `04.3.generate_predictions.sh` | dataset | yes |
 | `05.0.get_contrib_scores.sh` | fold | yes |
 | `06.0.average_contrib_scores.sh` | dataset | yes |
@@ -384,12 +384,13 @@ say which of the two kinds of verification a change actually got.
   with the fix in the message, so this surfaces immediately rather than several
   minutes into a GPU job — but **each of those three files needs the line deleted.**
 
-- **Absolute `opushkar` paths remain in four places**: the three conda envs and
-  `ref_db_meme` in `lib/bash/common.sh`, `CORE_PATH` in `04.2.qc_combined_boxplot.sh`
-  (now `${CORE_PATH:-...}`, so it can be overridden at submit time), `core_path` in
-  `src/qc_datasets.py`, and `out_path` in `00.0.prepare_signal.sh`. They are no
-  longer duplicated — `09.0.cross_dataset_compendium.sh` used to re-declare four of them
-  "mirroring config.sh" and now sources `common.sh`.
+- **Absolute `opushkar` paths remain in three places**: the three conda env
+  defaults in `lib/bash/common.sh` (each overridable: `CHROMBPNET_ENV`,
+  `FINEMO_ENV`, `MOTIF_COMPENDIUM_ENV`), `core_path` in `src/qc_datasets.py`,
+  and the `runs` view's glob in `queries.sql` (point it at your own metadata;
+  the molab notebook rewrites it when it loads the views). They are no longer
+  duplicated — `09.0.cross_dataset_compendium.sh` used to re-declare several of
+  them "mirroring config.sh" and now sources `common.sh`.
 
 - **The endothelial dataset is named two ways and laid out differently.**
   `qc_datasets.py` calls it `igvf17_endothelial`; `README.md`, `qc_full_model.py` and

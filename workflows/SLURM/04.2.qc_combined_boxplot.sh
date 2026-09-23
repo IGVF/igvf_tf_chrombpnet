@@ -1,10 +1,11 @@
 #!/bin/bash
 # shellcheck disable=SC2218  # false positive in shellcheck 0.11.0: metadata_start and
 # activate_env both come from lib/bash/common.sh, sourced above.
-# Plot combined full-model QC metrics for all four datasets side by side.
-# Run once after 04.1.qc_run_full_model.sh has completed for all datasets.
-# No DATASET selection needed: it discovers datasets from config/ and combines
-# whichever have 04.1 output.
+# Plot combined full-model QC metrics for every dataset side by side.
+# Run once after 04.1.qc_run_full_model.sh has completed for the datasets.
+# No DATASET selection needed: it discovers the configs under config/ (plus
+# DATASET_CONFIG when set), resolves each one's results through config.sh, and
+# combines whichever have 04.1 output.
 
 #SBATCH --job-name=model_qc_combined
 #SBATCH --mem=8G
@@ -42,24 +43,44 @@ export REPO_ROOT
 # shellcheck source=lib/bash/common.sh
 source "${REPO_ROOT}/lib/bash/common.sh" || exit 1
 
-# Cross-dataset step: the root is DATASET_ROOT (config/README.md), and the
-# datasets are whatever configs exist under config/ -- not a hardcoded list that
-# silently goes stale when a dataset is added or renamed.
+# Cross-dataset step. The datasets are the configs that exist -- every
+# config/*/config.yaml in the repo, plus DATASET_CONFIG when set (a dataset whose
+# config lives with its data, like molab's d0) -- not a hardcoded list that goes
+# stale. WHERE each keeps its results is its own config's business (output_dir
+# can be anywhere), so each is resolved by sourcing lib/bash/config.sh for it in
+# a subshell: the same derivation every per-dataset step uses, not a guess at
+# <root>/<name>/results.
 core_path="${DATASET_ROOT:-${REPO_ROOT}}"
 
-combined_datasets=()
+_configs=()
 for _cfg in "${REPO_ROOT}"/config/*/config.yaml; do
     [[ -f "${_cfg}" ]] || continue
-    _name="$(basename "$(dirname "${_cfg}")")"
-    [[ "${_name}" == "example_dataset" ]] && continue     # the template, not a dataset
-    # Only include datasets that actually have per-dataset QC output to combine.
-    [[ -f "${core_path}/${_name}/results/plots/full_model_qc/model_metrics.tsv" ]] \
-        && combined_datasets+=( "${_name}" )
+    [[ "$(basename "$(dirname "${_cfg}")")" == "example_dataset" ]] && continue   # the template
+    _configs+=( "${_cfg}" )
 done
-unset _cfg _name
+[[ -n "${DATASET_CONFIG:-}" && -f "${DATASET_CONFIG}" ]] && _configs+=( "${DATASET_CONFIG}" )
+
+combined_datasets=()
+metrics_args=()
+declare -A _seen=()
+for _cfg in "${_configs[@]}"; do
+    # shellcheck disable=SC2016  # expanded by the subshell, after config.sh defines them
+    _resolved="$(DATASET_CONFIG="${_cfg}" bash -c 'source "$1/lib/bash/config.sh" >/dev/null 2>&1 && printf "%s\t%s\n" "${dataset_name}" "${results_path}"' _ "${REPO_ROOT}")" \
+        || { echo "[WARN] cannot resolve ${_cfg}; skipped" >&2; continue; }
+    _name="${_resolved%%$'\t'*}"; _results="${_resolved#*$'\t'}"
+    [[ -n "${_seen[${_name}]:-}" ]] && continue
+    _seen["${_name}"]=1
+    _tsv="${_results}/plots/full_model_qc/model_metrics.tsv"
+    # Only datasets that actually have 04.1 output to combine.
+    if [[ -f "${_tsv}" ]]; then
+        combined_datasets+=( "${_name}" )
+        metrics_args+=( "${_name}=${_tsv}" )
+    fi
+done
+unset _cfg _configs _resolved _name _results _tsv _seen
 
 if [[ ${#combined_datasets[@]} -eq 0 ]]; then
-    echo "ERROR: no dataset under ${core_path} has full_model_qc/model_metrics.tsv." >&2
+    echo "ERROR: no dataset config resolves to a results tree with full_model_qc/model_metrics.tsv." >&2
     echo "  Run 04.1.qc_run_full_model.sh for each dataset first." >&2
     exit 1
 fi
@@ -68,7 +89,12 @@ out_dir="${core_path}/results/plots/full_model_qc_combined"
 
 metadata_start "04.2.qc_combined_boxplot"
 metadata_params+=( "datasets=${combined_datasets[*]}" )
-metadata_outputs+=( "metrics=${out_dir}/cross_dataset_boxplot.pdf" )
+# The names qc_full_model.py --combined actually writes (this used to declare
+# cross_dataset_boxplot.pdf, which nothing writes, so every run recorded its
+# output as missing).
+metadata_outputs+=( "metrics=${out_dir}/combined_model_metrics.tsv" )
+metadata_outputs+=( "plot=${out_dir}/combined_performance_boxplot.pdf" )
+for _m in "${metrics_args[@]}"; do metadata_inputs+=( "metrics=${_m#*=}" ); done
 
 activate_env "${CONDA_ENV}"
 
@@ -76,6 +102,5 @@ echo "[$(date)] Combining full-model QC across: ${combined_datasets[*]}"
 
 python "${src_dir}/qc_full_model.py" \
     --combined \
-    --core-path "${core_path}" \
-    --datasets  "${combined_datasets[@]}" \
+    --metrics   "${metrics_args[@]}" \
     --out-dir   "${out_dir}"
