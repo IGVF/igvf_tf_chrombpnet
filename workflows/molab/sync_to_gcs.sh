@@ -33,6 +33,13 @@
 #   bash workflows/molab/sync_to_gcs.sh                 # sync everything
 #   bash workflows/molab/sync_to_gcs.sh --bundle-only   # just the commits (fast)
 #   bash workflows/molab/sync_to_gcs.sh --dry-run       # list, upload nothing
+#   bash workflows/molab/sync_to_gcs.sh --restore       # bucket -> box, the reverse
+#
+# --restore fetches results/ back into ${output_dir}, but ONLY files missing
+# locally. A local file that differs from the bucket is newer work not synced
+# yet (a step re-ran), so it is never overwritten; downloads are md5-checked.
+# run_step.sh calls it before running anything, so a fresh box sees what a
+# dead one already finished and skips it.
 # Prerequisites: GCP_BUCKET + GCP_SA_JSON in the .env env.sh sources, for a
 #   service account allowed to write objects under the prefix.
 
@@ -45,11 +52,13 @@ source "${SCRIPT_DIR}/env.sh"
 PREFIX="${MOLAB_GCS_PREFIX:-chrombpnet/test_data_d0}"
 BUNDLE_ONLY=0
 DRY=0
+RESTORE=0
 for a in "$@"; do
     case "$a" in
         --bundle-only) BUNDLE_ONLY=1 ;;
         --dry-run)     DRY=1 ;;
-        -h|--help)     sed -n '2,39p' "$0"; exit 0 ;;
+        --restore)     RESTORE=1 ;;
+        -h|--help)     sed -n '2,44p' "$0"; exit 0 ;;
         *) echo "ERROR: unknown option $a" >&2; exit 1 ;;
     esac
 done
@@ -59,7 +68,7 @@ log() { echo "[$(date '+%F %T')] $*"; }
 [[ -n "${GCP_BUCKET:-}" ]]  || { echo "ERROR: GCP_BUCKET is not set (see workflows/molab/.env.example)" >&2; exit 1; }
 [[ -n "${GCP_SA_JSON:-}" ]] || { echo "ERROR: GCP_SA_JSON is not set (see workflows/molab/.env.example)" >&2; exit 1; }
 
-GCS_SCOPE=read_write
+if [[ "${RESTORE}" == "1" ]]; then GCS_SCOPE=read_only; else GCS_SCOPE=read_write; fi
 # shellcheck source=workflows/molab/gcs.sh
 source "${SCRIPT_DIR}/gcs.sh"
 GCS_TOKEN=$(gcs_token) || { echo "ERROR: could not mint a GCS token" >&2; exit 1; }
@@ -69,6 +78,27 @@ config_file="${DATASET_CONFIG:-${REPO_ROOT}/config/${DATASET}/config.yaml}"
 output_dir=$(python3 "${REPO_ROOT}/lib/python/utils/config.py" export "${config_file}" \
     | sed -n 's/^output_dir=//p' | tr -d '"')
 [[ -n "${output_dir}" ]] || { echo "ERROR: could not read output_dir from ${config_file}" >&2; exit 1; }
+
+if [[ "${RESTORE}" == "1" ]]; then
+    log "restoring ${DEST}/results/ -> ${output_dir} (missing files only)"
+    n_got=0; n_have=0; n_fail=0
+    # fd 3, not stdin: gcs_fetch runs commands that read stdin.
+    while read -r obj <&3; do
+        dest="${output_dir}/${obj#"${PREFIX}/results/"}"
+        if [[ -e "${dest}" ]]; then
+            n_have=$((n_have + 1))
+        elif [[ "${DRY}" == "1" ]]; then
+            echo "would restore: ${dest}"
+        elif gcs_fetch "${obj}" "${dest}"; then
+            n_got=$((n_got + 1))
+        else
+            n_fail=$((n_fail + 1))
+        fi
+    done 3< <(gcs_list "${PREFIX}/results/")
+    log "restore done: ${n_got} fetched, ${n_have} already here, ${n_fail} failed"
+    (( n_fail == 0 ))
+    exit
+fi
 
 n_up=0; n_same=0; n_fail=0
 put() {

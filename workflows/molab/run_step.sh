@@ -13,6 +13,22 @@
 #                 derived from which env each step's `activate_env` call names:
 #                 `preprocess_conda` -> pixi, `CONDA_ENV` -> container.
 #
+# Steps already done are skipped, and results never live only on this box.
+# A molab session that dies comes back as a fresh box with part of /marimo,
+# so, when GCP_BUCKET/GCP_SA_JSON are set:
+#
+#   before     sync_to_gcs.sh --restore pulls back any result missing here
+#              (never overwriting a local file);
+#   per index  step_done.py skips it if a run-metadata record says it ran ok
+#              AND every output that record declared is still on disk with
+#              its recorded md5 -- the record, not the files alone, because a
+#              killed run leaves outputs but no record;
+#   after      sync_to_gcs.sh uploads what the index produced, so the next
+#              death costs at most the index that was running.
+#
+# --force runs anyway (a record cannot tell that the config changed since);
+# --no-bucket skips the restore and the uploads, not the skip check.
+#
 # Input:  a step filename under workflows/SLURM/
 # Output: the step's own outputs, plus a log per array index under ${MOLAB_LOG_DIR}
 # Usage:
@@ -21,6 +37,7 @@
 #   bash workflows/molab/run_step.sh --array 0-3 03.0.train_bias_model.sh
 #   bash workflows/molab/run_step.sh --array 0,2 03.2.qc_selected_bias.sh
 #   bash workflows/molab/run_step.sh --dry-run 04.0.train_full_model.sh
+#   bash workflows/molab/run_step.sh --force 00.1.preprocess_peaks.sh
 # Prerequisites: setup_molab.sh has run; env.sh is sourced.
 
 set -uo pipefail
@@ -40,7 +57,7 @@ step_env() {
     esac
 }
 
-usage() { sed -n '2,26p' "$0"; exit "${1:-0}"; }
+usage() { sed -n '2,41p' "$0"; exit "${1:-0}"; }
 
 # --list: every step in execution order, the environment it runs in, and
 # whether it has already produced its marker output. The step files live in
@@ -60,11 +77,15 @@ list_steps() {
 
 array_spec=""
 dry_run=0
+force=0
+use_bucket=1
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --array)   array_spec="$2"; shift 2 ;;
         --array=*) array_spec="${1#*=}"; shift ;;
         --dry-run) dry_run=1; shift ;;
+        --force)   force=1; shift ;;
+        --no-bucket) use_bucket=0; shift ;;
         -h|--help) usage 0 ;;
         --list)    list_steps; exit 0 ;;
         -*) echo "ERROR: unknown option $1" >&2; usage 1 ;;
@@ -96,6 +117,22 @@ expand_array() {
 
 env_kind="$(step_env "${step}")"
 mkdir -p "${MOLAB_LOG_DIR}"
+
+# Where the step's run-metadata lands: lib/bash/config.sh's metadata_dir,
+# from the same output_dir env.sh derives MOLAB_LOG_DIR from.
+_cfg="${DATASET_CONFIG:-${REPO_ROOT}/config/${DATASET}/config.yaml}"
+output_dir=$(python3 "${REPO_ROOT}/lib/python/utils/config.py" export "${_cfg}" \
+    | sed -n 's/^output_dir=//p' | tr -d '"')
+[[ -n "${output_dir}" ]] || { echo "ERROR: could not read output_dir from ${_cfg}" >&2; exit 1; }
+metadata_dir="${METADATA_DIR:-${output_dir}/metadata}"
+
+[[ -n "${GCP_BUCKET:-}" && -n "${GCP_SA_JSON:-}" ]] || use_bucket=0
+if [[ "${use_bucket}" == "1" && "${dry_run}" == "0" ]]; then
+    # Fail rather than run: without the bucket's copy, work already done
+    # elsewhere would be redone. --no-bucket is the explicit way past this.
+    bash "${SCRIPT_DIR}/sync_to_gcs.sh" --restore \
+        || { echo "ERROR: restore from the bucket failed; rerun, or pass --no-bucket to run without it" >&2; exit 1; }
+fi
 
 # Variables the step needs that must survive into the container. Apptainer only
 # forwards names prefixed APPTAINERENV_, so they are set per-invocation below.
@@ -132,9 +169,15 @@ container_exec() {
 }
 
 overall=0
+sync_failed=0
 for idx in $(expand_array "${array_spec}"); do
     log="${MOLAB_LOG_DIR}/${step%.sh}.task${idx}.log"
     echo "=== [$(date '+%F %T')] ${step} (${env_kind}, array index ${idx}) -> ${log}"
+
+    if [[ "${force}" == "0" ]] && record=$(python3 "${SCRIPT_DIR}/step_done.py" "${metadata_dir}" "${step}" "${idx}"); then
+        echo "=== SKIP: ${step} index ${idx} already ran ok, outputs intact (${record##*/}); --force to rerun"
+        continue
+    fi
 
     if [[ "${dry_run}" == "1" ]]; then
         echo "    (dry run, not executing)"
@@ -161,5 +204,11 @@ for idx in $(expand_array "${array_spec}"); do
         break
     fi
     echo "=== OK: ${step} index ${idx}"
+
+    if [[ "${use_bucket}" == "1" ]]; then
+        bash "${SCRIPT_DIR}/sync_to_gcs.sh" \
+            || { echo "=== SYNC FAILED after ${step} index ${idx}: results are only on this box" >&2; sync_failed=1; }
+    fi
 done
+(( overall == 0 && sync_failed == 1 )) && overall=1
 exit "${overall}"

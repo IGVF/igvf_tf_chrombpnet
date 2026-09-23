@@ -117,14 +117,26 @@ in sequence rather than in parallel.
 - **`run_step.sh`** — runs ONE step in the right environment. Knows which steps
   need which, emulates `--array`, writes a log per index to `$MOLAB_LOG_DIR`.
   `--list` prints every step with its environment, `--dry-run` shows what would
-  run without running it.
+  run without running it. **It never redoes finished work and never leaves
+  results only on the box.** Before running, it restores from the bucket any
+  result missing locally (`sync_to_gcs.sh --restore`, which never overwrites a
+  local file). Each array index is then skipped if `step_done.py` finds a
+  run-metadata record with `run_status: ok` whose declared outputs are all
+  on disk with their recorded md5. After each index that succeeds, it
+  uploads with `sync_to_gcs.sh`. A killed run leaves outputs but no record, so
+  it is rerun, not trusted. `--force` reruns anyway: a record cannot tell that
+  the config changed. `--no-bucket` skips the restore and the uploads.
+- **`step_done.py`** — that check, stdlib only (it runs on the bare `python3`).
+  `step_done.py <metadata_dir> <step> <index>` exits 0 and prints the record
+  when the step is done, 1 with the reason otherwise.
 - **`run_all.sh`** — steps 00.0 → 04.1 in order, written out as literal
   commands you can read or copy one line at a time. Stops at 03.1 for the
   manual bias-model review; `--after-bias` resumes.
 - **`sync_to_gcs.sh`** — copies `results/`, a `repo.bundle` of every branch,
   a `MANIFEST.txt` and the dataset config to
   `gs://${GCP_BUCKET}/chrombpnet/test_data_d0/` (override the prefix with
-  `MOLAB_GCS_PREFIX`). **Run it after every step**: a session that dies
+  `MOLAB_GCS_PREFIX`); `--restore` is the reverse, missing files only.
+  `run_step.sh` runs it after every step. It is needed because a session that dies
   keeps only part of `/marimo`, and the commits on this box exist nowhere
   else. Files the bucket already holds byte-for-byte (size + md5) are
   skipped, uploads are md5-checked, and nothing remote is ever deleted.
