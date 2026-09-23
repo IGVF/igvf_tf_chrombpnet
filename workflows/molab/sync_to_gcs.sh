@@ -81,11 +81,24 @@ output_dir=$(python3 "${REPO_ROOT}/lib/python/utils/config.py" export "${config_
 
 if [[ "${RESTORE}" == "1" ]]; then
     log "restoring ${DEST}/results/ -> ${output_dir} (missing files only)"
-    n_got=0; n_have=0; n_fail=0
+    n_got=0; n_have=0; n_fail=0; n_linked=0
+    # Paths the sync recorded as hard links are not downloaded (older syncs
+    # may have uploaded them as separate objects): they are re-linked below.
+    declare -A as_link=()
+    links="${output_dir}/hardlinks.tsv"
+    if [[ ! -e "${links}" && "${DRY}" == "0" ]]; then
+        gcs_fetch "${PREFIX}/results/hardlinks.tsv" "${links}" 2>/dev/null || rm -f "${links}"
+    fi
+    if [[ -f "${links}" ]]; then
+        while IFS=$'\t' read -r link_rel _; do as_link["${link_rel}"]=1; done < "${links}"
+    fi
     # fd 3, not stdin: gcs_fetch runs commands that read stdin.
     while read -r obj <&3; do
-        dest="${output_dir}/${obj#"${PREFIX}/results/"}"
-        if [[ -e "${dest}" ]]; then
+        rel="${obj#"${PREFIX}/results/"}"
+        dest="${output_dir}/${rel}"
+        if [[ -n "${as_link[${rel}]:-}" ]]; then
+            continue
+        elif [[ -e "${dest}" ]]; then
             n_have=$((n_have + 1))
         elif [[ "${DRY}" == "1" ]]; then
             echo "would restore: ${dest}"
@@ -95,7 +108,14 @@ if [[ "${RESTORE}" == "1" ]]; then
             n_fail=$((n_fail + 1))
         fi
     done 3< <(gcs_list "${PREFIX}/results/")
-    log "restore done: ${n_got} fetched, ${n_have} already here, ${n_fail} failed"
+    if [[ -f "${links}" && "${DRY}" == "0" ]]; then
+        while IFS=$'\t' read -r link_rel target_rel; do
+            [[ -e "${output_dir}/${link_rel}" || ! -f "${output_dir}/${target_rel}" ]] && continue
+            mkdir -p "$(dirname "${output_dir}/${link_rel}")"
+            ln "${output_dir}/${target_rel}" "${output_dir}/${link_rel}" && n_linked=$((n_linked + 1))
+        done < "${links}"
+    fi
+    log "restore done: ${n_got} fetched, ${n_linked} re-linked, ${n_have} already here, ${n_fail} failed"
     (( n_fail == 0 ))
     exit
 fi
@@ -142,10 +162,35 @@ put "${config_file}" config.yaml
 if [[ "${BUNDLE_ONLY}" == "0" ]]; then
     # --- the results --------------------------------------------------------
     log "syncing ${output_dir} -> ${DEST}/results/"
+    # Hard links upload once. 03.0 links the prepared bigwig (~200 MB) into
+    # every bias model's auxiliary/, where 03.0's scoring and 03.2 read it, and
+    # a bucket has no links: each would be md5'd and uploaded as its own copy,
+    # and restored as one. The SHORTEST path of each inode is uploaded -- the
+    # original (preprocessing/signal/...), not a per-model link under a
+    # directory 03.0 deletes on every retrain -- and the rest go to
+    # results/hardlinks.tsv, which --restore turns back into links.
+    links_file="${staging}/hardlinks.tsv"
+    : > "${links_file}"
+    declare -A first_path=()
     # fd 3, not stdin: gcs_put runs commands that read stdin.
-    while IFS= read -r -d '' f <&3; do
-        put "${f}" "results/${f#"${output_dir}/"}"
-    done 3< <(find "${output_dir}" -type f -print0 | sort -z)
+    while IFS= read -r -d '' rec <&3; do
+        ino="${rec%% *}"; rest="${rec#* }"; nlink="${rest%% *}"; f="${rest#* }"
+        rel="${f#"${output_dir}/"}"
+        [[ "${rel}" == "hardlinks.tsv" ]] && continue  # regenerated below, never uploaded from the tree
+        if (( nlink > 1 )); then
+            if [[ -n "${first_path[${ino}]:-}" ]]; then
+                printf '%s\t%s\n' "${rel}" "${first_path[${ino}]}" >> "${links_file}"
+                continue
+            fi
+            first_path["${ino}"]="${rel}"
+        fi
+        put "${f}" "results/${rel}"
+    done 3< <(find "${output_dir}" -type f -printf '%i %n %p\0' \
+                | awk 'BEGIN { RS = ORS = "\0" } { print length($0) "\t" $0 }' | sort -z -n -k1,1 -k2 | cut -z -f2-)
+    if [[ -s "${links_file}" ]]; then
+        put "${links_file}" "results/hardlinks.tsv"
+        log "$(wc -l < "${links_file}") hard link(s) recorded in results/hardlinks.tsv, not uploaded"
+    fi
 fi
 
 log "done: ${n_up} uploaded, ${n_same} unchanged, ${n_fail} failed -> ${DEST}/"
