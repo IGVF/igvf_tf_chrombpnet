@@ -238,6 +238,22 @@ log "sandbox: $(du -sh "${MOLAB_SANDBOX}" | cut -f1)"
 
 mkdir -p "${MOLAB_CUDA_CACHE}" "${MOLAB_MPLCONFIG}"
 
+# ── 6b. is there a GPU? ─────────────────────────────────────────────────────
+# A molab session recreated after a crash came back WITHOUT its GPU: no
+# /dev/nvidia*, an empty /proc/driver/nvidia, and TensorFlow listing none.
+# Nothing failed -- 03.0 simply trained on one CPU core, still in epoch 1 of 50
+# after 12 minutes. Ask the container's TensorFlow, which is what the GPU steps
+# use, and say so loudly; it is not an error, because the CPU-only steps
+# (00.x-02.0) are fine without one.
+gpus=$(apptainer exec --nv --cleanenv "${MOLAB_SANDBOX}" python3 -c \
+    'import tensorflow as tf; print(len(tf.config.list_physical_devices("GPU")))' 2>/dev/null | tail -1)
+if [[ "${gpus}" =~ ^[1-9] ]]; then
+    log "GPU: TensorFlow in the container sees ${gpus} GPU(s)"
+else
+    log "WARNING: TensorFlow in the container sees NO GPU. Steps 03.x/04.x would run on the CPU,"
+    log "         which takes days instead of minutes. Restart the molab session on a GPU machine."
+fi
+
 # ── 7. pixi qc environment (stands in for envs/preprocess.yml) ───────────────
 if ! command -v pixi >/dev/null 2>&1; then
     log "installing pixi"

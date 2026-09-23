@@ -92,6 +92,16 @@ export CONDA_INIT=""
 # at the path), but they are set to a self-describing sentinel rather than left
 # unset, because unset would fall back to a Sherlock home directory.
 export PREPROCESS_ENV="${REPO_ROOT}/.pixi/envs/preprocess"
+
+# The Python that lib/bash/config.sh and references.sh use to read the YAML
+# config (>= 3.9, stdlib only). Inside the chrombpnet container there is none:
+# its python is 3.8. It used to work by accident -- the notebook kernel puts
+# its own venv (/tmp/uv-venv/bin, python 3.13) on PATH, Apptainer binds /tmp,
+# so the container found the NOTEBOOK's python. Once launches stopped
+# inheriting that venv, every container step died with "need python >= 3.9".
+# The pixi qc env's python lives under /marimo (bound into the container at
+# the same path) and runs there: it needs glibc 2.31, which the container has.
+export BOOTSTRAP_PYTHON="${BOOTSTRAP_PYTHON:-${REPO_ROOT}/.pixi/envs/qc/bin/python}"
 export CHROMBPNET_ENV="apptainer:${MOLAB_SANDBOX:-/marimo/containers/chrombpnet_sandbox}"
 export FINEMO_ENV="unconfigured:molab"
 export MOTIF_COMPENDIUM_ENV="unconfigured:molab"
