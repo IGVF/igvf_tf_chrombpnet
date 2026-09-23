@@ -93,7 +93,25 @@ def cli():
 
 @cli.command("preprocess-peaks")
 @click.option(
-    "--peaks", required=True, type=click.Path(exists=True, dir_okay=False), help="Input peak BED."
+    "--peaks",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Input peak BED (summit = midpoint), or with --summit-window a 10-column narrowPeak.",
+)
+@click.option(
+    "--summit-window",
+    type=int,
+    default=None,
+    help="Read --peaks as a narrowPeak and re-centre every row on its OWN summit: "
+    "[summit - w/2, summit + w/2). One window per row, so multi-summit regions give "
+    "several. Off by default (plain BED, midpoint summit).",
+)
+@click.option(
+    "--max-qvalue",
+    type=float,
+    default=None,
+    help="With --summit-window: keep rows with q <= this (column 9 read as -log10 q, "
+    "as MACS2 writes it). Off by default.",
 )
 @click.option(
     "--blacklist",
@@ -161,6 +179,8 @@ def cli():
 @quiet_opt
 def preprocess_peaks(
     peaks,
+    summit_window,
+    max_qvalue,
     blacklist,
     chrom_sizes,
     input_window,
@@ -196,9 +216,30 @@ def preprocess_peaks(
         if Path(blacklist).exists():
             md.add_input("blacklist", blacklist)
 
-        peaks_pr = intervals.read_bed(peaks)
-        n_in = len(peaks_pr)
-        logger.info(f"{n_in} peaks in from {peaks}")
+        summit_dropped = {"qvalue": 0, "before_chrom_start": 0}
+        if summit_window is None:
+            if max_qvalue is not None:
+                raise click.UsageError("--max-qvalue needs --summit-window")
+            peaks_pr = intervals.read_bed(peaks)
+            n_in = len(peaks_pr)
+            logger.info(f"{n_in} peaks in from {peaks}")
+        else:
+            try:
+                peaks_pr = intervals.read_narrowpeak(peaks)
+                n_in = len(peaks_pr)
+                peaks_pr, summit_dropped = intervals.summit_windows(
+                    peaks_pr, summit_window, max_qvalue
+                )
+            except ValueError as exc:
+                raise click.ClickException(str(exc)) from exc
+            md.add_param("summit_window", summit_window)
+            md.add_param("max_qvalue", max_qvalue)
+            logger.info(
+                f"{n_in} narrowPeak rows in from {peaks}; {summit_dropped['qvalue']} above "
+                f"q={max_qvalue}, {summit_dropped['before_chrom_start']} too close to a "
+                f"chromosome start; {len(peaks_pr)} {summit_window}bp summit windows"
+            )
+            md.add_metric("peaks_above_max_qvalue", summit_dropped["qvalue"])
         logger.info(f"blacklist: {references.describe_source(blacklist)}")
         try:
             bl = intervals.read_bed3(blacklist)
@@ -346,8 +387,11 @@ def preprocess_peaks(
             "input_window": input_window,
             "blacklist_source": references.describe_source(blacklist),
             "blacklist_slop_bp": slop_bp,
+            "summit_window": summit_window,
             "filters": [
                 {"filter": "input", "kept": n_in},
+                {"filter": "qvalue", "dropped": summit_dropped["qvalue"], "max_qvalue": max_qvalue},
+                {"filter": "before_chrom_start", "dropped": summit_dropped["before_chrom_start"]},
                 {"filter": "off_contig", "dropped": off_contig},
                 {"filter": "blacklist_slopped", "dropped": n_after_contig - n_after_blacklist},
                 {"filter": "window_overhang", "dropped": overhanging},

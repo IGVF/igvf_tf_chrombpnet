@@ -117,6 +117,16 @@ folds: ["0", "1", "2", "3", "4"]
 # aggressive at ~23%. Needs 00.0's bigwig, so 00.0 must run first.
 # peak_min_signal_quantile: 0.75
 
+# Start from a peak caller's narrowPeak instead of a region BED (00.1): set
+# `regions` to the 10-column narrowPeak and every row becomes a window of this
+# width centred on its OWN summit (column 10), one per summit -- MACS2
+# --call-summits writes several rows for a multi-summit region, and each gets a
+# window. 1000 = bases summit-500 .. summit+499. Optionally keep q <= a
+# threshold (column 9, -log10 q as MACS2 writes it). Both off by default:
+# without them `regions` is a plain BED whose summit is its midpoint.
+# peak_summit_window: 1000
+# peak_max_qvalue: 0.01
+
 # Bias sweep (03.0). Positional: bias_factors[i] pairs with bias_suffixes_sweep[i].
 # The array is len(bias_sweep_folds) x len(bias_factors) GPU jobs; uncomment
 # bias_sweep_folds to pilot on fewer folds first. `cli.py config validate`
