@@ -10,19 +10,62 @@
 #SBATCH --error=%x_%j.log
 
 # 05.0.get_contrib_scores.sh
-# Purpose: Compute DeepLIFT contribution scores for each dataset x fold using the
-#          bias-corrected chrombpnet_nobias model. One SLURM array job per fold;
-#          each job processes all datasets.
+# Purpose: DeepSHAP contribution scores for BOTH heads (counts and profile) on
+#          all of a dataset's filtered peaks, with each fold's bias-corrected
+#          chrombpnet_nobias model: `chrombpnet contribs_bw` from chrombpnet
+#          2.x. One SLURM array job per fold; each job processes all datasets.
+#          These are the analysis-grade scores 06.0 averages across folds
+#          (04.4's are a 30K-peak QC subsample).
 #
-# Outputs per dataset/fold (inside ${full_model_dir}/{dataset}_{peak_type}_fold_{fold}/interpretation/):
-#   interpretation.counts_scores.h5 / .bw
+# Why a different --shap-seed per fold (1234 + fold): chrombpnet 2.x seeds the
+#   20 dinucleotide-shuffled DeepSHAP references from --shap-seed and each
+#   sequence's content. With one seed for every fold, all five models would
+#   score a peak against the SAME references, and 06.0's fold average would no
+#   longer average out reference noise the way the unseeded 1.x runs did. The
+#   seed goes into the run metadata and interpretation.interpret.args.json.
+#
+# Why require_gpu: contribs_bw has no --device flag (only the training
+#   commands do), and JAX falls back to the CPU with at most a warning, so on a
+#   node where JAX sees no GPU, DeepSHAP on every peak would run on the CPU
+#   until the time limit. require_gpu stops the job before that.
+#
+# Skip rule: a dataset is skipped when both score h5s AND
+#   interpretation.profile_scores.bw exist. contribs_bw writes, in order:
+#   interpret.args.json, interpreted_regions.bed, the counts and profile h5s,
+#   counts_scores.bw, profile_scores.bw -- so that bigwig is the last file.
+#   The h5s are written as *.partial and renamed on completion, so a killed job
+#   never leaves one under its final name. The bigwigs are written in place: a
+#   job killed while writing profile_scores.bw leaves a truncated file that
+#   counts as done, so delete it to redo that dataset. A rerun overwrites every
+#   output.
+#
+# Memory: --mem=128G is a 1.x-era request, sized for 1.x holding every
+#   region's scores in memory at once. 2.x streams the scores to disk as it
+#   computes them, but still one-hot encodes all regions up front and loads a
+#   head's whole projected_shap array to write each bigwig. Re-measure (e.g.
+#   sacct MaxRSS) before changing the number.
+#
+# Array index = fold index.
+#
+# Input:  ${full_model_dir}/{dataset}_{peak_type}_fold_{fold}/models/chrombpnet_nobias.h5  (04.0)
+#         ${peaks_dir}/{dataset}_{peak_type}_peaks_no_blacklist.narrowPeak                (00.1)
+# Output per dataset/fold, in ${full_model_dir}/{dataset}_{peak_type}_fold_{fold}/interpretation/:
+#   interpretation.{counts,profile}_scores.h5  DeepSHAP scores; 06.0 averages these
+#   interpretation.{counts,profile}_scores.bw  the same, per fold, as bigwigs
+#   interpretation.interpreted_regions.bed     the peaks actually scored: contribs_bw
+#                                              drops any whose 2114 bp window runs off
+#                                              a chromosome end; 07.0 and 10.0 read it
+#   interpretation.interpret.args.json         arguments, DeepSHAP seed, chrombpnet
+#                                              version, JAX backend and devices
 #
 # Usage:
-#   export DATASET_DIR=/path/to/igvf_tf_collab/<dataset>
+#   export DATASET=<name>        # or DATASET_CONFIG=/path/to/config.yaml
 #   sbatch 05.0.get_contrib_scores.sh            # all folds (array 0-4)
 #   sbatch --array=0 05.0.get_contrib_scores.sh  # fold 0 only
 #
-# Prerequisites: 04.0.train_full_model.sh must have completed.
+# Prerequisites: 04.0.train_full_model.sh for the fold; the chrombpnet 2.x
+#   environment (CHROMBPNET_REPO, see lib/bash/common.sh); a GPU that JAX can
+#   use (require_gpu says why not, if it cannot).
 
 # --- bootstrap: locate the repo root (identical block in every workflow step) --
 # sbatch copies the submitted script to a node-local spool dir, so BASH_SOURCE
@@ -53,46 +96,49 @@ source "${REPO_ROOT}/lib/bash/config.sh" || exit 1
 fold="${folds[${SLURM_ARRAY_TASK_ID}]}"
 [[ -z "${fold}" ]] && { echo "No fold at array index ${SLURM_ARRAY_TASK_ID}, exiting."; exit 0; }
 
-activate_env "${chrombpnet_env}"
+# One DeepSHAP reference seed per fold -- see the header.
+shap_seed=$(( 1234 + fold ))
 
 metadata_start "05.0.get_contrib_scores"
+metadata_params+=( "fold=${fold}" "shap_seed=${shap_seed}" )
 for _ds in "${datasets[@]}"; do
-    metadata_inputs+=( "model=${full_model_dir}/${_ds}_${peak_type}_fold_${fold}/models/chrombpnet_nobias.h5" )
-    metadata_outputs+=( "contributions=${full_model_dir}/${_ds}_${peak_type}_fold_${fold}/interpretation/interpretation.counts_scores.h5" )
+    _dir="${full_model_dir}/${_ds}_${peak_type}_fold_${fold}"
+    _prefix="${_dir}/interpretation/interpretation"
+    _peaks="${peaks_dir}/${_ds}_${peak_type}_peaks_no_blacklist.narrowPeak"
+    metadata_inputs+=( "model=${_dir}/models/chrombpnet_nobias.h5" "peaks=${_peaks}" )
+    for _head in counts profile; do
+        metadata_outputs+=( "contributions=${_prefix}.${_head}_scores.h5" "contributions=${_prefix}.${_head}_scores.bw" )
+    done
+    metadata_outputs+=( "peaks=${_prefix}.interpreted_regions.bed" "interpretation_settings=${_prefix}.interpret.args.json" )
+    require_input "${_dir}/models/chrombpnet_nobias.h5" 04.0.train_full_model.sh
+    require_input "${_peaks}" 00.1.preprocess_peaks.sh
 done
-unset _ds
-metadata_params+=( "fold=${fold}" )
+unset _ds _dir _prefix _peaks _head
+metadata_inputs+=( "genome=${genome_fa}" "chrom_sizes=${chrom_sizes}" )
+require_input "${genome_fa}" "cli.py download-references"
+require_input "${chrom_sizes}" "cli.py download-references"
+preflight_check
 
-
+activate_env "${chrombpnet_env}"
 gpu_env
+require_gpu jax
 
-echo "[$(date)] Fold ${fold}: computing contribution scores for datasets [${datasets[*]}]"
+echo "[$(date)] Fold ${fold}: DeepSHAP (counts + profile, --shap-seed ${shap_seed}) for datasets [${datasets[*]}]"
 for dataset in "${datasets[@]}"; do
     model_file="${full_model_dir}/${dataset}_${peak_type}_fold_${fold}/models/chrombpnet_nobias.h5"
-
-    if [[ ! -f "${model_file}" ]]; then
-        echo "ERROR: Model not found for ${dataset} fold ${fold}: ${model_file}" >&2
-        echo "  Run 04.0.train_full_model.sh first." >&2
-        exit 1
-    fi
-
     interp_dir="${full_model_dir}/${dataset}_${peak_type}_fold_${fold}/interpretation"
     peaks_file="${peaks_dir}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
-    done_file_h5="${interp_dir}/interpretation.counts_scores.h5"
-    done_file_bw="${interp_dir}/interpretation.counts_scores.bw"
+    prefix="${interp_dir}/interpretation"
+    last_output="${prefix}.profile_scores.bw"   # the last file contribs_bw writes
 
     echo "[$(date)] [${dataset} fold ${fold}] Computing contribution scores"
     echo "  model : ${model_file}"
     echo "  output: ${interp_dir}/"
 
-    if [[ -f "${done_file_h5}" && -f "${done_file_bw}" ]]; then
+    if [[ -f "${prefix}.counts_scores.h5" && -f "${prefix}.profile_scores.h5" && -f "${last_output}" ]]; then
         echo "  Already done, skipping."
         continue
     fi
-
-    for f in "${model_file}" "${peaks_file}"; do
-        [[ -f "${f}" ]] || { echo "  Missing input: ${f}" >&2; exit 1; }
-    done
 
     mkdir -p "${interp_dir}"
 
@@ -101,7 +147,15 @@ for dataset in "${datasets[@]}"; do
         -r "${peaks_file}" \
         -g "${genome_fa}" \
         -c "${chrom_sizes}" \
-        -op "${interp_dir}/interpretation"
+        -op "${prefix}" \
+        --shap-seed "${shap_seed}"
+    _rc=$?
+    # No `set -e` in this step: guard the call and its last output explicitly,
+    # or a failed dataset would fall through to the next and the job exit 0.
+    if [[ ${_rc} -ne 0 || ! -f "${last_output}" ]]; then
+        echo "ERROR: chrombpnet contribs_bw failed for ${dataset} fold ${fold} (exit ${_rc}); ${last_output} was not written." >&2
+        exit 1
+    fi
 
     echo "[$(date)] [${dataset} fold ${fold}] Done."
 done
