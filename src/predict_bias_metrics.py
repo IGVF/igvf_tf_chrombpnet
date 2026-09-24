@@ -80,19 +80,17 @@ def main():
         logger.info(f"  {metrics_json} already exists, skipping.")
         return
 
-    # deferred: these imports load tensorflow, which is slow and GPU-hungry.
-    # chrombpnet (which pulls in pandas) must be imported before tensorflow -
-    # tensorflow's bundled libstdc++ otherwise gets loaded into the process
-    # first and shadows the newer one pandas' compiled extensions need,
-    # causing "libstdc++.so.6: version CXXABI_1.3.9 not found".
+    # Deferred: chrombpnet's model code imports Keras 3 and JAX, which is slow,
+    # so --help and the input checks above stay instant. load_model_wrapper
+    # reads chrombpnet 1.x and 2.x model files alike; the shapes are read the
+    # way chrombpnet's own bias_model_qc reads them.
     import chrombpnet.training.predict as predict
-    import chrombpnet.training.utils.losses as losses
-    import tensorflow as tf
-    from tensorflow.keras.models import load_model
-    from tensorflow.keras.utils import get_custom_objects
+    from chrombpnet.helpers.hyperparameters.param_utils import load_model_wrapper
 
-    get_custom_objects().update({"multinomial_nll": losses.multinomial_nll, "tf": tf})
-    bias_md = load_model(str(bias_model))
+    bias_md = load_model_wrapper(str(bias_model))
+    inputlen = int(bias_md.input_shape[1])
+    outputlen = int(bias_md.output_shape[0][1])
+    del bias_md  # predict.main loads the model again
 
     ns = argparse.Namespace(
         model_h5=str(bias_model),
@@ -103,8 +101,8 @@ def main():
         genome=args.genome,
         bigwig=str(bigwig),
         chr_fold_path=args.fold_json,
-        inputlen=int(bias_md.input_shape[1]),
-        outputlen=int(bias_md.output_shape[0][1]),
+        inputlen=inputlen,
+        outputlen=outputlen,
     )
 
     os.makedirs(output_dir / "evaluation", exist_ok=True)
