@@ -17,21 +17,31 @@ bootstrap block and one `source "${REPO_ROOT}/lib/bash/config.sh"` line — copy
 existing step. Cross-dataset steps source `lib/bash/common.sh` instead.
 
 `nextflow/` is a placeholder: the same steps are to be ported there, with `SLURM/`
-remaining the reference implementation until they are.
+remaining the reference implementation until they are. `molab/` runs the same
+`SLURM/` step files on a molab box, without SLURM; see its README.
+
+Every step enters its own pixi environment through `activate_env`
+(`lib/bash/common.sh`): chrombpnet 2.x from a pinned chrombpnet checkout, and
+`preprocess`, `finemo` and `motif-compendium` from this repo's `pixi.toml`.
+Which step uses which is in the Environments table in `../CLAUDE.md`.
 
 ---
 
 ## Pipeline overview
 
+The step table in `../CLAUDE.md` is the authoritative list, with each step's array
+index.
+
 ```
-Stage 1,2   Preprocess data                               00, 01, 02
-Stage 3     Train bias models and QC                      03.0 -> 03.1
-Stage 4     Train full model with selected bias and QC    04.0 -> 04.1
-Stage 5     Contribution scores                           05
-Stage 6,7   Fold averaging and BigWig conversion          06, 07
-Stage 8     MoDISco on averaged scores                    08
-Stage 9     Generate predictions                          09
-Stage 10,11 Motif compendium and Fi-NeMo                  10 -> 11
+Preprocess data                                   00.0 -> 00.1 -> 01.0 -> 02.0 (QC)
+Train bias models, select, QC the selection       03.0 -> 03.1 -> 03.2 -> 03.3
+Train full model with selected bias, QC           04.0 -> 04.1 (04.2 across datasets)
+Predictions; per-fold interpretation QC           04.3; 04.4 -> 04.5
+Contribution scores on all peaks                  05.0
+Fold averaging and BigWig conversion              06.0 -> 07.0
+TF-MoDISco on averaged scores                     08.0
+Cross-dataset motif compendium                    09.0
+Fi-NeMo hit calling and report                    10.0 -> 11.0
 ```
 
 ---
@@ -52,7 +62,8 @@ SELECT * FROM read_json_auto(
     '<collab-root>/*/results/metadata/**/*.json', union_by_name = true);
 ```
 
-`queries.sql` at the repo root defines `runs`, `run_files` and `run_params` views
+`queries.sql` at the repo root defines `runs`, `run_parameters`, `run_files`,
+`run_settings`, `run_metrics`, `jobs` and `tools` views
 and has worked queries for: latest run per step, failures with a link to the code,
 where the wall-clock goes, which run produced a given file, files whose checksum
 changed between runs, and runs made from a dirty tree.

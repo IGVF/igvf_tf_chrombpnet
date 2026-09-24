@@ -1,5 +1,16 @@
 # Resource measurements
 
+> **Note (2026-09-24): measured under chrombpnet 1.x; re-measure under 2.x.**
+> Every number below was taken with chrombpnet 1.x in the TF 2.12 Apptainer
+> container on molab. The pipeline now runs chrombpnet 2.x (Keras 3 / JAX, from
+> the pinned checkout in `lib/bash/common.sh`), so treat them as history until
+> they are re-measured. Two sections describe code that is gone: the memory
+> section's `np.unique` one-hot encoder, whose lookup-table replacement is now
+> built into the pinned chrombpnet (so `lib/python/utils/onehot.py` was deleted),
+> and the disk section's hardlinked `auxiliary/*_data_unstranded.bw` — 2.x reads
+> 00.0's prepared bigwig in place through `-bw` and makes no copy. The 00.0 note's
+> `--prepared-bigwig` flag no longer exists either.
+
 Measured numbers for sizing `#SBATCH --mem`, `--cpus-per-task` and `--time`.
 
 Everything here was measured on the molab box, which is **not** a cluster node:
