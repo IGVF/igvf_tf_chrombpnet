@@ -142,9 +142,11 @@ fi
 # --write-filtered additionally keeps the surviving rows as a file. No step
 # reads it any more (training takes the bigwig; the old fallback that let
 # chrombpnet convert reads itself is gone); set filter_main_chroms: false to
-# skip writing it.
+# skip writing it. Only fragments/tagAlign have rows to keep: prepare-bigwig
+# refuses the flag for a BAM, and a bigwig is not converted at all, so asking
+# for it there used to stop a BAM dataset at this step for a file nobody reads.
 filtered_args=()
-if [[ "${filter_main_chroms:-true}" == "true" ]]; then
+if [[ "${filter_main_chroms:-true}" == "true" && ( "${signal_type}" == "fragments" || "${signal_type}" == "tagalign" ) ]]; then
     filtered_args+=( --write-filtered "${prepared_dir}/${dataset_name}_main_chrs.tsv.gz" )
     metadata_outputs+=( "${signal_type}=${prepared_dir}/${dataset_name}_main_chrs.tsv.gz" )
 fi
