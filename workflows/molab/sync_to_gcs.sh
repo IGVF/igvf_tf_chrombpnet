@@ -75,8 +75,10 @@ GCS_TOKEN=$(gcs_token) || { echo "ERROR: could not mint a GCS token" >&2; exit 1
 DEST="gs://${GCP_BUCKET}/${PREFIX}"
 
 config_file="${DATASET_CONFIG:-${REPO_ROOT}/config/${DATASET}/config.yaml}"
-output_dir=$(python3 "${REPO_ROOT}/lib/python/utils/config.py" export "${config_file}" \
-    | sed -n 's/^output_dir=//p' | tr -d '"')
+# As config.sh derives it, like every step: a sed over the YAML export left an
+# output_dir of "${DATASET_ROOT}/..." unexpanded and synced the wrong tree.
+# shellcheck disable=SC2016  # expanded by molab_config's child bash
+output_dir="$(DATASET_CONFIG="${config_file}" molab_config '${results_path}')"
 [[ -n "${output_dir}" ]] || { echo "ERROR: could not read output_dir from ${config_file}" >&2; exit 1; }
 
 if [[ "${RESTORE}" == "1" ]]; then
