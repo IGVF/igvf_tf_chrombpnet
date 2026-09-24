@@ -124,16 +124,27 @@ def main():
         "summary": out_dir / f"{px}motif_qc.json",
     }
     summary = json.loads(f["summary"].read_text()) if f["summary"].exists() else {}
-    summary.update(
-        scores=str(args.scores),
-        window=args.window,
-        max_seqlets=args.max_seqlets,
-        motif_db=str(args.motif_db),
-    )
+    wanted = {
+        "scores": str(args.scores),
+        "window": args.window,
+        "max_seqlets": args.max_seqlets,
+        "motif_db": str(args.motif_db),
+    }
+    # Outputs on disk only count as done if they were made with THESE settings:
+    # a result from another -n or window (or with no summary beside it) would
+    # otherwise be kept silently, because every stage skips on existence.
+    stale = [k for k, v in wanted.items() if summary.get(k) != v]
+    if stale and any(p.exists() for p in (f["modisco"], f["report"])):
+        logger.warning(
+            "existing outputs were made with different %s; redoing them", ", ".join(stale)
+        )
+        summary = {}
+    force = args.force or bool(stale)
+    summary.update(wanted)
     seconds = summary.setdefault("seconds", {})
 
     def stage(name, done, fn):
-        if done and not args.force:
+        if done and not force:
             logger.info("[%s] outputs exist, skipping", name)
             return
         logger.info("[%s] start", name)
