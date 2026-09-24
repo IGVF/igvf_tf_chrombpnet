@@ -337,3 +337,40 @@ def test_report_peak_rss_is_silent_when_not_asked(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     metadata.report_peak_rss()
     assert list(tmp_path.iterdir()) == []
+
+
+# ---------------------------------------------------------------- source revisions (PEP 610)
+
+
+def _git(path, *args):
+    subprocess.run(["git", *args], cwd=path, check=True, capture_output=True)
+
+
+def test_git_install_records_its_commit():
+    info = {"url": "https://github.com/x/y.git", "vcs_info": {"vcs": "git", "commit_id": "abc123"}}
+    assert metadata.revision_from_direct_url(info) == "abc123"
+
+
+def test_checkout_install_records_head_and_dirty(tmp_path):
+    repo = tmp_path / "my checkout"  # a space, as a file:// URL quotes it
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    (repo / "a.py").write_text("x = 1\n")
+    _git(repo, "add", "a.py")
+    _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init")
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
+    info = {"url": repo.as_uri(), "dir_info": {"editable": True}}
+    assert metadata.revision_from_direct_url(info) == head
+    (repo / "untracked.txt").write_text("not code\n")  # untracked files do not make it dirty
+    assert metadata.revision_from_direct_url(info) == head
+    (repo / "a.py").write_text("x = 2\n")
+    assert metadata.revision_from_direct_url(info) == head + "-dirty"
+
+
+def test_no_revision_for_archives_or_non_git_directories(tmp_path):
+    assert metadata.revision_from_direct_url({"url": "https://x/y.whl", "archive_info": {}}) is None
+    assert metadata.revision_from_direct_url({"url": tmp_path.as_uri(), "dir_info": {}}) is None
+
+
+def test_source_revision_of_an_absent_distribution_is_none():
+    assert metadata.source_revision("no-such-distribution-xyz") is None

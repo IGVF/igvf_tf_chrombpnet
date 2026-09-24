@@ -66,6 +66,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import unquote
 
 from utils import log
 
@@ -93,16 +94,24 @@ CHECKSUM_ENV_VAR = "METADATA_CHECKSUMS"
 CHUNK_BYTES = 8 << 20  # 8 MiB
 
 #: Packages worth recording when present. Absent ones are skipped silently --
-#: the four conda environments each have a different subset.
+#: each environment has a different subset. The jax CUDA plugin's version and
+#: major say which GPU build ran; modisco is TF-MoDISco 2.5 (tfmodisco-lite).
 TRACKED_DISTRIBUTIONS = [
     "chrombpnet",
     "duckdb",
     "finemo",
     "h5py",
     "hdf5plugin",
+    "jax",
+    "jax-cuda12-plugin",
+    "jax-cuda13-plugin",
+    "jaxlib",
+    "keras",
     "matplotlib",
-    "modisco-lite",
+    "memelite",
+    "modisco",
     "MotifCompendium",
+    "numba",
     "numpy",
     "pandas",
     "polars",
@@ -110,7 +119,7 @@ TRACKED_DISTRIBUTIONS = [
     "pysam",
     "ruranges",
     "scipy",
-    "tensorflow",
+    "torch",
 ]
 
 
@@ -410,9 +419,64 @@ def tool_versions(extra: dict[str, str] | None = None) -> list[dict]:
             tools.append({"software_name": name, "software_version": dist_version(name)})
         except PackageNotFoundError:
             continue
+        revision = source_revision(name)
+        if revision:
+            tools.append({"software_name": f"{name}_commit", "software_version": revision})
     for name, ver in (extra or {}).items():
         tools.append({"software_name": name, "software_version": str(ver)})
     return tools
+
+
+def source_revision(name: str) -> str | None:
+    """The git commit a distribution was installed from, or None.
+
+    A version string cannot tell unreleased builds apart -- chrombpnet 2.x is
+    ``2.0.0.dev0`` at every commit, and MotifCompendium is installed from git.
+    The installer's PEP 610 record (``direct_url.json``) can.
+    """
+    from importlib.metadata import PackageNotFoundError, distribution
+
+    try:
+        raw = distribution(name).read_text("direct_url.json")
+    except PackageNotFoundError:
+        return None
+    if not raw:
+        return None
+    try:
+        return revision_from_direct_url(json.loads(raw))
+    except (ValueError, AttributeError):
+        return None
+
+
+def revision_from_direct_url(info: dict) -> str | None:
+    """Commit for a git install (``vcs_info``) or a local checkout (``dir_info``).
+
+    A checkout is asked with git, and gets ``-dirty`` appended when tracked
+    files differ from that commit, so a record never claims a commit the code
+    did not match. ``cwd=`` rather than ``git -C``: Sherlock's git is 1.8.3.1,
+    which predates -C.
+    """
+    commit = (info.get("vcs_info") or {}).get("commit_id")
+    if commit:
+        return commit
+    url = info.get("url") or ""
+    if "dir_info" not in info or not url.startswith("file://"):
+        return None
+    path = unquote(url[len("file://") :])
+
+    def run(*args):
+        try:
+            out = subprocess.run(
+                ["git", *args], cwd=path, capture_output=True, text=True, timeout=10, check=False
+            )
+            return out.stdout.strip() if out.returncode == 0 else None
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+    commit = run("rev-parse", "HEAD")
+    if not commit:
+        return None
+    return commit + ("-dirty" if run("status", "--porcelain", "--untracked-files=no") else "")
 
 
 class StepMetadata:
