@@ -284,9 +284,17 @@ done
 if [[ "${SKIP_REFERENCES}" == "1" ]]; then
     log "skipping references (--skip-references)"
 else
+    # reference_root comes from the dataset config. DATASET_CONFIG may name a
+    # copy that does not exist yet -- the one a 2.x run makes from the d0
+    # config fetched just above -- so fall back to that fetched config.
+    refs_cfg="${DATASET_CONFIG}"
+    if [[ ! -f "${refs_cfg}" ]]; then
+        refs_cfg="${MOLAB_DATA_DIR}/config/config.yaml"
+        log "no ${DATASET_CONFIG} yet; reading reference_root from ${refs_cfg}"
+    fi
     log "fetching references into ${REFERENCE_ROOT}"
     pixi run --frozen --manifest-path "${REPO_ROOT}/pixi.toml" -e preprocess \
-        python "${REPO_ROOT}/src/cli.py" download-references --path "${DATASET_CONFIG}"
+        python "${REPO_ROOT}/src/cli.py" download-references --path "${refs_cfg}"
 fi
 
 # ── 10. disk ──────────────────────────────────────────────────────────────────
