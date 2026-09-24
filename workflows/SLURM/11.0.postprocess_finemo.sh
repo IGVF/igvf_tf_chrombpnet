@@ -13,19 +13,27 @@
 #            finemo report - compute per-motif instance-CWM vs input-CWM
 #                             similarity (cwm_similarity in motif_report.tsv)
 #
+# CPU only, in ${finemo_env} (this repo's finemo pixi environment, Fi-NeMo
+# 0.41). `finemo report` needs no GPU, so unlike 10.0 there is no require_gpu.
+# `import finemo` still imports torch and compiles a numba function with
+# cache=True, so NUMBA_CACHE_DIR (default ${log_dir}/numba_cache) gives numba
+# a writable cache whatever the environment's or HOME's permissions; see 10.0.
+#
 # Input (from step 10):
 #   {finemo_unified_dir}/{dataset}_{peak_type}/hits.tsv
 #   {finemo_unified_dir}/{dataset}_{peak_type}/intermediate_inputs.npz
+#   (finemo report also reads call-hits' motif_data.tsv, motif_cwms.npy and
+#   parameters.json from the same directory)
 #
 # Output:
 #   {finemo_unified_dir}/{dataset}_{peak_type}/finemo_report/motif_report.tsv
-#   (consumed by analysis/0.2.finemo_hit_qc.py)
+#   {finemo_unified_dir}/{dataset}_{peak_type}/finemo_report/report.html
 #
-# Usage (DATASET_DIR must be exported):
-#   cd workflows/SLURM
-#   DATASET_DIR=/path/to/igvf3_cardiomyocyte sbatch 11.0.postprocess_finemo.sh
+# Usage:
+#   cd workflows/SLURM && DATASET=<name> sbatch 11.0.postprocess_finemo.sh
 #
-# Prerequisites: 10.0.run_finemo_unified.sh must have completed for this dataset.
+# Prerequisites: 10.0.run_finemo_unified.sh must have completed for this
+#   dataset, and `pixi install -e finemo` in this checkout.
 
 # --- bootstrap: locate the repo root (identical block in every workflow step) --
 # sbatch copies the submitted script to a node-local spool dir, so BASH_SOURCE
@@ -76,9 +84,6 @@ if [[ ! -f "${finemo_npz}" ]]; then
     exit 1
 fi
 
-ml biology samtools
-
-
 metadata_start "11.0.postprocess_finemo"
 metadata_inputs+=( "hits=${hits_tsv}" "npz=${finemo_npz}" )
 require_input "${hits_tsv}" 10.0.run_finemo_unified.sh
@@ -86,6 +91,9 @@ require_input "${finemo_npz}" 10.0.run_finemo_unified.sh
 preflight_check
 
 activate_env "${finemo_env}"
+# See the header: numba's cache must be writable before finemo is imported.
+export NUMBA_CACHE_DIR="${NUMBA_CACHE_DIR:-${log_dir}/numba_cache}"
+mkdir -p "${NUMBA_CACHE_DIR}"
 metadata_outputs+=( "motif_report=${report_dir}/motif_report.tsv" )
 metadata_params+=( "dataset=${dataset}" )
 
