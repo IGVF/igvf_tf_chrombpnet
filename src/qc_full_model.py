@@ -5,8 +5,17 @@ Visualize ChromBPNet full-model performance metrics across all datasets and fold
 Reads from <full_model_dir>/<dataset>_<peak_type>_fold_<fold>/:
   - evaluation/chrombpnet_metrics.json            (Pearson R, Spearman R, median JSD)
   - evaluation/chrombpnet_nobias_max_bias_response.txt (Tn5 motif response in final model)
-  - evaluation/chrombpnet_predictions.h5          (predicted log-counts)
-  - auxiliary/data_unstranded.bw                  (observed ATAC-seq signal)
+  - evaluation/chrombpnet_predictions.h5          (predicted log-counts, with coords)
+and --bigwig, the observed signal the model was trained on: 00.0's prepared
+preprocessing/signal/data_unstranded.bw. Training reads that file in place
+(chrombpnet -bw), so there is no copy under the model's auxiliary/.
+
+The predicted-vs-observed scatter sums the bigwig over each prediction row's
+own window (coords_chrom, coords_center +/- half the width of predictions/profs
+in the predictions h5), so the two sides are the same regions by construction. The predictions cover
+auxiliary/filtered.peaks.bed on the test chromosomes -- fewer rows than the
+blacklist-filtered narrowPeak, after chrombpnet's edge and outlier filters --
+so pairing them with the narrowPeak by row would compare different regions.
 
 Produces:
   <out-dir>/model_metrics.tsv                      table of all metrics
@@ -19,9 +28,9 @@ Run after 04.0.train_full_model.sh, via 04.1.qc_run_full_model.sh
 (per dataset) or 04.2.qc_combined_boxplot.sh (--combined, across datasets).
 
 Usage:
-  python 05.qc_full_model.py \\
+  python qc_full_model.py \\
       --full-model-dir ../results/full_models \\
-      --data-path      ../results/preprocessing \\
+      --bigwig         ../results/preprocessing/signal/data_unstranded.bw \\
       --datasets igvf3_cardiomyocyte \\
       --folds 0 1 2 3 4 \\
       --peak-type all \\
@@ -56,7 +65,6 @@ from utils.palettes import (
     SEQUENTIAL_CMAP,
 )
 from utils.plotting import apply_style
-from utils.regions import NARROWPEAK_SCHEMA
 
 logger = log.get_logger(__name__)
 
@@ -92,58 +100,39 @@ def parse_bias_response(path):
     return responses
 
 
-def load_pred_obs_counts(
-    pred_h5_path,
-    filtered_peaks_bed,
-    full_model_dir,
-    dataset,
-    fold,
-    peak_type,
-    outputlen=1000,
-):
-    """Load predicted log-counts and observed log-counts.
+def load_pred_obs_counts(pred_h5_path, bw_file, fold):
+    """Load predicted and observed log-counts for the test-chromosome rows.
 
-    Observed counts come from auxiliary/data_unstranded.bw, written by ChromBPNet
-    during training. Returns (obs_log_counts, pred_log_counts) for test chromosomes.
+    Observed counts are log(1 + the bigwig summed over the model's output
+    window centred on each row's coords_center), which is how chrombpnet
+    computes the counts target; the window is the width of predictions/profs.
+    Returns (obs_log_counts, pred_log_counts), aligned row for row.
     """
-    import chrombpnet.training.utils.data_utils as data_utils
     import h5py
     import pyBigWig
 
     with h5py.File(pred_h5_path, "r") as h5:
-        pred_logcts = h5["predictions"]["logcounts"][:]
+        pred_logcts = np.asarray(h5["predictions"]["logcounts"][:]).reshape(-1)
+        outputlen = int(h5["predictions"]["profs"].shape[1])
         chroms = np.array(
             [c.decode() if isinstance(c, bytes) else c for c in h5["coords"]["coords_chrom"][:]]
         )
+        centers = np.asarray(h5["coords"]["coords_center"][:], dtype=np.int64)
 
     # Read the held-out chromosomes from folds/fold_<fold>.json rather than a
     # local copy — it is the same file chrombpnet trained against as -fl.
-    fold_test_chroms = test_chroms(fold)
-    mask = np.isin(chroms, fold_test_chroms)
-    pred_logcts = pred_logcts[mask]
+    mask = np.isin(chroms, test_chroms(fold))
+    pred_logcts, chroms, centers = pred_logcts[mask], chroms[mask], centers[mask]
 
-    peaks_df = pd.read_csv(filtered_peaks_bed, sep="\t", names=NARROWPEAK_SCHEMA)
-    peaks_df = peaks_df[peaks_df["chr"].isin(fold_test_chroms)].reset_index(drop=True)
-
-    bw_file = (
-        Path(full_model_dir)
-        / f"{dataset}_{peak_type}_fold_{fold}"
-        / "auxiliary"
-        / "data_unstranded.bw"
-    )
-    if not bw_file.exists():
-        logger.warning(f"  Warning: observed BigWig not found: {bw_file}")
-        return None, pred_logcts.flatten()
-
-    try:
-        bw = pyBigWig.open(str(bw_file))
-        obs_data = data_utils.get_cts(peaks_df, bw, outputlen)
-        bw.close()
-        obs_logcts = np.log(np.sum(obs_data, axis=-1) + 1)
-        return obs_logcts, pred_logcts.flatten()
-    except Exception as e:
-        logger.warning(f"  Warning: could not load observed counts: {e}")
-        return None, pred_logcts.flatten()
+    half = outputlen // 2
+    with pyBigWig.open(str(bw_file)) as bw:
+        obs = np.array(
+            [
+                np.nansum(np.asarray(bw.values(c, int(m) - half, int(m) + half), dtype=float))
+                for c, m in zip(chroms, centers)
+            ]
+        )
+    return np.log(obs + 1), pred_logcts
 
 
 # %%
@@ -345,9 +334,11 @@ def parse_args():
         help="Directory containing per-dataset/fold model subdirectories (full_model_dir in config.sh)",
     )
     p.add_argument(
-        "--data-path",
+        "--bigwig",
         default=None,
-        help="Preprocessing directory with per-dataset peaks (data_path in config.sh)",
+        help="Observed signal for the predicted-vs-observed scatter: 00.0's prepared "
+        "preprocessing/signal/data_unstranded.bw. One dataset's signal, so it needs "
+        "exactly one --datasets. Without it the scatter is skipped.",
     )
     # No default: the dataset names are real directory names and a wrong guess
     # silently produces an empty plot. They come from the config via the step.
@@ -387,12 +378,17 @@ def main():
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    if not args.combined and (not args.full_model_dir or not args.data_path):
-        logger.error("--full-model-dir and --data-path are required unless --combined is set")
+    if not args.combined and not args.full_model_dir:
+        logger.error("--full-model-dir is required unless --combined is set")
         sys.exit(1)
     if not args.combined and not args.datasets:
         logger.error("--datasets is required (the names are real directory names; no default)")
         sys.exit(1)
+    if not args.combined and args.bigwig and len(args.datasets) > 1:
+        logger.error("--bigwig is one dataset's signal; pass exactly one --datasets with it")
+        sys.exit(1)
+    if not args.combined and not args.bigwig:
+        logger.warning("no --bigwig: skipping the predicted-vs-observed scatter")
 
     if args.combined:
         if args.metrics:
@@ -433,10 +429,6 @@ def main():
             metrics_path = eval_dir / "chrombpnet_metrics.json"
             bias_resp_path = eval_dir / "chrombpnet_nobias_max_bias_response.txt"
             pred_h5_path = eval_dir / "chrombpnet_predictions.h5"
-            _peaks_name = f"{dataset}_{args.peak_type}_peaks_no_blacklist.narrowPeak"
-            peaks_bed = Path(args.data_path) / dataset / _peaks_name
-            if not peaks_bed.exists():
-                peaks_bed = Path(args.data_path) / _peaks_name
 
             if not metrics_path.exists():
                 logger.warning(f"[{tag}] metrics JSON not found, skipping.")
@@ -469,51 +461,47 @@ def main():
             )
 
             # Predicted vs observed scatter
-            if pred_h5_path.exists() and peaks_bed.exists():
+            if args.bigwig and not Path(args.bigwig).exists():
+                logger.warning(f"[{tag}] observed bigwig not found: {args.bigwig}")
+            elif args.bigwig and not pred_h5_path.exists():
+                logger.warning(f"[{tag}] {pred_h5_path.name} not found, no scatter")
+            elif args.bigwig:
                 try:
-                    obs, pred = load_pred_obs_counts(
-                        pred_h5_path,
-                        peaks_bed,
-                        args.full_model_dir,
-                        dataset,
-                        fold,
-                        args.peak_type,
+                    obs, pred = load_pred_obs_counts(pred_h5_path, args.bigwig, fold)
+                    ok = ~(np.isnan(obs) | np.isnan(pred))
+                    obs_ok, pred_ok = obs[ok], pred[ok]
+                    rp = pearsonr(obs_ok, pred_ok)[0]
+                    rs = spearmanr(obs_ok, pred_ok)[0]
+
+                    pd.DataFrame(
+                        {
+                            "obs_log_counts": obs_ok,
+                            "pred_log_counts": pred_ok,
+                        }
+                    ).to_csv(
+                        out_dir / f"{dataset}_fold{fold}_scatter_data.tsv",
+                        sep="\t",
+                        index=False,
                     )
-                    if obs is not None:
-                        ok = ~(np.isnan(obs) | np.isnan(pred))
-                        obs_ok, pred_ok = obs[ok], pred[ok]
-                        rp = pearsonr(obs_ok, pred_ok)[0]
-                        rs = spearmanr(obs_ok, pred_ok)[0]
 
-                        pd.DataFrame(
-                            {
-                                "obs_log_counts": obs_ok,
-                                "pred_log_counts": pred_ok,
-                            }
-                        ).to_csv(
-                            out_dir / f"{dataset}_fold{fold}_scatter_data.tsv",
-                            sep="\t",
-                            index=False,
+                    if args.save_plots:
+                        fig, ax = plt.subplots(figsize=(5, 5))
+                        density_scatter(ax, obs_ok, pred_ok)
+                        ax.set_xlabel("Observed log(counts + 1)", fontsize=12)
+                        ax.set_ylabel("Predicted log-counts", fontsize=12)
+                        ax.set_title(f"{dataset} fold {fold}", fontsize=12)
+                        ax.text(
+                            0.05,
+                            0.95,
+                            f"Pearson={rp:.3f}\nSpearman={rs:.3f}",
+                            transform=ax.transAxes,
+                            fontsize=10,
+                            va="top",
                         )
-
-                        if args.save_plots:
-                            fig, ax = plt.subplots(figsize=(5, 5))
-                            density_scatter(ax, obs_ok, pred_ok)
-                            ax.set_xlabel("Observed log(counts + 1)", fontsize=12)
-                            ax.set_ylabel("Predicted log-counts", fontsize=12)
-                            ax.set_title(f"{dataset} fold {fold}", fontsize=12)
-                            ax.text(
-                                0.05,
-                                0.95,
-                                f"Pearson={rp:.3f}\nSpearman={rs:.3f}",
-                                transform=ax.transAxes,
-                                fontsize=10,
-                                va="top",
-                            )
-                            fig.tight_layout()
-                            for ext in ("pdf", "png"):
-                                fig.savefig(out_dir / f"{dataset}_fold{fold}_scatter.{ext}")
-                            plt.close(fig)
+                        fig.tight_layout()
+                        for ext in ("pdf", "png"):
+                            fig.savefig(out_dir / f"{dataset}_fold{fold}_scatter.{ext}")
+                        plt.close(fig)
                 except Exception as e:
                     logger.warning(f"[{tag}] Scatter plot failed: {e}")
 

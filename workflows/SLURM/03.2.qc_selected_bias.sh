@@ -77,10 +77,15 @@ fold_json="${folds_dir}/fold_${fold}.json"
 file_prefix="${bias_dataset}_${peak_type}_fold_${fold}"
 out_dir="${results_path}/bias_models/bias_model${suffix}/${bias_dataset}_${peak_type}_fold_${fold}"
 model_file="${out_dir}/models/${file_prefix}_bias.h5"
+# The observed signal. Training reads 00.0's prepared bigwig in place (-bw),
+# so there is no copy under ${out_dir}/auxiliary/ to fall back on.
+prepared_bw="${data_path}/signal/data_unstranded.bw"
 
 
 metadata_inputs+=( "bias_model=${model_file}" "genome=${genome_fa}" "fold_json=${fold_json}" )
+metadata_inputs+=( "signal=${prepared_bw}" )
 require_input "${model_file}" 03.0.train_bias_model.sh
+require_input "${prepared_bw}" 00.0.prepare_signal.sh
 require_input "${genome_fa}" "cli.py download-references"
 require_input "${fold_json}"
 require_input "${chrom_sizes}" "cli.py download-references"
@@ -120,7 +125,8 @@ python "${src_dir}/run_bias_qc.py" \
     --file-prefix "${file_prefix}" \
     --genome "${genome_fa}" \
     --chrom-sizes "${chrom_sizes}" \
-    --fold-json "${fold_json}"
+    --fold-json "${fold_json}" \
+    --bigwig "${prepared_bw}"
 _rc=$?
 [[ -s "${METADATA_RSS_FILE}" ]] && metadata_metrics+=( "peak_rss_gb=$(<"${METADATA_RSS_FILE}")" )
 _scores="${out_dir}/auxiliary/interpret_subsample/${file_prefix}_bias.profile_scores.h5"

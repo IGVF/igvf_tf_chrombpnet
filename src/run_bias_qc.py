@@ -11,8 +11,10 @@ The `chrombpnet bias qc` CLI can't be pointed at the same output dir that
 `chrombpnet bias train` already populated - it recreates auxiliary/
 and evaluation/ with exist_ok=False and crashes. This script instead calls
 chrombpnet's pipelines.bias_model_qc() directly, reusing the filtered
-peaks/nonpeaks bed files and shifted bigwig already written by
-`chrombpnet bias train` into <output-dir>/auxiliary/.
+peaks/nonpeaks bed files `chrombpnet bias train` wrote into
+<output-dir>/auxiliary/. The observed signal is 00.0's prepared bigwig
+(--bigwig): training reads it in place (`-bw`), so there is no copy under
+auxiliary/ to reuse.
 
 Run only for the bias model selected per fold by select_bias_model.py (03.1),
 via 03.2.qc_selected_bias.sh - NOT for the full fold x bias-factor sweep.
@@ -29,7 +31,8 @@ Usage:
       --file-prefix igvf3_cardiomyocyte_all_fold_0 \\
       --genome genome/hg38.fa \\
       --chrom-sizes genome/hg38.chrom.sizes \\
-      --fold-json genome/folds/fold_0.json
+      --fold-json genome/folds/fold_0.json \\
+      --bigwig results/preprocessing/signal/data_unstranded.bw
 """
 
 import argparse
@@ -59,6 +62,12 @@ def parse_args():
     p.add_argument("--genome", required=True, help="Reference genome fasta")
     p.add_argument("--chrom-sizes", required=True, help="Chrom sizes file")
     p.add_argument("--fold-json", required=True, help="Fold chr split json (train/valid/test)")
+    p.add_argument(
+        "--bigwig",
+        required=True,
+        help="Observed signal the bias model was trained on: 00.0's prepared "
+        "preprocessing/signal/data_unstranded.bw",
+    )
     p.add_argument("--data-type", default="ATAC", choices=["ATAC", "DNASE"])
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument(
@@ -161,9 +170,11 @@ def main():
     bias_model = Path(args.bias_model)
     peaks = output_dir / "auxiliary" / f"{fpx}filtered.bias_peaks.bed"
     nonpeaks = output_dir / "auxiliary" / f"{fpx}filtered.bias_nonpeaks.bed"
-    bigwig = output_dir / "auxiliary" / f"{fpx}data_unstranded.bw"
+    bigwig = Path(args.bigwig)
 
-    for f in (bias_model, peaks, nonpeaks, bigwig, args.genome, args.chrom_sizes, args.fold_json):
+    if not bigwig.exists():
+        raise FileNotFoundError(f"Missing {bigwig} - run 00.0.prepare_signal.sh first.")
+    for f in (bias_model, peaks, nonpeaks, args.genome, args.chrom_sizes, args.fold_json):
         if not Path(f).exists():
             raise FileNotFoundError(
                 f"Missing {f} - run chrombpnet bias train for this fold/bias combo first."
