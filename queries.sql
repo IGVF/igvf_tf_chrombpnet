@@ -127,7 +127,8 @@ FROM runs WHERE git.dirty ORDER BY date_created DESC;
 -- Tool versions actually used, per step.
 SELECT DISTINCT step, t.software_name, t.software_version
 FROM runs, UNNEST(software_versions) AS u(t)
-WHERE t.software_name IN ('chrombpnet', 'python', 'pyranges1', 'tensorflow', 'finemo')
+WHERE t.software_name IN ('chrombpnet', 'chrombpnet_commit', 'keras', 'jax', 'jax-cuda13-plugin',
+                          'modisco', 'torch', 'finemo', 'MotifCompendium_commit', 'python', 'pyranges1')
 ORDER BY step, t.software_name;
 
 -- Did every dataset run step 01 with the same input window?
