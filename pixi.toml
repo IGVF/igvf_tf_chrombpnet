@@ -4,15 +4,20 @@ description = "ChromBPNet pipeline for the IGVF TF collaboration"
 channels = ["conda-forge", "bioconda"]
 platforms = ["linux-64", "osx-arm64"]
 
-# Scope: pixi covers local development only — linting, syntax checks, and
-# running the QC/plotting scripts on results copied off the cluster.
+# Every environment the pipeline runs in, except chrombpnet itself:
 #
-# It deliberately does NOT reproduce the three cluster environments. The
-# chrombpnet stack pins tensorflow==2.8.0 / numpy==1.23.4 / keras==2.8.0 as pip
-# dependencies with CUDA 11 wheels; finemo and MotifCompendium pin mutually
-# incompatible torch and cupy builds. Those three stay canonical in envs/*.yml
-# as fully pinned conda exports and are created with `conda env create`.
-# See CLAUDE.md, "Environments".
+#   default / qc   local lint, tests and plotting
+#   preprocess     steps 00.0, 00.1, 02.0 and `cli.py download-references`
+#   finemo         steps 10, 11 (Fi-NeMo on torch; finemo-cu126 for old drivers)
+#   motif-compendium  step 09
+#
+# chrombpnet 2.x (steps 01 and 03-08) comes from a pinned chrombpnet checkout
+# installed from that repo's own lock file, the one the Keras 3 / JAX port was
+# validated with, rather than being re-solved here. See "Software environments"
+# in lib/bash/common.sh and CLAUDE.md, "Environments".
+#
+# Each tool environment has its own solve group, so their pins cannot move one
+# another: Fi-NeMo's torch and MotifCompendium's stack never meet.
 
 [dependencies]
 python = ">=3.12,<3.14"
@@ -44,16 +49,9 @@ pyfaidx = ">=0.9.0.4,<0.10"
 [feature.qc.pypi-dependencies]
 pyranges1 = ">=1.4"
 
-# The `preprocess` cluster environment, reproduced. This is the ONE of the four
-# that pixi can reproduce faithfully: steps 00.0/00.1/02.0 and the reference
-# builder need only interval/table/bigwig work, with no deep-learning stack and
-# no CUDA wheels, so there is nothing here that pins a GPU build. Mirrors
-# envs/preprocess.yml dependency for dependency -- keep the two in step.
-#
-# This does NOT contradict "pixi deliberately does not reproduce the cluster
-# environments": that rule is about chrombpnet / finemo / motif_compendium,
-# which pin mutually incompatible tensorflow, torch and cupy builds. On molab
-# those come from the container instead (see workflows/molab/).
+# Steps 00.0/00.1/02.0 and the reference builder: interval, table and bigwig
+# work only, with no deep-learning stack and no CUDA wheels. pyranges1 needs
+# Python >= 3.12.
 [feature.preprocess.dependencies]
 python = ">=3.12,<3.14"
 pandas = ">=2.0"
@@ -69,36 +67,76 @@ pyyaml = ">=6"            # full YAML for config.py
 [feature.preprocess.pypi-dependencies]
 pyranges1 = ">=1.4"       # not on conda-forge/bioconda; conda's is the 0.x line
 
-# The `motifs` environment (03.3, 04.5): TF-MoDISco 2.5.2, whose memelite
-# dependency needs Python >= 3.9 -- the chrombpnet env cannot have it. Mirrors
-# envs/motifs.yml -- keep the two in step. Its own solve group so it cannot
-# move the versions the other environments get.
-[feature.motifs.dependencies]
-python = ">=3.12,<3.14"
-numpy = ">=1.23"
-pandas = ">=2.0"
-scipy = ">=1.10"
+# Fi-NeMo (steps 10, 11). finemo is pure Python on PyPI; everything it
+# imports at `import finemo` has to be here (pyfaidx, hdf5plugin, numba), and
+# htslib provides the bgzip/tabix that 10.0 compresses hits with. pyBigWig
+# comes from PyPI (finemo requires it by that name, and bioconda's pybigwig has
+# no PyPI mapping, so listing it here too would install both).
+# 0.41 is the last release; main's later commits only touch `finemo report`,
+# and break its HTML image links.
+[feature.finemo]
+platforms = ["linux-64"]    # CUDA torch wheels
+
+[feature.finemo.dependencies]
+python = ">=3.13,<3.14"
+numpy = ">=2.2"
+scipy = ">=1.14"
+numba = ">=0.61"
+polars = ">=1.44.2,<2"      # 2.0 makes lazy collect() streaming, with no row-order guarantee
+matplotlib-base = ">=3.10"
+h5py = ">=3.12"
+hdf5plugin = ">=5.0"
+tqdm = "*"
+jinja2 = ">=3.1"
+jaxtyping = ">=0.3.2"
+pyfaidx = ">=0.9"
+htslib = ">=1.21"
+
+[feature.finemo.pypi-dependencies]
+finemo = "==0.41"
+
+# torch from PyPI, not conda-forge (which stops at 2.13). The default Linux
+# wheel of 2.14.0 IS the CUDA 13.0 build: sm_75-sm_120 (RTX PRO 6000 included),
+# NVIDIA driver >= 580, glibc >= 2.28.
+[feature.torch-cu130.pypi-dependencies]
+torch = "==2.14.0"
+
+# For drivers below 580 or GPU_CC 7.0: sm_50-sm_90, so NOT for Blackwell.
+[feature.torch-cu126.pypi-dependencies]
+torch = { version = "==2.14.0", index = "https://download.pytorch.org/whl/cu126" }
+
+# MotifCompendium (step 09). Not on PyPI or conda-forge, hence the git pin;
+# v1.0.19. CPU only: it imports cupy only for set_compute_options(use_gpu=True),
+# which src/motif_compendium.py never calls, so there is no cupy here.
+[feature.motif-compendium.dependencies]
+python = ">=3.13,<3.14"
+numpy = ">=2.0"
+pandas = ">=2.2,<3"         # upstream runs pandas 2; 3.x is untested there
 h5py = ">=3.8"
-hdf5plugin = ">=4.0"     # chrombpnet's scores h5 is filter-compressed
-matplotlib-base = ">=3.7"
-numba = ">=0.58"
+hdf5plugin = ">=4.0"
+pytables = ">=3.10"
 scikit-learn = ">=1.3"
+scipy = ">=1.10"
 python-igraph = ">=0.10"
 leidenalg = ">=0.10"
-pyfaidx = ">=0.7"
-jinja2 = ">=3.1"
+seaborn = ">=0.13"
+matplotlib-base = ">=3.7"
 logomaker = ">=0.8"
-pyyaml = ">=6"
+upsetplot = ">=0.9"
+beautifulsoup4 = ">=4.12"
+jinja2 = ">=3.1"
+tqdm = ">=4.60"
 
-[feature.motifs.pypi-dependencies]
-modisco = "==2.5.2"
-memelite = ">=0.4"       # tomtom-lite, used by `modisco report -l`
+[feature.motif-compendium.pypi-dependencies]
+motifcompendium = { git = "https://github.com/kundajelab/MotifCompendium.git", rev = "7e9d1c2f932ea7f53fd36e174affef26eaf086c4" }
 
 [environments]
 default = { features = ["dev"], solve-group = "main" }
 qc = { features = ["qc"], solve-group = "main" }
 preprocess = { features = ["preprocess"], solve-group = "main" }
-motifs = { features = ["motifs"], solve-group = "motifs" }
+finemo = { features = ["finemo", "torch-cu130"], solve-group = "finemo" }
+finemo-cu126 = { features = ["finemo", "torch-cu126"], solve-group = "finemo-cu126" }
+motif-compendium = { features = ["motif-compendium"], solve-group = "motif-compendium" }
 
 [tasks.lint]
 description = "ruff check over lib/ and src/"
