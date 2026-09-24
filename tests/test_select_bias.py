@@ -111,9 +111,7 @@ def test_selection_table_flags_a_fold_that_chose_the_lowest_factor():
 
 
 def test_selection_table_flags_a_fold_that_chose_the_highest_factor():
-    df = metrics_frame(
-        [("0", "05", 0.30), ("0", "06", 0.40), ("0", "07", 0.50), ("0", "08", 0.90)]
-    )
+    df = metrics_frame([("0", "05", 0.30), ("0", "06", 0.40), ("0", "07", 0.50), ("0", "08", 0.90)])
     sel = sb.build_selection_table(df)
     assert sel.loc["0", "selected_bias"] == "08"
     assert sel.loc["0", "sweep_edge"] == "high"
@@ -134,9 +132,7 @@ def explanation_for(df):
 
 
 def test_explanation_tells_the_reader_to_widen_the_sweep_downward():
-    df = metrics_frame(
-        [("0", "05", 0.90), ("0", "06", 0.50), ("0", "07", 0.40), ("0", "08", 0.30)]
-    )
+    df = metrics_frame([("0", "05", 0.90), ("0", "06", 0.50), ("0", "07", 0.40), ("0", "08", 0.30)])
     text = explanation_for(df)
     assert "EDGE OF THE SWEPT RANGE" in text
     assert "LOWEST" in text
@@ -144,9 +140,7 @@ def test_explanation_tells_the_reader_to_widen_the_sweep_downward():
 
 
 def test_explanation_tells_the_reader_to_widen_the_sweep_upward():
-    df = metrics_frame(
-        [("0", "05", 0.30), ("0", "06", 0.40), ("0", "07", 0.50), ("0", "08", 0.90)]
-    )
+    df = metrics_frame([("0", "05", 0.30), ("0", "06", 0.40), ("0", "07", 0.50), ("0", "08", 0.90)])
     text = explanation_for(df)
     assert "HIGHEST" in text
     assert "higher --bias_threshold_factor" in text
@@ -154,9 +148,7 @@ def test_explanation_tells_the_reader_to_widen_the_sweep_upward():
 
 def test_explanation_stays_quiet_when_the_winner_is_interior():
     """The warning has to be rare enough to mean something."""
-    df = metrics_frame(
-        [("0", "05", 0.30), ("0", "06", 0.90), ("0", "07", 0.50), ("0", "08", 0.30)]
-    )
+    df = metrics_frame([("0", "05", 0.30), ("0", "06", 0.90), ("0", "07", 0.50), ("0", "08", 0.30)])
     assert "EDGE OF THE SWEPT RANGE" not in explanation_for(df)
 
 
@@ -177,4 +169,4 @@ def test_explanation_gives_the_yaml_key_not_config_sh():
     df = metrics_frame([("0", "05", 0.30), ("0", "06", 0.90), ("0", "07", 0.50)])
     text = explanation_for(df)
     assert "config.sh" not in text
-    assert 'fold_bias_suffix:' in text and '"0": "_06"' in text
+    assert "fold_bias_suffix:" in text and '"0": "_06"' in text

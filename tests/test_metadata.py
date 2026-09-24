@@ -312,9 +312,12 @@ def test_emit_metadata_cli_does_not_invent_a_peak_rss(tmp_path):
         [
             sys.executable,
             str(REPO / "src" / "emit_metadata.py"),
-            "--step", "99.0.fake",
-            "--out-dir", str(tmp_path),
-            "--exit-status", "0",
+            "--step",
+            "99.0.fake",
+            "--out-dir",
+            str(tmp_path),
+            "--exit-status",
+            "0",
         ],
         check=True,
         capture_output=True,
@@ -358,7 +361,9 @@ def test_checkout_install_records_head_and_dirty(tmp_path):
     (repo / "a.py").write_text("x = 1\n")
     _git(repo, "add", "a.py")
     _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init")
-    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True
+    ).stdout.strip()
     info = {"url": repo.as_uri(), "dir_info": {"editable": True}}
     assert metadata.revision_from_direct_url(info) == head
     (repo / "untracked.txt").write_text("not code\n")  # untracked files do not make it dirty

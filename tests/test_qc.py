@@ -161,9 +161,7 @@ def test_peak_width_summary():
 def negatives_at(centres, width=2114):
     """chrombpnet's negatives layout: 10 columns, summit in the last."""
     half = width // 2
-    return [
-        ["chr1", c - half, c + half, ".", ".", ".", ".", ".", ".", half] for c in centres
-    ]
+    return [["chr1", c - half, c + half, ".", ".", ".", ".", ".", ".", half] for c in centres]
 
 
 @pytest.fixture
@@ -203,9 +201,7 @@ def test_auroc_is_near_half_when_background_is_as_open_as_peaks(tmp_path):
     neg_centres = list(range(31_000, 51_000, 2_000))
     cuts = np.repeat(peak_centres + neg_centres, 500)
     bw = make_bigwig(tmp_path / "flat.bw", cuts)
-    m, _pos, _neg = qc.peak_vs_nonpeak_signal(
-        bw, peaks_at(peak_centres), negatives_at(neg_centres)
-    )
+    m, _pos, _neg = qc.peak_vs_nonpeak_signal(bw, peaks_at(peak_centres), negatives_at(neg_centres))
     assert m["auroc_peaks_vs_nonpeaks"] == pytest.approx(0.5, abs=0.05)
     assert m["signal_enrichment_peak_over_nonpeak"] == pytest.approx(1.0, abs=0.1)
 
@@ -257,13 +253,9 @@ def test_regions_are_centred_on_the_summit_not_the_midpoint(tmp_path):
 def test_enrichment_reports_the_ratio_of_means(tmp_path):
     peak_centres = [10_000, 14_000]
     neg_centres = [30_000, 34_000]
-    cuts = np.concatenate(
-        [np.repeat(peak_centres, 400), np.repeat(neg_centres, 100)]
-    )
+    cuts = np.concatenate([np.repeat(peak_centres, 400), np.repeat(neg_centres, 100)])
     bw = make_bigwig(tmp_path / "e.bw", cuts)
-    m, _pos, _neg = qc.peak_vs_nonpeak_signal(
-        bw, peaks_at(peak_centres), negatives_at(neg_centres)
-    )
+    m, _pos, _neg = qc.peak_vs_nonpeak_signal(bw, peaks_at(peak_centres), negatives_at(neg_centres))
     assert m["signal_enrichment_peak_over_nonpeak"] == pytest.approx(4.0)
 
 
