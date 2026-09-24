@@ -111,6 +111,9 @@ for _ds in "${datasets[@]}"; do
     done
     metadata_outputs+=( "peaks=${_prefix}.interpreted_regions.bed" "interpretation_settings=${_prefix}.interpret.args.json" )
     require_input "${_dir}/models/chrombpnet_nobias.h5" 04.0.train_full_model.sh
+    # 04.0 counts a model without its footprints file as unfinished (it rm -rf's
+    # and retrains it), so a model alone is not a finished 04.0.
+    require_input "${_dir}/auxiliary/chrombpnet_nobias_footprints.h5" 04.0.train_full_model.sh
     require_input "${_peaks}" 00.1.preprocess_peaks.sh
 done
 unset _ds _dir _prefix _peaks _head

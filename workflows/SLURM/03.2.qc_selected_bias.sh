@@ -101,9 +101,10 @@ require_input "${model_file}" 03.0.train_bias_model.sh
 require_input "${prepared_bw}" 00.0.prepare_signal.sh
 require_input "${genome_fa}" "cli.py download-references"
 require_input "${fold_json}"
-metadata_outputs+=( "bias_qc=${out_dir}/evaluation" )
-# The files, not only their directory: 03.3 consumes the two score files, and a
-# record that names only evaluation/ cannot say whether they were written.
+# Files, not the evaluation/ directory: 03.3 consumes the two score files, a
+# record that names only a directory cannot say whether they were written, and
+# molab's step_done.py treats a directory output as missing, so the step would
+# never count as done.
 metadata_outputs+=( "bias_metrics=${out_dir}/evaluation/${file_prefix}_bias_metrics.json" )
 metadata_outputs+=( "contributions=${out_dir}/auxiliary/interpret_subsample/${file_prefix}_bias.counts_scores.h5" )
 metadata_outputs+=( "contributions=${out_dir}/auxiliary/interpret_subsample/${file_prefix}_bias.profile_scores.h5" )

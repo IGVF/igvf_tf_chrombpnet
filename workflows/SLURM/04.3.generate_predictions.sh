@@ -78,7 +78,14 @@ peaks_file="${peaks_dir}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
 out_dir="${predictions_dir}/${dataset}_${peak_type}"
 
 metadata_inputs+=( "peaks=${peaks_file}" "genome=${genome_fa}" )
-metadata_outputs+=( "predictions=${out_dir}" )
+# The files, not ${out_dir}: molab's step_done.py treats a directory output as
+# missing. Names follow src/predict_and_avg.py (--output-prefix
+# ${out_dir}/${dataset}_avg, --output-key nobias|uncorrected, --output-bed True).
+for _key in nobias uncorrected; do
+    metadata_outputs+=( "predictions=${out_dir}/${dataset}_avg_chrombpnet_${_key}.bw" )
+    metadata_outputs+=( "predictions=${out_dir}/${dataset}_avg_chrombpnet_${_key}_preds_w_logcounts.bed" )
+done
+unset _key
 metadata_params+=( "dataset=${dataset}" )
 require_input "${peaks_file}"  00.1.preprocess_peaks.sh
 require_input "${genome_fa}"   "cli.py download-references"
