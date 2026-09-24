@@ -337,8 +337,9 @@ def parse_args():
         "--bigwig",
         default=None,
         help="Observed signal for the predicted-vs-observed scatter: 00.0's prepared "
-        "preprocessing/signal/data_unstranded.bw. One dataset's signal, so it needs "
-        "exactly one --datasets. Without it the scatter is skipped.",
+        "preprocessing/signal/data_unstranded.bw. One dataset's signal, so it is "
+        "used only with exactly one --datasets; otherwise, or without it, the "
+        "scatter is skipped.",
     )
     # No default: the dataset names are real directory names and a wrong guess
     # silently produces an empty plot. They come from the config via the step.
@@ -385,9 +386,15 @@ def main():
         logger.error("--datasets is required (the names are real directory names; no default)")
         sys.exit(1)
     if not args.combined and args.bigwig and len(args.datasets) > 1:
-        logger.error("--bigwig is one dataset's signal; pass exactly one --datasets with it")
-        sys.exit(1)
-    if not args.combined and not args.bigwig:
+        # One signal cannot be every dataset's observed side; the metrics and
+        # box plots do not need it, so only the scatter is dropped.
+        logger.warning(
+            "--bigwig is one dataset's signal but %d --datasets were given: "
+            "skipping the predicted-vs-observed scatter",
+            len(args.datasets),
+        )
+        args.bigwig = None
+    elif not args.combined and not args.bigwig:
         logger.warning("no --bigwig: skipping the predicted-vs-observed scatter")
 
     if args.combined:
