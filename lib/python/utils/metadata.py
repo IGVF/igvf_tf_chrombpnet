@@ -452,8 +452,8 @@ def revision_from_direct_url(info: dict) -> str | None:
     """Commit for a git install (``vcs_info``) or a local checkout (``dir_info``).
 
     A checkout is asked with git, and gets ``-dirty`` appended when tracked
-    files differ from that commit, so a record never claims a commit the code
-    did not match. ``cwd=`` rather than ``git -C``: Sherlock's git is 1.8.3.1,
+    files differ from that commit (``-unverified`` when git cannot say), so a
+    record never claims a commit the code did not match. ``cwd=`` rather than ``git -C``: Sherlock's git is 1.8.3.1,
     which predates -C.
     """
     commit = (info.get("vcs_info") or {}).get("commit_id")
@@ -476,7 +476,10 @@ def revision_from_direct_url(info: dict) -> str | None:
     commit = run("rev-parse", "HEAD")
     if not commit:
         return None
-    return commit + ("-dirty" if run("status", "--porcelain", "--untracked-files=no") else "")
+    status = run("status", "--porcelain", "--untracked-files=no")
+    if status is None:  # git status failed or timed out: cannot vouch for a clean tree
+        return commit + "-unverified"
+    return commit + ("-dirty" if status else "")
 
 
 class StepMetadata:

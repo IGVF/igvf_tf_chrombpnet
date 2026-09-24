@@ -87,13 +87,18 @@ n_found=$(grep -c "^[^#]" "${config_tsv}" || true)
 echo "[$(date)] Config TSV: ${config_tsv} (${n_found} datasets)"
 
 if [[ "${n_found}" -eq 0 ]]; then
-    echo "ERROR: no MoDISco H5s found. Run 09.run_modisco.sh first." >&2
+    echo "ERROR: no MoDISco H5s found. Run 08.0.run_modisco.sh first." >&2
     exit 1
 fi
 
 # ${motif_compendium_algorithm} (common.sh) is passed explicitly for the reason
 # given in 09.0.cross_dataset_compendium.sh: MotifCompendium v1.0.19's default
 # adds a k-centroids pass that ignores the similarity threshold.
+
+# The reference DB has a versioned name (see 09.0), which an install made before
+# the pin does not have: stop here rather than in a MotifCompendium traceback.
+require_input "${ref_db_meme}" "cli.py download-references"
+preflight_check
 
 # Run MotifCompendium clustering + annotation
 activate_env "${motif_compendium_env}"

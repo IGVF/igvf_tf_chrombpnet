@@ -105,10 +105,13 @@ finemo report \
     -r "${finemo_npz}" \
     -H "${out_dir}" \
     -o "${report_dir}"
+rc=$?
 
+# The exit status too: motif_report.tsv is also this step's skip marker, so a
+# report that failed after an earlier run wrote one would otherwise pass.
 motif_report="${report_dir}/motif_report.tsv"
-if [[ ! -f "${motif_report}" ]]; then
-    echo "ERROR: ${motif_report} not produced. Check finemo report output above." >&2
+if [[ ${rc} -ne 0 || ! -f "${motif_report}" ]]; then
+    echo "ERROR: finemo report failed (exit ${rc}) or did not write ${motif_report}. See its output above." >&2
     exit 1
 fi
 echo "[$(date)] [${dataset}] Report done: ${motif_report}"
