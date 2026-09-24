@@ -19,12 +19,12 @@
 #
 # Why its own step: see 04.4. None of this needs a GPU.
 # Why not chrombpnet's modisco: see the header of src/motif_qc.py. It runs in
-#   the `motifs` env (envs/motifs.yml), not the chrombpnet one: modisco 2.5.2
-#   needs Python >= 3.9. The report matches against chrombpnet's motif DB,
-#   which has Tn5/DNase references next to the TF motifs, so leftover bias
-#   is named as such. chrombpnet's PDF and pipeline-mode HTML report are no
-#   longer written -- they read the old report's motifs.html; 04.0's
-#   train-mode report stays.
+#   the chrombpnet 2.x env, which ships modisco 2.5.2, with the motif settings
+#   chrombpnet itself passes (-l 2 -z 20 -f 5 -t 20 -g 5 -j 0, i.e. 1.x's;
+#   2.5.2's own defaults give 50-bp patterns instead of 30). The report
+#   matches against chrombpnet's motif DB, which has Tn5/DNase references next
+#   to the TF motifs, so leftover bias is named as such. chrombpnet's PDF and
+#   pipeline-mode HTML report are not written; 04.0's train-mode report stays.
 #
 # Array index = fold index.
 #
@@ -37,8 +37,8 @@
 #   export DATASET=<name>        # or DATASET_CONFIG=/path/to/config.yaml
 #   sbatch 04.5.modisco_full_model.sh               # all folds
 #   sbatch --array=0 04.5.modisco_full_model.sh     # fold 0 only
-# Prerequisites: 04.4.qc_full_model_interpret.sh for the fold, the `motifs`
-#   env (MOTIFS_ENV), and `cli.py download-references` (chrombpnet's motif DB).
+# Prerequisites: 04.4.qc_full_model_interpret.sh for the fold, and
+#   `cli.py download-references` (chrombpnet's motif DB).
 
 # --- bootstrap: locate the repo root (identical block in every workflow step) --
 # sbatch copies the submitted script to a node-local spool dir, so BASH_SOURCE

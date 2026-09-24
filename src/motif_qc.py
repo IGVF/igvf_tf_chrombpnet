@@ -8,9 +8,10 @@ seqlet budget, its descriptive report, and a MEME export of the patterns.
 Why a small budget (-n 5000 by default, where chrombpnet's pipeline uses
 50000): this is QC, whose question is "which motifs did this fold's model
 learn?", and TF-MoDISco's runtime is dominated by clustering, which grows with
-the seqlet count. On d0's bias model (fold 0, 30K regions, 4 shared CPUs)
-TF-MoDISco took 63 min at -n 50000 on the profile head (2.0.7), and 6 min at
--n 5000 on the counts head (2.5.2) -- which still separated the GC-rich
+the seqlet count. On d0's chrombpnet 1.x bias model (fold 0, 30K regions, 4
+shared CPUs) TF-MoDISco took 63 min at -n 50000 on the profile head
+(modisco-lite 2.0.7, as chrombpnet 1.x ran it), and 6 min at -n 5000 on the
+counts head (2.5.2 at its CLI defaults) -- which still separated the GC-rich
 positive pattern from the AT-rich negative ones cleanly. Analysis-grade motifs
 come from 08.0 at the full budget on the fold average.
 
@@ -26,12 +27,26 @@ against chrombpnet's DB, 1% of the d0 bias model's seqlets matched Tn5, while
 the same model's TF-MoDISco patterns were 90% Tn5 -- the Tn5 motif is long and
 weak per position, and recognisable only in aggregate.
 
-The algorithm is unchanged from the chrombpnet env: modiscolite 2.5.2's
-core/affinitymat/cluster/extract_seqlets are identical to 2.0.7. 2.5.2 adds
-the descriptive report, `modisco meme`, and the window size recorded in the h5.
+Why the explicit flags: modisco 2.5.2 (in the chrombpnet 2.x env, which this
+runs in) keeps modisco-lite 2.0.7's core/affinitymat/cluster/extract_seqlets
+byte for byte, but not its CLI defaults. 2.0.7's CLI hard-coded a 20-bp
+seqlet core and 5-bp seqlet flank (2.5.2's -z, -f), and its TFMoDISco()
+trimmed patterns to 20 bp and added 5 bp of flank; 2.5.2 exposes those as
+flags whose defaults are trim 30 / initial flank 10 (-t, -g), which widens
+every pattern from 30 to 50 bp.
+So all of them are passed, in the order chrombpnet 2.x's
+evaluation/modisco/run.py passes them: -l 2 -z 20 -f 5 -t 20 -g 5 -j 0 (the
+chrombpnet 1.x motifs). One difference cannot be set from the CLI:
+TFMoDISco()'s merging_max_seqlets_subsample rose from 300 in 2.0.7 to 1000.
+2.5.2 also adds the descriptive report, `modisco meme`, and the window size
+recorded in the h5.
 
-Stages, each skipped when its output exists (--force re-runs them):
-  modisco  `modisco motifs -i <scores.h5> -n <max-seqlets> -w <window>`
+Stages, each skipped when its output exists (--force re-runs them). An output
+also counts as stale, and is redone, when motif_qc.json does not record the
+same scores, window, seqlet budget, motif DB and modisco flags -- so outputs
+made before the flags were pinned (2.5.2 defaults) are redone once.
+  modisco  `modisco motifs -i <scores.h5> -n <max-seqlets> -o <h5> -w <window>
+           -l 2 -z 20 -f 5 -t 20 -g 5 -j 0`
   report   `modisco report -l` (descriptive, tomtom-lite matching against
            --motif-db) and `modisco meme -t PFM`
 
@@ -64,6 +79,18 @@ from utils import log, metadata  # noqa: E402
 
 logger = log.get_logger(__name__)
 
+# chrombpnet 1.x's motif settings, as chrombpnet 2.x's evaluation/modisco/run.py
+# passes them to `modisco motifs` (flag, value), in its order. Recorded in
+# motif_qc.json and compared on the next run, like --window and --max-seqlets.
+MODISCO_FLAGS = (
+    ("-l", 2),  # n_leiden
+    ("-z", 20),  # sliding window (seqlet core)
+    ("-f", 5),  # seqlet flank
+    ("-t", 20),  # trim to window size (2.5.2 default 30)
+    ("-g", 5),  # initial flank to add (2.5.2 default 10)
+    ("-j", 0),  # final flank to add
+)
+
 
 def _tool(name: str) -> str:
     """A console script of THIS interpreter's env, whether or not it is on PATH."""
@@ -91,7 +118,7 @@ def parse_args():
     log.add_logging_args(p)
     args = p.parse_args()
     # numba (modiscolite, memelite) sizes its pool to the cores the kernel
-    # reports -- the HOST's on a container or molab box (20+), not the
+    # reports -- the whole machine's (20+ on a molab box), not the job's
     # allocation. Pin it before anything imports it; modisco inherits it.
     for var in ("NUMBA_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
         os.environ[var] = str(args.threads)
@@ -129,10 +156,12 @@ def main():
         "window": args.window,
         "max_seqlets": args.max_seqlets,
         "motif_db": str(args.motif_db),
+        "modisco_flags": " ".join(f"{flag} {value}" for flag, value in MODISCO_FLAGS),
     }
     # Outputs on disk only count as done if they were made with THESE settings:
-    # a result from another -n or window (or with no summary beside it) would
-    # otherwise be kept silently, because every stage skips on existence.
+    # a result from another -n, window or flag set (or with no summary beside
+    # it) would otherwise be kept silently, because every stage skips on
+    # existence.
     stale = [k for k, v in wanted.items() if summary.get(k) != v]
     if stale and any(p.exists() for p in (f["modisco"], f["report"])):
         logger.warning(
@@ -156,7 +185,8 @@ def main():
 
     def _motifs():
         cmd = ["motifs", "-i", str(args.scores), "-n", str(args.max_seqlets)]
-        cmd += ["-w", str(args.window), "-o", str(f["modisco"])]
+        cmd += ["-o", str(f["modisco"]), "-w", str(args.window)]
+        cmd += [str(x) for pair in MODISCO_FLAGS for x in pair]
         _modisco(*cmd, *(["-v"] if args.verbose else []))
 
     def _report():

@@ -22,12 +22,13 @@
 #   Deliberately not run on the full fold x bias-factor sweep (03.0).
 #
 # Why not chrombpnet's modisco: see the header of src/motif_qc.py -- a small
-#   budget (6 min, not an hour), both heads, and the 2.5.2 report. It runs in
-#   the `motifs` env (envs/motifs.yml): modisco 2.5.2 needs Python >= 3.9,
-#   which the chrombpnet env cannot have. The report matches against
-#   chrombpnet's own motif DB, which, unlike MotifCompendium, has Tn5/DNase
-#   references. chrombpnet's *_bias_profile.pdf is no longer written; 03.2's
-#   metrics and plots are unchanged.
+#   budget (6 min, not an hour), both heads, and the 2.5.2 descriptive report.
+#   It runs in the chrombpnet 2.x env, which ships modisco 2.5.2, with the
+#   motif settings chrombpnet itself passes (-l 2 -z 20 -f 5 -t 20 -g 5 -j 0,
+#   i.e. 1.x's; 2.5.2's own defaults give 50-bp patterns instead of 30). The
+#   report matches against chrombpnet's own motif DB, which, unlike
+#   MotifCompendium, has Tn5/DNase references. chrombpnet's *_bias_profile.pdf
+#   is not written.
 #
 # Array index = fold index (one task per fold, not per bias-factor).
 #
@@ -38,12 +39,12 @@
 #   config.yaml; MOTIF_QC_WINDOW / MOTIF_QC_MAX_SEQLETS override them.
 #
 # Usage:
-#   export DATASET_DIR=/path/to/igvf_tf_collab/<dataset>
+#   export DATASET=<name>        # or DATASET_CONFIG=/path/to/config.yaml
 #   sbatch 03.3.modisco_selected_bias.sh            # all folds (array 0-4)
 #   sbatch --array=0 03.3.modisco_selected_bias.sh  # fold 0 only (quick test)
 #
-# Prerequisites: 03.2.qc_selected_bias.sh for the fold, the `motifs` env
-#   (MOTIFS_ENV), and `cli.py download-references` (chrombpnet's motif DB).
+# Prerequisites: 03.2.qc_selected_bias.sh for the fold, and
+#   `cli.py download-references` (chrombpnet's motif DB).
 
 # --- bootstrap: locate the repo root (identical block in every workflow step) --
 # sbatch copies the submitted script to a node-local spool dir, so BASH_SOURCE
