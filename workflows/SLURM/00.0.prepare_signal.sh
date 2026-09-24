@@ -40,10 +40,11 @@
 # 5-fold x 4-factor array, so that identical conversion runs 20 times on GPU
 # nodes, and 04.0 adds 5 more.
 #
-# This step runs it once here, on CPU. 03.0 and 04.0 then pass the result to
-# src/chrombpnet_train.py, which installs it and skips chrombpnet's conversion.
-# Reuse is refused (and chrombpnet converts normally) if the signal file, its
-# md5, the assay or the chrombpnet version no longer match the sidecar.
+# This step runs it once here, on CPU. 03.0 and 04.0 then hand the result to
+# chrombpnet with -bw, which uses it in place of reads and skips its own
+# conversion. src/chrombpnet_train.py first checks the sidecar: if the signal
+# file, its md5 or the assay no longer match, the GPU job stops and asks for
+# this step to be re-run (there is no fallback to converting reads).
 #
 # Also normalises a BAM signal to tagAlign, which is what chrombpnet converts it
 # to internally anyway — after which set signal_type: tagalign in the config so
@@ -51,7 +52,7 @@
 #
 # Output (inside ${output_dir}/preprocessing/signal/):
 #   data_unstranded.bw        the prepared bigwig
-#   prepared_bigwig.json      sidecar: signal path, md5, assay, chrombpnet version
+#   prepared_bigwig.json      sidecar: signal path, md5, assay, shifts
 #
 # Usage:
 #   export DATASET=<name>
@@ -138,9 +139,10 @@ fi
 # time from the union of folds/*.json, i.e. exactly the chromosomes anything
 # downstream trains on.
 #
-# --write-filtered additionally keeps the surviving rows as a file, which is
-# only needed for the fallback where chrombpnet reads the reads itself; set
-# filter_main_chroms: false to skip writing it and rewrite nothing.
+# --write-filtered additionally keeps the surviving rows as a file. No step
+# reads it any more (training takes the bigwig; the old fallback that let
+# chrombpnet convert reads itself is gone); set filter_main_chroms: false to
+# skip writing it.
 filtered_args=()
 if [[ "${filter_main_chroms:-true}" == "true" ]]; then
     filtered_args+=( --write-filtered "${prepared_dir}/${dataset_name}_main_chrs.tsv.gz" )
@@ -193,8 +195,7 @@ fi
 
 # The guard below is load-bearing: there is no `set -e` in this step, so without
 # it a traceback out of cli.py leaves no bigwig behind, prints "Done" and exits
-# 0 — SLURM records COMPLETED. 03.0 and 04.0 would then silently fall back to
-# converting the reads themselves, 25 times, on GPU nodes.
+# 0 — SLURM records COMPLETED, and 03.0/04.0 only find out at their preflight.
 python "${src_dir}/cli.py" prepare-bigwig \
     "${shift_args[@]}" \
     ${filtered_args[@]+"${filtered_args[@]}"} \

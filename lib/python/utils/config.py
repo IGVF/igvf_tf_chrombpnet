@@ -204,10 +204,10 @@ TRAINABLE_SIGNALS = {"fragments", "tagalign", "bam"}
 def signal_type_for(path: str) -> str:
     """Infer the signal kind from a filename.
 
-    ``bigwig`` is not a chrombpnet training input. It is accepted here because
-    the pipeline feeds a prepared bigwig in directly (see
-    src/chrombpnet_train.py), which means supplying one skips the conversion
-    entirely -- but it must already carry the Tn5 shift chrombpnet expects.
+    ``bigwig`` means the signal is already a bigwig: 00.0 registers it as the
+    prepared bigwig, which training hands to chrombpnet with -bw, so the reads
+    conversion is skipped entirely -- but it must already carry the Tn5 shift
+    chrombpnet expects.
     """
     name = str(path).strip().lower()
     for suffix, kind in SIGNAL_SUFFIXES:

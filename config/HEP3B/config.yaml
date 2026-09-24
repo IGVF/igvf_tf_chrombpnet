@@ -22,8 +22,8 @@ signal_path: "/oak/stanford/groups/engreitz/Users/emattei/projects/nnfc_hep3b/da
 # exactly chr1-22, chrX, chrY, chrM and nothing else. The pileup bounds itself
 # by chrom_sizes_main regardless, so the filter would be a no-op pass over a
 # 645 MB file whose only product is a ~685 MB copy that no later step reads
-# (00.0 writes it for a chrombpnet fallback path; 03.0/04.0 take signal_path
-# plus --prepared-bigwig). Skipping it saves the pass and the disk.
+# (03.0/04.0 train from 00.0's bigwig via -bw). Skipping it saves the pass
+# and the disk.
 filter_main_chroms: false
 
 # Tn5 shift ALREADY PRESENT in these reads. MEASURED, not assumed: 00.0 ran

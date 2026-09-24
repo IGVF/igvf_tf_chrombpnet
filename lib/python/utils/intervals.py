@@ -6,10 +6,9 @@ PyRanges 1 is backed by `ruranges`, a Rust extension, and a `PyRanges` is a
 `pandas.DataFrame` subclass — there is no `.df` attribute, you index it directly.
 
 **This is the only module in `utils` allowed to import `pyranges1`.** It needs
-Python >= 3.12, which none of the three cluster conda envs have (chrombpnet and
-motif_compendium are 3.10, finemo is 3.11) — hence `envs/preprocess.yml`. Keeping
-the import here means `folds`, `palettes`, `plotting` and `regions` stay importable
-from the chrombpnet env, where the QC scripts run.
+Python >= 3.12 and is installed only in the pixi `preprocess` (and `qc`)
+environment. Keeping the import here means `folds`, `palettes`, `plotting` and
+`regions` stay importable from the chrombpnet env, where the QC scripts run.
 
 Each function documents the bedtools command it replaces. The equivalences are
 pinned by `tests/test_intervals.py`; three of them are not obvious:

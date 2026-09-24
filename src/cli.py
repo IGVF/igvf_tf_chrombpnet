@@ -571,7 +571,7 @@ def filter_fragments(input_path, output_path, chroms, index, metadata_dir, verbo
     "--out-dir",
     required=True,
     type=click.Path(file_okay=False),
-    help="Prepared-bigwig directory, passed to --prepared-bigwig later.",
+    help="Prepared-bigwig directory; 03.0/04.0 pass its data_unstranded.bw to chrombpnet as -bw.",
 )
 @click.option(
     "--write-filtered",
@@ -624,12 +624,13 @@ def prepare_bigwig(
 
     Every `chrombpnet train` / `bias train` starts with this conversion plus an
     enzyme-shift detection pass, unconditionally and on the GPU node. A 5-fold x
-    4-factor sweep repeats it 20 times. Run this once on CPU and pass --out-dir to
-    src/chrombpnet_train.py as --prepared-bigwig; the GPU jobs then skip it.
+    4-factor sweep repeats it 20 times. Run this once on CPU; 03.0/04.0 hand the
+    bigwig to chrombpnet with -bw, which then skips its own conversion.
 
-    Writes data_unstranded.bw plus a sidecar recording the signal file, its md5,
-    the assay and the chrombpnet version — the wrapper refuses to reuse a bigwig
-    whose sidecar does not match what it is about to train on.
+    Writes data_unstranded.bw plus a sidecar recording the signal file, its md5
+    and the assay. src/chrombpnet_train.py refuses to train when the sidecar does
+    not match the configured signal (the recorded chrombpnet version is
+    informational; nothing compares it).
     """
     _setup_logging(verbose, quiet)
     import json as _json
@@ -727,7 +728,7 @@ def prepare_bigwig(
         (out / "prepared_bigwig.json").write_text(_json.dumps(sidecar, indent=2) + "\n")
         md.add_output("signal", bw)
         md.add_output("signal", out / "prepared_bigwig.json")
-        logger.info("-> %s  (pass --prepared-bigwig %s to the training steps)", bw, out)
+        logger.info("-> %s  (03.0/04.0 pass it to chrombpnet as -bw)", bw)
 
 
 # ── download-references ───────────────────────────────────────────────────────
