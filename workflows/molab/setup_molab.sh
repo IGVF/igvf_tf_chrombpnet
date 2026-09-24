@@ -203,7 +203,9 @@ fi
 
 if [[ "${cloned}" == "0" ]]; then
     log "fetching ${CHROMBPNET_REPO}"
-    git -C "${CHROMBPNET_REPO}" fetch --quiet origin \
+    # --tags: the pinned commit is also tagged on the fork (pipeline-hooks-<date>),
+    # which keeps it reachable if its branch is rewritten during review.
+    git -C "${CHROMBPNET_REPO}" fetch --quiet --tags origin \
         || log "WARNING: git fetch failed; carrying on if ${CHROMBPNET_REV:0:7} is already here"
 fi
 if ! git -C "${CHROMBPNET_REPO}" cat-file -e "${CHROMBPNET_REV}^{commit}" 2>/dev/null; then
