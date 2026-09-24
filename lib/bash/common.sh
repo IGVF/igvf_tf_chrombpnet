@@ -117,6 +117,10 @@ source "${REPO_ROOT}/lib/bash/references.sh" || return 1
 # ── Algorithm parameters ──────────────────────────────────────────────────────
 finemo_alpha="0.8" # Fi-NeMo hit-calling threshold (lower = more hits)
 motif_compendium_threshold="0.95" # Leiden clustering similarity cutoff
+# cpm_leiden alone, as MotifCompendium v1.0.16 ran. v1.0.19 changed cluster()'s
+# default to cpm_leiden followed by k_centroids, which reassigns motifs without
+# looking at the similarity threshold.
+motif_compendium_algorithm="cpm_leiden"
 
 # ── Repo layout ───────────────────────────────────────────────────────────────
 src_dir="${REPO_ROOT}/src"          # atomic Python scripts the workflows call

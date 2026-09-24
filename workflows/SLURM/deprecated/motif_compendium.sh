@@ -91,10 +91,9 @@ if [[ "${n_found}" -eq 0 ]]; then
     exit 1
 fi
 
-# Explicit for the reason given in 09.0.cross_dataset_compendium.sh:
-# MotifCompendium v1.0.19's default adds a k-centroids pass that ignores the
-# similarity threshold.
-motif_compendium_algorithm="${motif_compendium_algorithm:-cpm_leiden}"
+# ${motif_compendium_algorithm} (common.sh) is passed explicitly for the reason
+# given in 09.0.cross_dataset_compendium.sh: MotifCompendium v1.0.19's default
+# adds a k-centroids pass that ignores the similarity threshold.
 
 # Run MotifCompendium clustering + annotation
 activate_env "${motif_compendium_env}"

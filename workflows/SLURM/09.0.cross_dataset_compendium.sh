@@ -79,12 +79,10 @@ log_dir="${REPO_ROOT}/results/logs"
 mkdir -p "${out_dir}" "${log_dir}"
 
 
-# MotifCompendium clustering algorithm. Explicit because v1.0.19 changed
-# cluster()'s default to cpm_leiden followed by k_centroids, which reassigns
-# motifs without looking at the similarity threshold; cpm_leiden alone is what
-# v1.0.16 ran. The fallback form lets a definition beside
-# motif_compendium_threshold in common.sh take over.
-motif_compendium_algorithm="${motif_compendium_algorithm:-cpm_leiden}"
+# MotifCompendium clustering algorithm: ${motif_compendium_algorithm} from
+# common.sh, passed explicitly because v1.0.19 changed cluster()'s default to
+# cpm_leiden followed by k_centroids, which reassigns motifs without looking at
+# the similarity threshold; cpm_leiden alone is what v1.0.16 ran.
 
 # Per-dataset MoDISco H5 paths, under the dataset data root. igvf_endothelial's
 # lacks the <dataset>/ level the other three have. Leave it unless the cluster
