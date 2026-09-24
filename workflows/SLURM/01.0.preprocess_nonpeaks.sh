@@ -108,11 +108,13 @@ preflight_check
 # slop/sort/merge/intersect, which that env pins.
 activate_env "${chrombpnet_env}"
 
-# The one step where probing the ChromBPNet version earns its cost. `chrombpnet
-# --version` imports TensorFlow, which is why 00.0 does not do it -- but the
-# negatives are reproducible only from the seed AND the version that consumed
-# it, and this step runs chrombpnet anyway, for hours.
-metadata_tools+=( "chrombpnet=$(chrombpnet --version 2>/dev/null | tr -d '\n' || echo unknown)" )
+# The negatives are reproducible only from the seed AND the chrombpnet that
+# consumed it. No probe is needed: the run record is written from this step's
+# environment, so it lists chrombpnet's version and, because 2.x reports
+# 2.0.0.dev0 at every commit, the commit its checkout is at
+# (software_versions: chrombpnet, chrombpnet_commit). The probe that used to be
+# here called `chrombpnet --version`, which no chrombpnet has, and always
+# recorded "unknown".
 
 # `-o` is a path PREFIX whose directory ChromBPNet does not create -- its own
 # help says "make sure it exists".
