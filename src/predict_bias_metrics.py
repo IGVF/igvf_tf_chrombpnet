@@ -9,9 +9,14 @@ interpretation and TF-MoDISco (slow) in one call, and can't be re-run on a
 directory that `chrombpnet bias train` already populated (it recreates
 auxiliary/evaluation with exist_ok=False). This script instead calls
 chrombpnet's predict.main() directly, reusing the filtered peaks/nonpeaks
-bed files and the shifted Tn5-insertion bigwig that `chrombpnet bias train`
-already wrote to <output-dir>/auxiliary/, to produce just the counts/profile
-metrics JSON that select_bias_model.py (03.1) needs to pick a winner per fold.
+bed files that `chrombpnet bias train` already wrote to <output-dir>/auxiliary/,
+to produce just the counts/profile metrics JSON that select_bias_model.py
+(03.1) needs to pick a winner per fold.
+
+The observed signal is the bigwig the model was trained on, passed with
+--bigwig. 03.0 trains with `-bw <prepared bigwig>`, which chrombpnet 2.x uses
+where it is and does not copy into auxiliary/, so there is no
+auxiliary/<file-prefix>_data_unstranded.bw to find here.
 
 Output:
   <output-dir>/evaluation/<file-prefix>_bias_metrics.json
@@ -24,8 +29,9 @@ Usage:
       --bias-model results/bias_models/bias_model_08/igvf3_cardiomyocyte_all_fold_0/models/igvf3_cardiomyocyte_all_fold_0_bias.h5 \\
       --output-dir results/bias_models/bias_model_08/igvf3_cardiomyocyte_all_fold_0 \\
       --file-prefix igvf3_cardiomyocyte_all_fold_0 \\
+      --bigwig results/preprocessing/signal/data_unstranded.bw \\
       --genome genome/hg38.fa \\
-      --fold-json genome/folds/fold_0.json
+      --fold-json folds/fold_0.json
 """
 
 import argparse
@@ -51,6 +57,11 @@ def parse_args():
     p.add_argument(
         "--file-prefix", required=True, help="Same file prefix used by chrombpnet bias train"
     )
+    p.add_argument(
+        "--bigwig",
+        required=True,
+        help="Observed-signal bigwig the model was trained on (the -bw given to bias train)",
+    )
     p.add_argument("--genome", required=True, help="Reference genome fasta")
     p.add_argument("--fold-json", required=True, help="Fold chr split json (train/valid/test)")
     p.add_argument("--batch-size", type=int, default=64)
@@ -67,14 +78,16 @@ def main():
     bias_model = Path(args.bias_model)
     peaks = output_dir / "auxiliary" / f"{fpx}filtered.bias_peaks.bed"
     nonpeaks = output_dir / "auxiliary" / f"{fpx}filtered.bias_nonpeaks.bed"
-    bigwig = output_dir / "auxiliary" / f"{fpx}data_unstranded.bw"
+    bigwig = Path(args.bigwig)
     metrics_json = output_dir / "evaluation" / f"{fpx}bias_metrics.json"
 
-    for f in (bias_model, peaks, nonpeaks, bigwig, args.genome, args.fold_json):
+    for f in (bias_model, peaks, nonpeaks, args.genome, args.fold_json):
         if not Path(f).exists():
             raise FileNotFoundError(
                 f"Missing {f} - run chrombpnet bias train for this fold/bias combo first."
             )
+    if not bigwig.exists():
+        raise FileNotFoundError(f"Missing {bigwig} - run 00.0.prepare_signal.sh first.")
 
     if metrics_json.exists():
         logger.info(f"  {metrics_json} already exists, skipping.")

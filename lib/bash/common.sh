@@ -398,48 +398,29 @@ metadata_emit() {
 
 # ── ChromBPNet inputs ─────────────────────────────────────────────────────────
 
-# set_signal_args — populate ${signal_args[@]} with the chrombpnet input flag,
-# and ${prepared_args[@]} when the signal can only be used via a prepared bigwig.
+# set_signal_args — point chrombpnet's training commands at the bigwig 00.0
+# prepared. Sets:
+#   ${prepared_bigwig}       ${data_path}/signal/data_unstranded.bw
+#   ${prepared_bigwig_json}  its sidecar, prepared_bigwig.json, beside it
+#   ${signal_args[@]}        ( -bw "${prepared_bigwig}" )
 #
-# prepared_args is an ARRAY, not a 0/1 string, and that matters. It used to be
-# `prepared_required=0|1`, expanded at the call sites as
-# ${prepared_required:+--require-prepared} -- but `:+` tests for NON-NULL, not
-# for truth, and the string "0" is non-null. So --require-prepared was passed on
-# EVERY run, for every signal type, which silently disabled the fallback below
-# for fragments/bam/tagalign datasets and reported "the configured signal is a
-# bigwig" at them. An empty-vs-one-element array cannot be misread that way.
+# Training reads that bigwig whatever signal_type is. chrombpnet 2.x takes
+# -ibw/-bw/--bigwig on `pipeline`, `train`, `bias pipeline` and `bias train`
+# in place of -ibam/-ifrag/-itag: it uses the file where it is (no copy in
+# auxiliary/) and skips its reads-to-bigwig conversion and shift estimation.
+# That conversion is identical for every fold and bias factor and needs no
+# GPU, which is why 00.0 does it once on CPU. There is no path left on which
+# chrombpnet converts reads itself, so a missing or stale prepared bigwig is
+# an error -- re-run 00.0 -- never a slower fallback.
 #
-# signal_type is derived from the extension by lib/python/utils/config.py, so
-# this only maps a known kind to a flag; unknown extensions fail earlier.
-#
-# chrombpnet's training input is a mutually exclusive, REQUIRED group:
-#   -ibam/--input-bam-file  -ifrag/--input-fragment-file  -itag/--input-tagalign-file
-#
-# A bigwig is not in that group. We can still use one, because the pipeline
-# installs a prepared bigwig and skips chrombpnet's conversion entirely — but
-# the parser still demands one of the three flags, so we pass the path under
-# -ifrag purely to satisfy it. That value is never read: reads_to_bigwig is
-# replaced before it runs. To make sure it stays never-read,
-# a non-empty prepared_args tells src/chrombpnet_train.py to abort rather than
-# fall back to converting, which would otherwise parse a bigwig as if it were
-# fragments and produce silent garbage.
+# The raw signal (${signal_path}) is still read by the training steps:
+# src/chrombpnet_train.py md5s it to confirm that the sidecar records this
+# signal file, this md5 and this assay before chrombpnet starts.
 signal_args=()
-prepared_args=()
 set_signal_args() {
-    prepared_args=()
-    case "${signal_type}" in
-        fragments) signal_args=( -ifrag "${signal_path}" ) ;;
-        bam)       signal_args=( -ibam  "${signal_path}" ) ;;
-        tagalign)  signal_args=( -itag  "${signal_path}" ) ;;
-        bigwig)
-            signal_args=( -ifrag "${signal_path}" )   # placeholder, never read
-            prepared_args=( --require-prepared )
-            ;;
-        *)
-            echo "ERROR: unsupported signal_type '${signal_type}'" >&2
-            exit 1
-            ;;
-    esac
+    prepared_bigwig="${data_path}/signal/data_unstranded.bw"
+    prepared_bigwig_json="${data_path}/signal/prepared_bigwig.json"
+    signal_args=( -bw "${prepared_bigwig}" )
 }
 
 # ── Preconditions ─────────────────────────────────────────────────────────────

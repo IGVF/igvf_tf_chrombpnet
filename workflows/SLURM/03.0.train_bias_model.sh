@@ -1,27 +1,29 @@
 #!/bin/bash
 #SBATCH --job-name=bias_sweep
-# Measured, not guessed: the July 2026 sweep on this dataset peaked at 23.2 GB
-# (mean 18.6 GB over 11 recorded steps) against a 128 GB request. 48 GB keeps
+# Measured, not guessed: the July 2026 sweep on this dataset (chrombpnet 1.x)
+# peaked at 23.2 GB (mean 18.6 GB over 11 recorded steps) against a 128 GB
+# request; the 2.x port has not been measured yet. 48 GB keeps
 # ~2x headroom and matters for scheduling -- 128 GB at 4 CPUs is exactly the
 # `gpu` partition's 32 GB/core ceiling, so the job could only land on a node
 # with 128 GB free and never backfilled into a smaller gap.
 #SBATCH --mem=48G
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
-# Two limits at once, an upper and a lower.
-#   upper: the loaded cuda/11.5 cannot drive Ada (GPU_CC 8.9, L40S) or Hopper
-#          (9.0, H100/H200), so those are excluded for correctness. Lifting
-#          that needs the env off tensorflow==2.8/CUDA 11, not a flag.
-#   lower: 7.0/7.5 (V100, TITAN_V, RTX_2080Ti) are ELIGIBLE for cuda 11.5 but
-#          are excluded on purpose, to avoid the slowest silicon. The July 2026
-#          bias_sweep runs, by node: TITAN_V (7.0) 20:51 and 22:24; RTX_2080Ti
-#          (7.5) 12:09 and 05:45; A100_SXM4 (8.0) 08:31. So CC 7.0 is clearly
-#          the slow tier and worth excluding. Note the evidence does NOT show
-#          8.0 beating 7.5 -- the single fastest run was a 2080Ti -- and the
-#          runs differ by fold and bias factor, so this is a coarse signal, not
-#          a benchmark. If the 8.0|8.6 queue is deep, adding GPU_CC:7.5 back at
-#          submit time is defensible.
-# Leaves GPU_CC 8.0 (A100_SXM4/A100_PCIE) and 8.6 (A40, RTX_3090).
+# GPU classes: GPU_CC 8.0 (A100_SXM4/A100_PCIE) and 8.6 (A40, RTX_3090).
+#   What can gate a GPU now is the NVIDIA driver, not a CUDA module:
+#   chrombpnet 2.x brings CUDA in its JAX pip wheels, and its default cuda13
+#   environment needs driver >= 580 (the cuda12 one, CHROMBPNET_PIXI_ENV=cuda12,
+#   needs >= 525). The old upper bound -- cuda/11.5 could not drive Ada (8.9)
+#   or Hopper (9.0) -- left with TensorFlow 2.8. Only 8.0 and 8.6 have been
+#   used with the 2.x wheels so far; every other class is untested, not known
+#   to fail.
+#   Why not 7.0/7.5 as well: speed. The July 2026 bias_sweep runs (chrombpnet
+#   1.x on TensorFlow), by node: TITAN_V (7.0) 20:51 and 22:24; RTX_2080Ti
+#   (7.5) 12:09 and 05:45; A100_SXM4 (8.0) 08:31. CC 7.0 was clearly the slow
+#   tier. The evidence does NOT show 8.0 beating 7.5 -- the single fastest run
+#   was a 2080Ti -- the runs differ by fold and bias factor, and none ran on
+#   JAX, so this is a coarse signal, not a benchmark. Widen the constraint at
+#   submit time to try another class.
 #SBATCH --constraint="GPU_CC:8.0|GPU_CC:8.6"
 #SBATCH --time=2-0
 #SBATCH --partition=gpu,owners
@@ -31,12 +33,34 @@
 
 # 03.0.train_bias_model.sh
 # Purpose: Train Tn5 bias models for a sweep of bias threshold factors on
-#   bias_dataset (defined in dataset_config.sh), then compute fast QC metrics
-#   (counts/profile Pearson r, JSD) for each - the metrics select_bias_model.py
-#   (03.1) needs to pick a winner per fold. Deliberately skips the expensive
-#   interpretation + TF-MoDISco QC (that only runs on the selected bias model,
-#   in 03.2.qc_selected_bias.sh) - running it on every fold x factor combo is
-#   what made this step slow before.
+#   bias_dataset (config.yaml; defaults to dataset_name), then compute fast QC
+#   metrics (counts/profile Pearson r, JSD) for each - the metrics
+#   select_bias_model.py (03.1) needs to pick a winner per fold. Deliberately
+#   skips the expensive interpretation + TF-MoDISco QC (that only runs on the
+#   selected bias model, in 03.2.qc_selected_bias.sh) - running it on every
+#   fold x factor combo is what made this step slow before.
+#
+# How: `chrombpnet bias train -bw <prepared bigwig> ... --device gpu`, launched
+#   in-process by src/chrombpnet_train.py. -bw trains from the bigwig 00.0
+#   built once on CPU, so no GPU job converts reads or estimates the Tn5 shift.
+#   Before chrombpnet starts, the launcher checks that bigwig's sidecar against
+#   the configured signal (path, md5, assay) and stops on a mismatch -- there
+#   is no fallback conversion -- and afterwards it records the training
+#   process's peak RSS. --device gpu makes chrombpnet fail at once, rather than
+#   train on the CPU, when JAX sees no GPU. src/predict_bias_metrics.py then
+#   scores the model against the same bigwig.
+#
+# Input:
+#   ${data_path}/signal/data_unstranded.bw, prepared_bigwig.json  (00.0)
+#   ${signal_path}                  read only to md5 it for the sidecar check
+#   ${peaks_dir}/<bias_dataset>_<peak_type>_peaks_no_blacklist.narrowPeak  (00.1)
+#   ${data_path}/<bias_dataset>/output_<peak_type>_fold_<fold>_negatives.bed  (01.0)
+#   ${folds_dir}/fold_<fold>.json, ${genome_fa}, ${chrom_sizes}
+#   ${bias_scan_file} (02.0), when it exists: which factors to sweep
+# Output, in ${results_path}/bias_models/bias_model<suffix>[_bs<N>]/<prefix>/
+# with <prefix> = <bias_dataset>_<peak_type>_fold_<fold>:
+#   models/<prefix>_bias.h5                  the bias model (Keras 3 .h5)
+#   evaluation/<prefix>_bias_metrics.json    the fast metrics 03.1 reads
 #
 # Cost: this array is len(bias_sweep_folds) x len(bias_factors) GPU jobs — 20 by
 #   default. Set bias_sweep_folds in config.yaml to pilot on fewer folds first;
@@ -50,11 +74,17 @@
 #   with a different bias_factors length (e.g. igvf11_h7_hesc has 6 -> 0-29).
 #
 # Usage:
-#   export DATASET_DIR=/path/to/igvf_tf_collab/<dataset>
+#   export DATASET=<name>
+#   cd workflows/SLURM
 #   sbatch 03.0.train_bias_model.sh              # all folds x factors
 #   sbatch --array=0 03.0.train_bias_model.sh    # fold 0, first bias factor only (quick test)
 #   BIAS_BATCH_SIZE=128 sbatch --export=ALL --array=2 03.0.train_bias_model.sh
 #                                                # one factor at batch 128 -> bias_model<sfx>_bs128/
+#
+# Prerequisites: 00.0.prepare_signal.sh, 00.1.preprocess_peaks.sh and
+#   01.0.preprocess_nonpeaks.sh (02.0.qc_training_data.sh recommended: its
+#   scan picks the factors), references installed (`cli.py
+#   download-references`), and the chrombpnet 2.x environment (${chrombpnet_env}).
 #
 # After all jobs complete, run 03.1.select_bias.sh, then 03.2.qc_selected_bias.sh,
 # then 04.0.train_full_model.sh.
@@ -99,8 +129,8 @@ suffix="${bias_suffixes_sweep[$factor_idx]}"
 [[ -z "${fold}" || -z "${bf}" ]] && { echo "Invalid array index ${SLURM_ARRAY_TASK_ID}, exiting."; exit 0; }
 
 # Even when the factors came from the config, refuse one the scan has already
-# shown cannot work. The failure is otherwise an IndexError deep inside the
-# one-hot encoder, minutes into a GPU allocation.
+# shown cannot work. The failure otherwise surfaces deep inside chrombpnet,
+# minutes into a GPU allocation.
 if [[ -s "${bias_scan_file}" ]]; then
     _v=$(awk -F'\t' -v f="${bf}" '$1==f {print $7}' "${bias_scan_file}")
     if [[ "${_v}" == fail* ]]; then
@@ -117,8 +147,9 @@ metadata_start "03.0.train_bias_model"
 
 
 
+# Training reads the prepared bigwig (${prepared_bigwig}, via -bw); the raw
+# signal is only md5'd by the launcher's sidecar check. See common.sh.
 set_signal_args
-signal_file="${signal_path}"
 peaks_file="${peaks_dir}/${bias_dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
 negatives_file="${data_path}/${bias_dataset}/output_${peak_type}_fold_${fold}_negatives.bed"
 fold_json="${folds_dir}/fold_${fold}.json"
@@ -141,8 +172,11 @@ out_dir="${results_path}/bias_models/bias_model${suffix}${batch_tag}/${bias_data
 model_file="${out_dir}/models/${file_prefix}_bias.h5"
 
 
-metadata_inputs+=( "${signal_type}=${signal_file}" "peaks=${peaks_file}" "negatives=${negatives_file}" "fold_json=${fold_json}" )
-require_input "${signal_file}" 00.0.prepare_signal.sh
+metadata_inputs+=( "${signal_type}=${signal_path}" "signal=${prepared_bigwig}" "signal=${prepared_bigwig_json}" )
+metadata_inputs+=( "peaks=${peaks_file}" "negatives=${negatives_file}" "fold_json=${fold_json}" )
+require_input "${signal_path}" ""
+require_input "${prepared_bigwig}" 00.0.prepare_signal.sh
+require_input "${prepared_bigwig_json}" 00.0.prepare_signal.sh
 require_input "${peaks_file}" 00.1.preprocess_peaks.sh
 require_input "${negatives_file}" 01.0.preprocess_nonpeaks.sh
 require_input "${fold_json}"
@@ -182,7 +216,7 @@ elif [[ -f "${model_file}" ]]; then
     echo "  That model may be a mid-training checkpoint, so it is discarded and retrained." >&2
 fi
 
-for f in "${signal_file}" "${peaks_file}" "${negatives_file}" "${fold_json}"; do
+for f in "${prepared_bigwig}" "${peaks_file}" "${negatives_file}" "${fold_json}"; do
     [[ -f "${f}" ]] || { echo "  Missing input: ${f}" >&2; exit 1; }
 done
 
@@ -195,9 +229,11 @@ mkdir -p "${out_dir}"
 METADATA_RSS_FILE="${out_dir}/.peak_rss_gb"
 export METADATA_RSS_FILE
 
+# --signal/--assay: the launcher checks ${prepared_bigwig}'s sidecar against
+# them and exits 1 before chrombpnet starts if 00.0 made it from anything else.
 python "${src_dir}/chrombpnet_train.py" \
-    --prepared-bigwig "${data_path}/signal" \
-    ${prepared_args[@]+"${prepared_args[@]}"} -- \
+    --signal "${signal_path}" \
+    --assay "${assay}" -- \
     bias train \
     "${signal_args[@]}" \
     -d "${assay}" \
@@ -209,13 +245,14 @@ python "${src_dir}/chrombpnet_train.py" \
     -b "${bf}" \
     -o "${out_dir}" \
     -fp "${file_prefix}" \
-    ${batch_args[@]+"${batch_args[@]}"}
+    ${batch_args[@]+"${batch_args[@]}"} \
+    --device gpu
 _train_status=$?
 if [[ -s "${METADATA_RSS_FILE}" ]]; then
     metadata_metrics+=( "peak_rss_gb=$(<"${METADATA_RSS_FILE}")" )
 fi
 if [[ ${_train_status} -ne 0 || ! -f "${model_file}" ]]; then
-    echo "ERROR: chrombpnet bias train failed for fold ${fold} bias=${bf} (bias threshold factor may be too low/high for this fold - see stdout above)." >&2
+    echo "ERROR: chrombpnet bias train failed for fold ${fold} bias=${bf} (a prepared-bigwig mismatch, or a bias threshold factor too low/high for this fold - see the log above)." >&2
     exit 1
 fi
 
@@ -227,10 +264,14 @@ echo "[$(date)] [fold ${fold} bias=${bf}] Computing fast QC metrics."
 # sweep through select_bias_model.load_metrics, which only logs
 # "missing metrics file" and `continue`s -- so the fold x factor cell silently
 # vanishes and a per-fold winner gets chosen from an incomplete grid.
+#
+# --bigwig: -bw is used where it is, so there is no copy in ${out_dir}/auxiliary/
+# for the scorer to find; it gets the bigwig the model was trained on.
 python "${src_dir}/predict_bias_metrics.py" \
     --bias-model "${model_file}" \
     --output-dir "${out_dir}" \
     --file-prefix "${file_prefix}" \
+    --bigwig "${prepared_bigwig}" \
     --genome "${genome_fa}" \
     --fold-json "${fold_json}"
 if [[ $? -ne 0 || ! -f "${metrics_json}" ]]; then

@@ -1,61 +1,50 @@
 #!/usr/bin/env python3
-"""Run a chrombpnet training command, reusing a bigwig prepared on CPU.
+"""Run a chrombpnet training command in this process, after checking its bigwig.
 
-Why
----
-`chrombpnet train`, `chrombpnet pipeline` and `chrombpnet bias train` all begin
-by converting reads to a bigwig:
+Why a launcher at all
+---------------------
+chrombpnet 2.x does natively what this script used to patch into 1.x: `-bw`
+trains from a prepared bigwig without converting reads on the GPU node,
+`pipeline --skip-interpretation` stops after the marginal footprints and
+writes the train-mode report, and its one-hot encoder is the low-memory lookup
+table. So nothing of chrombpnet is replaced any more; the argv after `--` is
+handed to chrombpnet.CHROMBPNET.main() unchanged. Two jobs are left that the
+`chrombpnet` console script cannot do:
 
-    awk (Tn5 shift) | sort -k1,1 | bedtools genomecov -bg -5 | sort | bedGraphToBigWig
+1. Peak RSS. The step's metadata trap runs in a SIBLING process
+   (emit_metadata.py), which only sees its own few MB. Running chrombpnet
+   in-process and calling metadata.report_peak_rss() in a `finally` records
+   the process that allocated the training arrays, failed runs included. See
+   docs/resource-measurements.md.
 
-plus an enzyme-shift auto-detection pass that samples reads and compares them to
-a reference motif. None of that touches the GPU, and it is unconditional -- there
-is no existence check to short-circuit. A 5-fold x 4-bias-factor sweep therefore
-repeats the identical conversion 20 times, each inside its own GPU allocation.
+2. The prepared-bigwig check. chrombpnet uses a -bw file as given and cannot
+   know what it was made from. 00.0.prepare_signal.sh writes
+   prepared_bigwig.json beside the bigwig, recording the resolved signal path,
+   the signal's md5 and the assay. Given --signal and --assay, this script
+   checks that sidecar against the signal the step is configured with and
+   exits 1 on any difference, before chrombpnet creates its output directory.
+   There is no fallback conversion any more: a stale bigwig -- the config now
+   points at other reads, the reads changed, or the assay changed -- would
+   otherwise train on the wrong signal without a word. The fix is to remove
+   the stale bigwig and sidecar and re-run 00.0.prepare_signal.sh, which
+   skips while both exist.
 
-This wrapper does the conversion once on a CPU node (`cli.py prepare-bigwig`)
-and has each GPU job reuse the result.
+   The check md5s the whole signal file once per job: seconds to a minute for
+   a multi-GB fragments file, against hours of GPU training.
 
-How
----
-`chrombpnet.pipelines` calls `reads_to_bigwig.main(args)` through a module
-attribute looked up at call time, so replacing that attribute before invoking
-chrombpnet's own `main()` is enough -- we do not reimplement any argument
-parsing, we hand chrombpnet the exact argv it expects.
-
-The replacement *copies the prepared bigwig into place* rather than doing
-nothing. It has to: chrombpnet creates `auxiliary/` itself with
-`exist_ok=False`, so the file cannot be staged beforehand.
-
-Why not just pass the bigwig on the command line? chrombpnet 1.0.1 DOES have a
-`--bigwig` flag, but only on the subcommands that *read* one -- `qc`,
-`bias qc` and `pred_bw` (chrombpnet/parsers.py:146, 195, 226). The training
-subcommands, `pipeline` and `bias train`, take reads and nothing else: their
-required group is `-ibam | -ifrag | -itag`, and `--bigwig` there is rejected as
-an unrecognized argument. The ChromBPNet tutorial shows `chrombpnet pipeline
---bigwig ...`, which documents GitHub main; the newest PyPI release is 1.0.1,
-so that form does not work against anything installable today. If a future
-chrombpnet adds `--bigwig` to `pipeline`, delete this module and pass the flag.
-
-Safety
-------
-Reuse only happens when the prepared bigwig's sidecar records the same signal
-file, md5, assay and chrombpnet version. Anything else and it falls through to
-chrombpnet's own conversion, which is always correct, only slower. That matters
-because this depends on chrombpnet internals: if an upgrade moves
-`reads_to_bigwig`, the import below fails loudly instead of silently training on
-a stale bigwig.
+   The sidecar is looked up beside the -bw path AS GIVEN, not resolved: when
+   the configured signal is itself a bigwig, 00.0 registers it as a symlink,
+   and the sidecar sits beside the symlink, not beside its target.
 
 Usage (see workflows/SLURM/03.0 and 04.0):
-  python chrombpnet_train.py --prepared-bigwig <dir> [--require-prepared] \\
-      -- bias train -ifrag ... -o ...
+  python chrombpnet_train.py --signal <configured signal> --assay ATAC \\
+      -- bias train -bw <prepared bigwig> -d ATAC ... --device gpu
 """
 
-from __future__ import annotations  # py3.8 in the chrombpnet container: PEP 585/604 annotations
+from __future__ import annotations
 
+import argparse
 import json
-import os
-import shutil
 import sys
 from pathlib import Path
 
@@ -63,214 +52,140 @@ from pathlib import Path
 # conda envs, under pixi, and under a bare python).
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib" / "python"))
 
-from utils import log, metadata, onehot  # noqa: E402
+from utils import log, metadata  # noqa: E402
 
 logger = log.get_logger(__name__)
 
 SIDECAR = "prepared_bigwig.json"
-BIGWIG = "data_unstranded.bw"
+#: chrombpnet 2.x's spellings of the bigwig input to its training commands.
+BIGWIG_FLAGS = ("-ibw", "-bw", "--bigwig")
+#: ... and of the assay.
+ASSAY_FLAGS = ("-d", "--data-type")
 
 
-def _split_argv(argv):
-    """Split our options from the chrombpnet argv after ``--``."""
+def _parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="chrombpnet_train.py",
+        usage="%(prog)s [--signal PATH --assay {ATAC,DNASE}] [-v | -q] -- <chrombpnet args>",
+        description="Run a chrombpnet command in this process. With --signal/--assay, "
+        "first check the -bw bigwig against the prepared_bigwig.json 00.0 wrote beside it.",
+    )
+    p.add_argument(
+        "--signal",
+        help="the configured signal file (reads or bigwig) the -bw bigwig must be prepared from",
+    )
+    p.add_argument(
+        "--assay",
+        choices=["ATAC", "DNASE"],
+        help="the assay the -bw bigwig must be prepared for",
+    )
+    log.add_logging_args(p)
+    return p
+
+
+def split_argv(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
+    """Split our options from the chrombpnet argv after the first ``--``."""
+    parser = _parser()
     if "--" not in argv:
-        raise SystemExit("usage: chrombpnet_train.py --prepared-bigwig <dir> -- <chrombpnet args>")
+        parser.parse_args(argv)  # --help exits 0 here, a bad option exits 2
+        parser.error("no chrombpnet command: give it after `--`")
     cut = argv.index("--")
-    ours, theirs = argv[:cut], argv[cut + 1 :]
-    prepared = None
-    require = False
-    stop = False
-    for i, token in enumerate(ours):
-        if token == "--prepared-bigwig":
-            prepared = ours[i + 1]
-        elif token == "--require-prepared":
-            require = True
-        elif token == "--stop-before-interpretation":
-            stop = True
-    return prepared, require, stop, theirs
+    opts = parser.parse_args(argv[:cut])
+    theirs = argv[cut + 1 :]
+    if (opts.signal is None) != (opts.assay is None):
+        parser.error("--signal and --assay go together")
+    if not theirs:
+        parser.error("no chrombpnet command after `--`")
+    return opts, theirs
 
 
-def _sidecar_matches(prepared_dir: Path, signal_path: str | None, assay: str | None) -> bool:
-    """Is this prepared bigwig actually for the signal we are about to train on?"""
-    meta = prepared_dir / SIDECAR
-    if not (prepared_dir / BIGWIG).is_file() or not meta.is_file():
-        return False
+def option_value(argv: list[str], flags: tuple[str, ...]) -> str | None:
+    """The value argparse would take for ``flags`` from ``argv``: the last one given."""
+    value = None
+    for i, token in enumerate(argv):
+        if token in flags:
+            if i + 1 < len(argv):
+                value = argv[i + 1]
+        else:
+            name, eq, rest = token.partition("=")
+            if eq and name in flags:
+                value = rest
+    return value
+
+
+def sidecar_mismatch(bigwig: Path, signal: str, assay: str) -> str | None:
+    """Why ``bigwig`` is not the one prepared from ``signal`` for ``assay``; None if it is."""
+    meta = bigwig.parent / SIDECAR  # beside the path as given: see the module docstring
+    if not Path(signal).is_file():
+        return f"signal file {signal} does not exist"
+    if not bigwig.is_file():
+        return f"prepared bigwig {bigwig} does not exist"
+    if not meta.is_file():
+        return f"{meta} does not exist, so nothing records what {bigwig} was made from"
     try:
         rec = json.loads(meta.read_text())
-    except (OSError, ValueError):
-        return False
+    except (OSError, ValueError) as exc:
+        return f"cannot read {meta}: {exc}"
+    if not isinstance(rec, dict):
+        return f"{meta} is not a JSON object"
 
-    if signal_path and rec.get("signal_path") != str(Path(signal_path).resolve()):
-        logger.warning("prepared bigwig is for a different signal file; reconverting")
-        return False
-    if assay and rec.get("assay") != assay:
-        logger.warning("prepared bigwig was made for assay %s; reconverting", rec.get("assay"))
-        return False
-    if signal_path and rec.get("signal_md5"):
-        actual = metadata.md5sum(signal_path)
-        if actual != rec["signal_md5"]:
-            logger.warning("signal file changed since the bigwig was prepared; reconverting")
-            return False
-    return True
-
-
-class _StopBeforeInterpretation(Exception):
-    """Raised in place of chrombpnet's interpretation step (--stop-before-interpretation)."""
-
-
-INTERPRET_MODULE = "chrombpnet.evaluation.interpret.interpret"
-
-
-def _install_interpretation_stop():
-    """Make chrombpnet's interpretation step raise instead of running.
-
-    The real module must NOT be imported to do it: interpret.py calls
-    tf.compat.v1.disable_eager_execution() at import time (for SHAP's deep
-    explainer), which switches the whole process out of eager mode -- the
-    first attempt at this imported it to swap `main` and training died in
-    find_chrombpnet_hyperparams on "numpy() is only available when eager
-    execution is enabled". So a stand-in module is registered under its name
-    instead. pipelines.py imports it inside the function (`import ... as
-    interpret`), which resolves through sys.modules and gets the stand-in;
-    the only other importer, CHROMBPNET.py's contribs_bw branch, does not run
-    here, and both package __init__.py files are empty.
-    """
-    import types
-
-    if INTERPRET_MODULE in sys.modules and not getattr(
-        sys.modules[INTERPRET_MODULE], "_igvf_stop", False
-    ):
-        raise RuntimeError(
-            f"{INTERPRET_MODULE} was already imported; eager execution is already off"
+    want = str(Path(signal).resolve())
+    if rec.get("signal_path") != want:
+        return f"{bigwig} was prepared from {rec.get('signal_path')}, not {want}"
+    if rec.get("assay") != assay:
+        return f"{bigwig} was prepared for assay {rec.get('assay')}, not {assay}"
+    recorded = rec.get("signal_md5")
+    if not recorded:
+        return f"{meta} records no signal_md5 to check {want} against"
+    actual = metadata.md5sum(signal)
+    if actual != recorded:
+        return (
+            f"{want} changed after {bigwig} was prepared "
+            f"(md5 now {actual}, sidecar says {recorded})"
         )
-
-    def _stop(_args):
-        raise _StopBeforeInterpretation
-
-    stub = types.ModuleType(INTERPRET_MODULE)
-    stub.main = _stop
-    stub._igvf_stop = True
-    sys.modules[INTERPRET_MODULE] = stub
-    # `import a.b.c as x` binds x by getattr on the parent package (py3.8), so
-    # the parent packages must exist and carry the stand-in as an attribute.
-    # They are empty __init__.py files: importing them imports nothing else.
-    import importlib
-
-    parent_name, _, leaf = INTERPRET_MODULE.rpartition(".")
-    setattr(importlib.import_module(parent_name), leaf, stub)
-    return stub
+    return None
 
 
-def _write_train_report(output_dir, data_type, file_prefix) -> None:
-    """chrombpnet's own `train`-mode HTML report, which needs no interpretation.
+def main(argv: list[str] | None = None) -> int:
+    opts, chrombpnet_argv = split_argv(sys.argv[1:] if argv is None else argv)
+    log.setup_from_args(opts)
 
-    The `pipeline`-mode report needs the motif report too, so 04.5 writes it
-    once TF-MoDISco has run.
-    """
-    import argparse
-
-    import chrombpnet.helpers.generate_reports.make_html as make_html
-
-    make_html.main(
-        argparse.Namespace(
-            input_dir=output_dir,
-            command="train",
-            data_type=data_type,
-            file_prefix=file_prefix,
-            html_prefix="./",
-        )
-    )
-
-
-def main() -> int:
-    prepared, require_prepared, stop_before_interpretation, chrombpnet_argv = _split_argv(
-        sys.argv[1:]
-    )
-    log.setup()
-
-    def _arg(flag):
-        return chrombpnet_argv[chrombpnet_argv.index(flag) + 1] if flag in chrombpnet_argv else None
-
-    signal_path = _arg("-ifrag") or _arg("-ibam") or _arg("-itag")
-    assay = _arg("-d")
-
-    reuse = False
-    if require_prepared and not prepared:
-        logger.error("--require-prepared given without --prepared-bigwig")
-        return 1
-
-    if prepared:
-        prepared_dir = Path(prepared)
-        reuse = _sidecar_matches(prepared_dir, signal_path, assay)
-        if not reuse:
-            if require_prepared:
-                # The configured signal is a bigwig. chrombpnet's parser required
-                # an -ifrag placeholder, and without the prepared bigwig it would
-                # now try to read that bigwig as a fragment file -- silent garbage.
-                logger.error(
-                    "the configured signal is a bigwig, so a valid prepared bigwig in %s "
-                    "is required and none matched. Re-run 00.0.prepare_signal.sh.",
-                    prepared_dir,
-                )
-                return 1
-            logger.warning(
-                "not reusing %s; chrombpnet will do its own conversion", prepared_dir / BIGWIG
-            )
-
-    if reuse:
-        import chrombpnet.helpers.preprocessing.reads_to_bigwig as reads_to_bigwig
-
-        source = Path(prepared) / BIGWIG
-
-        def _install_prepared(args):
-            """Stand in for reads_to_bigwig.main: drop the prepared bigwig in place.
-
-            Copies rather than no-ops because chrombpnet creates auxiliary/ itself
-            with exist_ok=False, so nothing can be staged there in advance.
-            """
-            dest = Path(f"{args.output_prefix}_unstranded.bw")
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                os.link(source, dest)  # same filesystem: free
-            except OSError:
-                shutil.copy2(source, dest)
-            logger.info("reused prepared bigwig %s -> %s (skipped conversion)", source, dest)
-
-        reads_to_bigwig.main = _install_prepared
-
-    # chrombpnet's one-hot encoder routes through np.unique(return_inverse=True),
-    # whose int64 inverse costs 8 bytes per base for the whole training set at
-    # once. Ours is byte-identical and ~4x lighter; install() verifies that
-    # against the container's own function before swapping. See
-    # lib/python/utils/onehot.py and docs/resource-measurements.md.
-    onehot.install()
-
-    # `chrombpnet pipeline` goes on, after training, predictions and marginal
-    # footprinting, to DeepLIFT on a 30K peak subsample and TF-MoDISco -- inside
-    # this GPU job, where TF-MoDISco (CPU-only, the long pole) holds the GPU
-    # idle for hours. With --stop-before-interpretation, chrombpnet's own
-    # interpretation entry point is replaced by a stop signal, so everything
-    # up to it runs as chrombpnet's unmodified code and nothing after it runs;
-    # 04.4 (DeepLIFT) and 04.5 (TF-MoDISco) do the rest from the outputs left.
-    if stop_before_interpretation:
-        if not chrombpnet_argv or chrombpnet_argv[0] != "pipeline":
-            logger.error("--stop-before-interpretation only applies to `chrombpnet pipeline`")
+    bigwig = option_value(chrombpnet_argv, BIGWIG_FLAGS)
+    if opts.signal is not None:
+        if bigwig is None:
+            logger.error("--signal checks the -bw bigwig, and the chrombpnet command has none")
             return 1
-        _install_interpretation_stop()
+        data_type = option_value(chrombpnet_argv, ASSAY_FLAGS)
+        if data_type is not None and data_type != opts.assay:
+            logger.error("--assay is %s but chrombpnet is given -d %s", opts.assay, data_type)
+            return 1
+        problem = sidecar_mismatch(Path(bigwig), opts.signal, opts.assay)
+        if problem:
+            # 00.0 skips while the bigwig and its sidecar both exist, so the
+            # stale pair has to go before re-running it does anything.
+            logger.error(
+                "%s. Remove %s and %s, then re-run 00.0.prepare_signal.sh: chrombpnet "
+                "trains from the prepared bigwig only, there is no fallback conversion.",
+                problem,
+                bigwig,
+                Path(bigwig).parent / SIDECAR,
+            )
+            return 1
+        logger.info("prepared bigwig %s matches %s (%s)", bigwig, opts.signal, opts.assay)
+    elif bigwig is not None:
+        logger.warning("no --signal/--assay given: %s is used unchecked", bigwig)
 
+    # Imported only now: chrombpnet pulls in Keras 3 and JAX, and a failed
+    # check should cost nothing.
     import chrombpnet.CHROMBPNET as chrombpnet_cli
 
     sys.argv = ["chrombpnet", *chrombpnet_argv]
     try:
         chrombpnet_cli.main()
-    except _StopBeforeInterpretation:
-        logger.info("stopped `chrombpnet pipeline` before interpretation (04.4/04.5 run it)")
-        _write_train_report(_arg("-o"), _arg("-d"), _arg("-fp"))
     finally:
-        # This process is the one that allocated the training arrays, so its
-        # peak RSS is the step's real footprint. The step's metadata trap runs
-        # in a SIBLING process (emit_metadata.py) that cannot see it, so hand
-        # the number over through a file. See docs/resource-measurements.md.
+        # This process allocated the training arrays, so its peak RSS is the
+        # step's real footprint; the metadata trap runs in a sibling that
+        # cannot see it, so the number is handed over through a file.
         metadata.report_peak_rss()
     return 0
 
