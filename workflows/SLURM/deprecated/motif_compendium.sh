@@ -33,9 +33,9 @@
 #   modisco_config.tsv           – dataset → H5 path mapping (for reference)
 #
 # Prerequisites: 08.0.run_modisco.sh must have completed.
-#   Requires the 'motif_compendium' conda environment:
-#     mamba create -n motif_compendium python=3.10
-#     pip install MotifCompendium
+#   Runs in ${motif_compendium_env}, this repo's motif-compendium pixi
+#   environment (`pixi install -e motif-compendium`), with the same explicit
+#   cpm_leiden clustering as 09.0 (see src/motif_compendium.py for why).
 #
 # Usage:
 #   sbatch 10.motif_compendium.sh
@@ -91,22 +91,28 @@ if [[ "${n_found}" -eq 0 ]]; then
     exit 1
 fi
 
+# Explicit for the reason given in 09.0.cross_dataset_compendium.sh:
+# MotifCompendium v1.0.19's default adds a k-centroids pass that ignores the
+# similarity threshold.
+motif_compendium_algorithm="${motif_compendium_algorithm:-cpm_leiden}"
+
 # Run MotifCompendium clustering + annotation
 activate_env "${motif_compendium_env}"
 
 metadata_start "deprecated/motif_compendium"
 metadata_inputs+=( "config_tsv=${config_tsv}" "ref_db=${ref_db_meme}" )
 metadata_outputs+=( "compiled_h5=${modisco_compiled_dir}/modisco_compiled.h5" )
-metadata_params+=( "threshold=${motif_compendium_threshold}" )
+metadata_params+=( "threshold=${motif_compendium_threshold}" "algorithm=${motif_compendium_algorithm}" )
 
 
-echo "[$(date)] Running MotifCompendium (threshold=${motif_compendium_threshold})..."
+echo "[$(date)] Running MotifCompendium (${motif_compendium_algorithm}, threshold=${motif_compendium_threshold})..."
 
 python "${src_dir}/motif_compendium.py" \
     --config    "${config_tsv}" \
     --out-dir   "${modisco_compiled_dir}" \
     --ref-db    "${ref_db_meme}" \
     --threshold "${motif_compendium_threshold}" \
+    --algorithm "${motif_compendium_algorithm}" \
     --cpus      "${SLURM_CPUS_PER_TASK:-16}"
 
 if [[ ! -f "${modisco_compiled_dir}/modisco_compiled.h5" ]]; then

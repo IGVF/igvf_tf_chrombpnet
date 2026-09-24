@@ -18,7 +18,13 @@
 # This script does NOT require DATASET_DIR; it operates at the collaboration
 # root and hardcodes the four per-dataset MoDISco H5 paths.
 #
+# CPU only, in ${motif_compendium_env} (this repo's motif-compendium pixi
+# environment, MotifCompendium v1.0.19). Clustering is cpm_leiden at
+# ${motif_compendium_threshold}, passed to src/motif_compendium.py explicitly:
+# v1.0.19's default appends a k-centroids pass that ignores the threshold.
+#
 # Input:  Per-dataset fold-averaged MoDISco H5s (step 08 for each dataset)
+#         ${ref_db_meme} (from `cli.py download-references`)
 # Output (inside ${REPO_ROOT}/results/compendium/modisco_compiled/):
 #   modisco_compiled.h5         - clustered motifs for FiNeMo (cross-dataset)
 #   modisco_compendium.meme     - MEME format
@@ -26,7 +32,9 @@
 #   modisco_compendium_meta.tsv - per-motif annotations + cluster IDs
 #   modisco_config.tsv          - dataset -> H5 path mapping used for this run
 #
-# Prerequisites: step 08 must have completed for all four datasets.
+# Prerequisites: step 08 must have completed for all four datasets (a missing
+#   H5 is skipped with a [WARN]; the step fails only if none is found), and
+#   `pixi install -e motif-compendium` in this checkout.
 #
 # Usage:
 #   cd workflows/SLURM && sbatch 09.0.cross_dataset_compendium.sh
@@ -56,8 +64,8 @@ export REPO_ROOT
 # --- end bootstrap -------------------------------------------------------------
 
 # Cross-dataset step: no DATASET_DIR, so source common.sh directly rather than
-# config.sh. CONDA_INIT, motif_compendium_conda, ref_db_meme and
-# motif_compendium_threshold used to be re-declared here; they now have one home.
+# config.sh. It provides motif_compendium_env, ref_db_meme and
+# motif_compendium_threshold.
 # shellcheck source=lib/bash/common.sh
 source "${REPO_ROOT}/lib/bash/common.sh" || exit 1
 
@@ -65,6 +73,13 @@ out_dir="${REPO_ROOT}/results/compendium/modisco_compiled"
 log_dir="${REPO_ROOT}/results/logs"
 mkdir -p "${out_dir}" "${log_dir}"
 
+
+# MotifCompendium clustering algorithm. Explicit because v1.0.19 changed
+# cluster()'s default to cpm_leiden followed by k_centroids, which reassigns
+# motifs without looking at the similarity threshold; cpm_leiden alone is what
+# v1.0.16 ran. The fallback form lets a definition beside
+# motif_compendium_threshold in common.sh take over.
+motif_compendium_algorithm="${motif_compendium_algorithm:-cpm_leiden}"
 
 # Per-dataset MoDISco H5 paths
 declare -A h5_map=(
@@ -102,16 +117,17 @@ activate_env "${motif_compendium_env}"
 metadata_start "09.0.cross_dataset_compendium"
 metadata_inputs+=( "config=${config_tsv}" "ref_db=${ref_db_meme}" )
 metadata_outputs+=( "motifs=${out_dir}/modisco_compiled.h5" "meme=${out_dir}/modisco_compendium.meme" "meta_tsv=${out_dir}/modisco_compendium_meta.tsv" )
-metadata_params+=( "threshold=${motif_compendium_threshold}" )
+metadata_params+=( "threshold=${motif_compendium_threshold}" "algorithm=${motif_compendium_algorithm}" )
 
 
-echo "[$(date)] Running MotifCompendium across ${n_found} datasets (threshold=${motif_compendium_threshold})..."
+echo "[$(date)] Running MotifCompendium across ${n_found} datasets (${motif_compendium_algorithm}, threshold=${motif_compendium_threshold})..."
 
 python "${src_dir}/motif_compendium.py" \
     --config    "${config_tsv}" \
     --out-dir   "${out_dir}" \
     --ref-db    "${ref_db_meme}" \
     --threshold "${motif_compendium_threshold}" \
+    --algorithm "${motif_compendium_algorithm}" \
     --cpus      "${SLURM_CPUS_PER_TASK:-16}"
 
 if [[ ! -f "${out_dir}/modisco_compiled.h5" ]]; then
