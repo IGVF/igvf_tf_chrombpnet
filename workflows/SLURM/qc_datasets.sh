@@ -8,8 +8,31 @@
 #SBATCH --error=%x_%j.log
 
 # qc_datasets.sh
-# Submit with: cd workflows/SLURM && sbatch qc_datasets.sh
-# (No DATASET_DIR needed; datasets are hardcoded in src/qc_datasets.py)
+# Purpose: Dataset-level QC across the collaboration's training datasets, via
+#          src/qc_datasets.py: total fragments, cells, FRiP, peaks, fragment
+#          size distribution, per-chromosome counts and a ChromBPNet
+#          training-readiness check.
+#
+# Cross-dataset: no DATASET or DATASET_DIR. The dataset list comes from
+# utils.palettes (DATASET_LABELS_QC) and every path, input and output, is
+# built from core_path at the top of src/qc_datasets.py.
+#
+# Runs in ${preprocess_env}, this repo's preprocess pixi environment:
+# qc_datasets.py imports pyranges1 (for FRiP, through utils.intervals), which
+# needs Python >= 3.12 and is installed only there.
+#
+# Input (per dataset, under core_path/<dataset>/):
+#   data/fragments/<dataset>_atac_fragments_main_chrs.tsv.gz
+#   results/preprocessing/<dataset>_all_peaks_no_blacklist.narrowPeak
+#   and core_path/genome/hg38.chrom.sizes
+# Output: core_path/results/plots/dataset_qc/ -- summary and per-metric TSVs,
+#   plots as .pdf + .png
+#
+# Usage:
+#   cd workflows/SLURM && sbatch qc_datasets.sh
+#
+# Prerequisites: `pixi install -e preprocess` in this checkout, and read access
+#   to core_path.
 
 # --- bootstrap: locate the repo root (identical block in every workflow step) --
 # sbatch copies the submitted script to a node-local spool dir, so BASH_SOURCE
