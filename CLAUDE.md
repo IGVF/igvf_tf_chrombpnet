@@ -458,7 +458,8 @@ say which of the two kinds of verification a change actually got.
   `output_dir` silently reuses 1.x models and everything derived from them. On molab
   it is worse: `run_step.sh` first restores every missing result from the bucket and
   then skips any index `step_done.py` calls finished, and `--force` bypasses only
-  `step_done.py`, not the steps' own checks, so it does not retrain. Give a 2.x run
+  `step_done.py`, not the steps' own checks, so it does not retrain (04.0 alone has
+  `RETRAIN=1`, for replacing a capped test model). Give a 2.x run
   its own `output_dir` (on molab, in a copy of the config, plus its own
   `MOLAB_GCS_PREFIX`; `workflows/molab/README.md` has the recipe).
 
