@@ -11,9 +11,9 @@ source-path=SCRIPTDIR/..
 source-path=SCRIPTDIR/../..
 
 # SC2154 (referenced but not assigned): every step reads variables that come
-# from ${DATASET_DIR}/dataset_config.sh — a per-dataset file outside the repo
-# whose path is only known at runtime. shellcheck cannot follow it, so this
-# fires on datasets, peak_type, folds, bias_factors, fold_bias_suffix,
-# genome_fa, chrom_sizes and friends in nearly every step. Disabled globally
-# rather than annotated ~76 times.
+# from the dataset's config.yaml, rendered to shell assignments by
+# lib/python/utils/config.py and eval'd by lib/bash/config.sh at runtime.
+# shellcheck cannot follow that, so this fires on datasets, peak_type, folds,
+# bias_factors, fold_bias_suffix, genome_fa, chrom_sizes and friends in nearly
+# every step. Disabled globally rather than annotated ~76 times.
 disable=SC2154

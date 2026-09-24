@@ -3,8 +3,8 @@
 #   export DATASET=igvf3_cardiomyocyte
 #   cd workflows/SLURM && sbatch 00.1.preprocess_peaks.sh
 #
-# This file is the whole configuration. Machine-specific paths (conda envs,
-# where the references live) are environment variables, not config — see
+# This file is the whole configuration. Machine-specific paths (the chrombpnet
+# checkout, where the references live) are environment variables, not config — see
 # config/README.md.
 
 # Identifier for this dataset. It is used verbatim in every output filename and

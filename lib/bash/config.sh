@@ -30,8 +30,8 @@ fi
 source "${REPO_ROOT}/lib/bash/common.sh" || return 1
 
 # Pick the dataset config. Three equivalent ways, in precedence order:
-#   DATASET_CONFIG=/any/path/dataset_config.sh   explicit file
-#   DATASET=<name>                               config/<name>/dataset_config.sh
+#   DATASET_CONFIG=/any/path/config.yaml         explicit file
+#   DATASET=<name>                               config/<name>/config.yaml
 #   DATASET_DIR=/path/to/dataset                 legacy: config inside the data dir
 if [[ -n "${DATASET_CONFIG}" ]]; then
     dataset_config="${DATASET_CONFIG}"
@@ -43,7 +43,7 @@ elif [[ -n "${DATASET_DIR}" && -f "${DATASET_DIR}/config.yaml" ]]; then
     DATASET="${DATASET:-$(basename "${DATASET_DIR}")}"
 else
     echo "ERROR: no dataset selected. Pick one of:" >&2
-    echo "  export DATASET=<name>                     # config/<name>/dataset_config.sh" >&2
+    echo "  export DATASET=<name>                     # config/<name>/config.yaml" >&2
     echo "  export DATASET_CONFIG=/path/to/config.yaml" >&2
     echo "  export DATASET_DIR=/path/to/dataset       # legacy layout" >&2
     if [[ -d "${REPO_ROOT}/config" ]]; then

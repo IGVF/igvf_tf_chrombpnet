@@ -30,11 +30,12 @@ export DATASET=my_dataset
 
 Where the software and the reference files live is the same for every dataset
 and must not be committed, so those are environment variables with defaults
-(`lib/bash/common.sh`). Put the ones you need in your shell profile; `sbatch`
-passes them on to the job.
+(`lib/bash/common.sh`; `REFERENCE_ROOT`'s is in `lib/python/utils/references.py`;
+`CHROMBPNET_REPO` has none). Put the ones you need in your shell profile; `sbatch`
+passes them on to the job. Not `BOOTSTRAP_PYTHON`, though (see the table).
 
 Only `CHROMBPNET_REPO` is required (unless `CHROMBPNET_ENV` names the environment
-outright): every step from 01.0 to 08.0 runs in the chrombpnet environment, and
+outright): 01.0 and every step from 03.0 to 08.0 run in the chrombpnet environment, and
 its checkout has no default location. `pixi` itself must be on `PATH`.
 `REPO_ROOT` is also honoured, but only if it really points at this checkout — the name is generic
 enough that another project may have exported it, so the steps verify it and fall
@@ -55,7 +56,7 @@ back to locating the repo themselves.
 | `CONDA_OVERRIDE_CUDA` | `13.0` (set by `activate_env`) | lets pixi install or enter a CUDA environment on a node without a GPU |
 | `METADATA_DIR` | `<results>/metadata` | run-metadata output |
 | `LOG_LEVEL` | `INFO` | logging level |
-| `BOOTSTRAP_PYTHON` | the first python >= 3.9 on `PATH`, else this checkout's pixi `preprocess` or `default` env | python used to read the config (and write run metadata) before any environment is active |
+| `BOOTSTRAP_PYTHON` | the first python >= 3.9 on `PATH`, else this checkout's pixi `preprocess` or `default` env | python that reads the config, and writes each step's run record at exit. Leave it unset: exported, it writes every record, so the records list ITS packages instead of the step environment's (no `chrombpnet_commit`). Set it only when no python >= 3.9 is found |
 
 A `*_ENV` value is either `pixi:<manifest>#<environment>` or a conda prefix path.
 
@@ -70,8 +71,11 @@ A dataset's `config.yaml` can still override anything derived from these
 $ python3 lib/python/utils/config.py export config/igvf3_cardiomyocyte/config.yaml
 ...
 output_dir="${DATASET_ROOT}/igvf3_cardiomyocyte/results"
+...
 folds=( 0 1 2 3 4 )
+...
 declare -A fold_bias_suffix=( [0]=_08 [1]=_08 [2]=_06 [3]=_08 [4]=_07 )
+...
 datasets=( igvf3_cardiomyocyte )
 ...
 ```

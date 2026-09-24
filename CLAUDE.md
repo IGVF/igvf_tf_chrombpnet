@@ -75,8 +75,9 @@ dataset directories exist on the cluster only.
 - `pixi.toml` / `pixi.lock` — every environment except chrombpnet's (see
   *Environments*).
 - `cli.py download-references` — one-time, idempotent fetch of genome /
-  chrom.sizes / blacklist / both motif DBs into `${REFERENCE_ROOT}` (the shared lab
-  `Data/` folder by default), md5-checked.
+  chrom.sizes / blacklist / GENCODE GTF (-> TSS list) / both motif DBs into
+  `${REFERENCE_ROOT}` (the shared lab `Data/` folder by default). The genome, the
+  GTF and the motif DBs are md5-checked; the blacklist is not.
 - `lib/python/utils/shift.py` — vendored from scPrinter (Ruochi Zhang). `00.0`
   (`cli.py prepare-bigwig`) uses it to detect the Tn5 shift when the config sets
   none, and to compute the delta to chrombpnet's +4/-4 (ATAC) or 0/+1 (DNASE).
@@ -85,7 +86,8 @@ dataset directories exist on the cluster only.
 **One YAML file per dataset — `config/<dataset>/config.yaml` — is the whole
 configuration.** There is no second "site"/"env" file: the machine-specific
 values (`CHROMBPNET_REPO`, the `*_ENV` overrides, `REFERENCE_ROOT`,
-`DATASET_ROOT`) are environment variables with defaults in `common.sh`, because
+`DATASET_ROOT`) are environment variables with defaults in `common.sh` (and
+`references.py` for `REFERENCE_ROOT`; `CHROMBPNET_REPO` has none), because
 they are identical across datasets and must not be committed. `config/README.md`
 has the table.
 
@@ -133,7 +135,7 @@ Every step opens with a **byte-identical bootstrap block** that sets `REPO_ROOT`
 one source line. Copy it from an existing step; don't hand-write a variant.
 
 ```bash
-# --- bootstrap: locate the repo root ... --- (14 lines, identical everywhere)
+# --- bootstrap: locate the repo root ... --- (identical in every step)
 source "${REPO_ROOT}/lib/bash/config.sh" || exit 1   # per-dataset steps
 source "${REPO_ROOT}/lib/bash/common.sh" || exit 1   # cross-dataset steps
 ```
@@ -222,8 +224,10 @@ environments*, and in `activate_env`'s error when the checkout is missing):
 
 ```bash
 export CHROMBPNET_REPO=/path/to/chrombpnet    # a checkout used only by this pipeline
+# the pinned SHA, read from lib/bash/common.sh (run from this checkout)
+export CHROMBPNET_REV=$(REPO_ROOT=$PWD bash -c 'source lib/bash/common.sh >/dev/null && echo "$CHROMBPNET_REV"')
 git clone https://github.com/NNFC-GMD/chrombpnet "$CHROMBPNET_REPO"
-(cd "$CHROMBPNET_REPO" && git checkout --detach "$CHROMBPNET_REV")   # the SHA in common.sh
+(cd "$CHROMBPNET_REPO" && git checkout --detach "$CHROMBPNET_REV")
 CONDA_OVERRIDE_CUDA=13.0 pixi install --locked \
     --manifest-path "$CHROMBPNET_REPO/pyproject.toml" -e cuda13
 
@@ -248,7 +252,7 @@ exactly one place, its `activate_env` line, as `pixi:<manifest>#<environment>`:
 | chrombpnet 2.x, `cuda13` (`chrombpnet_env`) | 01.0, 03.0–04.5, 05.0–08.0 — training, interpretation, predictions, TF-MoDISco (modisco 2.5.2), the QC plots of 03.1/04.1/04.2 | the chrombpnet checkout's `pyproject.toml` + `pixi.lock`, at `CHROMBPNET_REV` |
 | `preprocess` (`preprocess_env`) | 00.0, 00.1, 02.0, `qc_datasets.sh`, `cli.py download-references` | `pixi.toml` |
 | `finemo` (`finemo_env`) | 10.0, 11.0 — Fi-NeMo 0.41 on torch 2.14 (CUDA 13.0 wheel) | `pixi.toml` |
-| `finemo-cu126` | none by default; for 10.0 on drivers below 580 or GPU_CC 7.0 (`FINEMO_ENV`, see 10.0's header) | `pixi.toml` |
+| `finemo-cu126` | none by default; for 10.0 (and 11.0) on drivers below 580 or GPU_CC 7.0 (`FINEMO_ENV`, see 10.0's header) | `pixi.toml` |
 | `motif-compendium` (`motif_compendium_env`) | 09.0, `deprecated/motif_compendium.sh` — MotifCompendium v1.0.19, CPU only | `pixi.toml` |
 | `default` / `qc` | no step: lint, tests, local plotting | `pixi.toml` |
 
@@ -260,9 +264,9 @@ lock file — the one the Keras 3 / JAX port was validated against — rather th
 re-solved here. `activate_env` warns when the checkout is not at `CHROMBPNET_REV`;
 it does not stop, so a newer chrombpnet can be tried on purpose, and the run
 record carries `chrombpnet_commit`. `CHROMBPNET_PIXI_ENV=cuda12` is the fallback
-for drivers below 580. The environments `pixi.toml` does define each have their own
-solve group, so Fi-NeMo's torch and MotifCompendium's stack cannot move each
-other's pins. Any `*_ENV` may still be a plain conda prefix, which `activate_env`
+for drivers below 580. `finemo`, `finemo-cu126` and `motif-compendium` each have
+their own solve group (`default`, `qc` and `preprocess` share `main`), so Fi-NeMo's
+torch and MotifCompendium's stack cannot move each other's pins. Any `*_ENV` may still be a plain conda prefix, which `activate_env`
 enters through `CONDA_INIT`.
 
 **No step loads a CUDA module, and none should.** JAX and torch bring CUDA as pip
@@ -291,8 +295,8 @@ say which of the two kinds of verification a change actually got.
   `a249519`, `b6baa4b`). Don't switch to a tag/prefix style.
 - **Docs accuracy is a hard rule**: every concrete detail (paths, defaults, array
   ranges, step numbers, partition names) must be confirmable from the source in this
-  repo. If you can't verify it, omit it. This file is the one place the step numbering
-  is correct — keep it that way.
+  repo. If you can't verify it, omit it. The step table in this file is the
+  authority on step numbering; `workflows/README.md`'s stage overview must match it.
 - **`src/` scripts import `lib/python` through a three-line `sys.path` shim**, not
   through `PYTHONPATH` and not through an install. It works identically under every
   pixi environment (chrombpnet's included), a conda prefix and a bare `python`,
@@ -655,10 +659,12 @@ say which of the two kinds of verification a change actually got.
   Deliberate for the "average over available folds" behaviour, but it means a dataset
   configured with a fold subset still scans all five.
 
-- **`03.0`'s `--array=0-19` assumes 5 folds × 4 bias factors.** A dataset with a
-  different `bias_factors` length needs the range overridden at submit time
-  (`igvf11_h7_hesc` has 6 → `0-29`). Nothing in the script validates this; an
-  out-of-range index just exits 0.
+- **`03.0`'s `--array=0-19` assumes 5 folds × 4 bias factors.** The real range is
+  `len(bias_sweep_folds) × n_factors`, where the factors come from 02.0's scan when
+  it exists (`load_bias_sweep`) and from the config's `bias_factors` otherwise;
+  `cli.py config validate` prints the `--array` the config implies. Override it at
+  submit time (`igvf11_h7_hesc` has 6 factors → `0-29`). Nothing in the script
+  validates it; an out-of-range index just exits 0.
 
 - **Per-fold bias selection is a manual hand-off.** `03.1` writes
   `selected_bias_per_fold.tsv`; a human copies the winners into `fold_bias_suffix` in

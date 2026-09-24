@@ -60,7 +60,9 @@ repo's own lock file.
 # 1. chrombpnet 2.x, from its own checkout (keep this clone for the pipeline only)
 export CHROMBPNET_REPO=/path/to/chrombpnet          # also in your profile: every job needs it
 git clone https://github.com/NNFC-GMD/chrombpnet "$CHROMBPNET_REPO"
-(cd "$CHROMBPNET_REPO" && git checkout --detach <CHROMBPNET_REV from lib/bash/common.sh>)
+# the pinned SHA, read from lib/bash/common.sh (run from this checkout)
+export CHROMBPNET_REV=$(REPO_ROOT=$PWD bash -c 'source lib/bash/common.sh >/dev/null && echo "$CHROMBPNET_REV"')
+(cd "$CHROMBPNET_REPO" && git checkout --detach "$CHROMBPNET_REV")
 CONDA_OVERRIDE_CUDA=13.0 pixi install --locked \
     --manifest-path "$CHROMBPNET_REPO/pyproject.toml" -e cuda13
 
@@ -69,8 +71,8 @@ pixi install --locked -e preprocess
 pixi install --locked -e finemo
 pixi install --locked -e motif-compendium
 
-# 3. Fetch the shared genome / chrom.sizes / blacklist / motif databases
-#    into $REFERENCE_ROOT (idempotent; md5-checks what it fetches)
+# 3. Fetch the shared genome / chrom.sizes / blacklist / GENCODE TSSs / motif
+#    databases into $REFERENCE_ROOT (idempotent; md5-checks all but the blacklist)
 pixi run -e preprocess python src/cli.py download-references
 ```
 
@@ -123,7 +125,7 @@ sbatch 04.0.train_full_model.sh
 sbatch 04.1.qc_run_full_model.sh
 sbatch 04.2.qc_combined_boxplot.sh     # no DATASET needed; run once all datasets finish 04.1
 sbatch 04.3.generate_predictions.sh
-sbatch 04.4.qc_full_model_interpret.sh # GPU: per-fold DeepSHAP QC (nothing downstream waits on it)
+sbatch 04.4.qc_full_model_interpret.sh # GPU: per-fold DeepSHAP QC (only 04.5 waits on it)
 sbatch 04.5.modisco_full_model.sh      # CPU: per-fold motif QC
 sbatch 05.0.get_contrib_scores.sh
 sbatch 06.0.average_contrib_scores.sh
