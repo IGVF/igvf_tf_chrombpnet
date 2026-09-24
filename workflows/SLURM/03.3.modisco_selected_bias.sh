@@ -2,10 +2,8 @@
 #SBATCH --job-name=modisco_selected_bias
 #SBATCH --mem=64G
 #SBATCH --cpus-per-task=4
-# Same GPU limits as 03.0/04.0: cuda/11.5 cannot drive Ada (8.9) or Hopper
-# (9.0), and 7.0/7.5 are excluded for speed. See 03.0 for the measurements.
-# This step previously carried NO constraint while loading the same cuda
-# module, so it could land on an H100 and fail obscurely.
+# CPU only: seqlets, tomtom-lite and TF-MoDISco use no GPU. Same partition
+# and QOS as 04.5/08.0 -- the default QOS caps walltime at 2 days.
 #SBATCH --time=4-0
 #SBATCH --partition=engreitz
 #SBATCH --qos=high_p
@@ -14,22 +12,38 @@
 #SBATCH --error=%x_%j.log
 
 # 03.3.modisco_selected_bias.sh
-# Purpose: Full QC (marginal footprinting + DeepLIFT interpretation +
-#   TF-MoDISco) on only the bias model selected per fold in
-#   dataset_config.sh (fold_bias_suffix), populated by 03.1.select_bias.sh.
-#   This is the expensive step that verifies the Tn5 signal has actually
-#   been learned - inspect evaluation/*_bias_profile.pdf for Tn5 vs GC-rich
-#   motifs. Deliberately not run on the full fold x bias-factor sweep (03.0).
+# Purpose: Motif QC on only the bias model selected per fold (fold_bias_suffix,
+#   populated by 03.1.select_bias.sh), CPU half of the selected-bias QC:
+#   src/motif_qc.py -- TF-MoDISco 2.5.2 on a 5000-seqlet budget, its
+#   descriptive report and a MEME export -- on 03.2's scores for BOTH heads.
+#   This verifies the bias model learned Tn5 and nothing else: the profile
+#   head should show Tn5 patterns, and the counts head no TF motifs (on d0 it
+#   shows GC-rich positive / AT-rich negative composition patterns).
+#   Deliberately not run on the full fold x bias-factor sweep (03.0).
+#
+# Why not chrombpnet's modisco: see the header of src/motif_qc.py -- a small
+#   budget (6 min, not an hour), both heads, and the 2.5.2 report. It runs in
+#   the `motifs` env (envs/motifs.yml): modisco 2.5.2 needs Python >= 3.9,
+#   which the chrombpnet env cannot have. The report matches against
+#   chrombpnet's own motif DB, which, unlike MotifCompendium, has Tn5/DNase
+#   references. chrombpnet's *_bias_profile.pdf is no longer written; 03.2's
+#   metrics and plots are unchanged.
 #
 # Array index = fold index (one task per fold, not per bias-factor).
 #
+# Input:  03.2's auxiliary/interpret_subsample/<prefix>_bias.{profile,counts}_scores.h5
+# Output: evaluation/motif_qc_{profile,counts}/<prefix>_bias_{modisco_results.h5,
+#         modisco_motifs.meme,motif_qc.json} and report/report.html
+# Settings: motif_qc_window (default 400) and motif_qc_max_seqlets (5000) in
+#   config.yaml; MOTIF_QC_WINDOW / MOTIF_QC_MAX_SEQLETS override them.
+#
 # Usage:
 #   export DATASET_DIR=/path/to/igvf_tf_collab/<dataset>
-#   sbatch 03.2.qc_selected_bias.sh            # all folds (array 0-4)
-#   sbatch --array=0 03.2.qc_selected_bias.sh  # fold 0 only (quick test)
+#   sbatch 03.3.modisco_selected_bias.sh            # all folds (array 0-4)
+#   sbatch --array=0 03.3.modisco_selected_bias.sh  # fold 0 only (quick test)
 #
-# Prerequisites: 03.0.train_bias_model.sh and 03.1.select_bias.sh must have
-#   completed, with fold_bias_suffix set in dataset_config.sh.
+# Prerequisites: 03.2.qc_selected_bias.sh for the fold, the `motifs` env
+#   (MOTIFS_ENV), and `cli.py download-references` (chrombpnet's motif DB).
 
 # --- bootstrap: locate the repo root (identical block in every workflow step) --
 # sbatch copies the submitted script to a node-local spool dir, so BASH_SOURCE
@@ -70,64 +84,48 @@ fi
 
 metadata_start "03.3.modisco_selected_bias"
 
-
-
-fold_json="${folds_dir}/fold_${fold}.json"
 file_prefix="${bias_dataset}_${peak_type}_fold_${fold}"
 out_dir="${results_path}/bias_models/bias_model${suffix}/${bias_dataset}_${peak_type}_fold_${fold}"
-model_file="${out_dir}/models/${file_prefix}_bias.h5"
+interp="${out_dir}/auxiliary/interpret_subsample"
+window="${MOTIF_QC_WINDOW:-${motif_qc_window:-400}}"
+max_seqlets="${MOTIF_QC_MAX_SEQLETS:-${motif_qc_max_seqlets:-5000}}"
 
-
-metadata_inputs+=( "bias_model=${model_file}" "genome=${genome_fa}" "fold_json=${fold_json}" )
-require_input "${model_file}" 03.0.train_bias_model.sh
-require_input "${genome_fa}" "cli.py download-references"
-require_input "${fold_json}"
-require_input "${chrom_sizes}" "cli.py download-references"
-metadata_outputs+=( "bias_qc=${out_dir}/evaluation" )
-for _kind in profile counts; do
-    metadata_outputs+=( "motifs=${out_dir}/auxiliary/interpret_subsample/${file_prefix}_modisco_results_${_kind}_scores.h5" )
-    metadata_outputs+=( "motif_report=${out_dir}/evaluation/${file_prefix}_bias_${_kind}.pdf" )
+for _head in profile counts; do
+    _qc="${out_dir}/evaluation/motif_qc_${_head}"
+    metadata_inputs+=( "contributions=${interp}/${file_prefix}_bias.${_head}_scores.h5" )
+    metadata_outputs+=( "motifs=${_qc}/${file_prefix}_bias_modisco_results.h5" "motif_report=${_qc}/report/report.html" )
+    require_input "${interp}/${file_prefix}_bias.${_head}_scores.h5" 03.2.qc_selected_bias.sh
 done
-unset _kind
+metadata_inputs+=( "motif_db=${chrombpnet_motifs_meme}" )
+require_input "${chrombpnet_motifs_meme}" "cli.py download-references"
 preflight_check
 
-load_gpu_modules
-activate_env "${CONDA_ENV}"
-gpu_env
-metadata_params+=( "fold=${fold}" "bias_suffix=${suffix}" )
-echo "[$(date)] [fold ${fold}] Full QC on selected bias model (suffix ${suffix})"
-echo "  model      : ${model_file}"
-echo "  output dir : ${out_dir}"
+activate_env "${motifs_conda}"
+metadata_params+=( "fold=${fold}" "bias_suffix=${suffix}" "scores=profile,counts" "max_seqlets=${max_seqlets}" "window=${window}" )
+echo "[$(date)] [fold ${fold}] Motif QC on selected bias model (suffix ${suffix}): ${out_dir}"
 
-if [[ ! -f "${model_file}" ]]; then
-    echo "ERROR: Bias model not found for fold ${fold} (suffix ${suffix}):" >&2
-    echo "  ${model_file}" >&2
-    echo "  Run 03.0.train_bias_model.sh first." >&2
-    exit 1
-fi
-
-# No `set -e` in this step, and this is the last real command, so without the
-# guard a DeepLIFT/TF-MoDISco failure prints "Done." and exits 0.
-# --stage modisco: TF-MoDISco motif discovery and the reports. No GPU is used
-# here at all, which is the whole reason this is a separate step -- 03.2 would
-# otherwise hold one idle for hours. Same reasoning as 08.0, and high_p is what
-# actually gets the longer walltime: the default QOS caps at 2 days.
+# No `set -e` in this step, so each call and its report are guarded. No GPU
+# is used here at all, which is the whole reason this is a separate step from
+# 03.2. high_p is what gets the longer walltime: the default QOS caps at 2 days.
 METADATA_RSS_FILE="${out_dir}/.peak_rss_gb_033"   # TF-MoDISco runs as a child; its peak counts
 export METADATA_RSS_FILE
-python "${src_dir}/run_bias_qc.py" \
-    --stage modisco \
-    --bias-model "${model_file}" \
-    --output-dir "${out_dir}" \
-    --file-prefix "${file_prefix}" \
-    --genome "${genome_fa}" \
-    --chrom-sizes "${chrom_sizes}" \
-    --fold-json "${fold_json}"
-_rc=$?
+for head in profile counts; do
+    qc_dir="${out_dir}/evaluation/motif_qc_${head}"
+    echo "[$(date)] [fold ${fold}] TF-MoDISco, ${head} head -> ${qc_dir}"
+    python "${src_dir}/motif_qc.py" \
+        --scores "${interp}/${file_prefix}_bias.${head}_scores.h5" \
+        --motif-db "${chrombpnet_motifs_meme}" \
+        --output-dir "${qc_dir}" \
+        --prefix "${file_prefix}_bias" \
+        --window "${window}" \
+        --max-seqlets "${max_seqlets}" \
+        --threads "${SLURM_CPUS_PER_TASK:-4}"
+    _rc=$?
+    if [[ ${_rc} -ne 0 || ! -f "${qc_dir}/report/report.html" ]]; then
+        echo "ERROR: motif_qc.py failed for fold ${fold}, ${head} head; ${qc_dir}/report/report.html was not written." >&2
+        exit 1
+    fi
+done
 [[ -s "${METADATA_RSS_FILE}" ]] && metadata_metrics+=( "peak_rss_gb=$(<"${METADATA_RSS_FILE}")" )
-_report="${out_dir}/evaluation/${file_prefix}_bias_profile.pdf"
-if [[ ${_rc} -ne 0 || ! -f "${_report}" ]]; then
-    echo "ERROR: run_bias_qc.py --stage modisco failed for fold ${fold}; ${_report} was not written." >&2
-    exit 1
-fi
 
 echo "[$(date)] [fold ${fold}] Done."

@@ -41,6 +41,10 @@ motif_compendium_conda="${MOTIF_COMPENDIUM_ENV:-/home/groups/engreitz/Users/opus
 # 00.0/00.1/02.0 pointed at a path that was never created and failed on import.
 # Built from envs/preprocess.yml on 2026-09-21.
 preprocess_conda="${PREPROCESS_ENV:-/home/groups/engreitz/Users/emattei/.conda/envs/preprocess}"
+# Steps 03.3/04.5 (src/motif_qc.py): TF-MoDISco 2.5.2, which needs Python
+# >= 3.9. Create it with `conda env create -f envs/motifs.yml`; like
+# preprocess, the default is where it is meant to go, not where it already is.
+motifs_conda="${MOTIFS_ENV:-/home/groups/engreitz/Users/emattei/.conda/envs/motifs}"
 
 # Default root for dataset data/results; config/site.sh usually repoints this
 # at a shared collaboration tree.
@@ -197,7 +201,7 @@ activate_env() {
         echo "ERROR: conda env not found (no ${env_path}/bin/python)." >&2
         echo "  Create it:  conda env create -f \${REPO_ROOT}/envs/<name>.yml -p ${env_path}" >&2
         echo "  Or point the pipeline at an existing one with CHROMBPNET_ENV /" >&2
-        echo "  PREPROCESS_ENV / FINEMO_ENV / MOTIF_COMPENDIUM_ENV." >&2
+        echo "  PREPROCESS_ENV / MOTIFS_ENV / FINEMO_ENV / MOTIF_COMPENDIUM_ENV." >&2
         exit 1
     fi
     # shellcheck disable=SC1090  # path is a cluster location, not resolvable here

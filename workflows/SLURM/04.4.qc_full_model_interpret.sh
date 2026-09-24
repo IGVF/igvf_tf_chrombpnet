@@ -14,9 +14,10 @@
 
 # 04.4.qc_full_model_interpret.sh
 # Purpose: Per-fold interpretation QC of the full model, GPU half: DeepLIFT
-#   contribution scores (profile head) on a 30K subsample of the fold's
-#   filtered peaks, seed 1234 -- exactly what `chrombpnet pipeline` would have
-#   run next inside 04.0.
+#   contribution scores on a 30K subsample of the fold's filtered peaks, seed
+#   1234 -- what `chrombpnet pipeline` would have run next inside 04.0, except
+#   that both heads are scored: pipeline scores profile only, and the counts
+#   head is where a model absorbs composition (see src/run_full_model_qc.py).
 #
 # Why its own step: pipeline ran this and then TF-MoDISco inside the training
 # job, and TF-MoDISco is CPU-only and the long pole, so the GPU sat idle for
@@ -28,7 +29,7 @@
 # Array index = fold index.
 #
 # Input:  ${full_model_dir}/<dataset>_<peak_type>_fold_<fold>/ from 04.0
-# Output: auxiliary/interpret_subsample/chrombpnet_nobias.profile_scores.h5
+# Output: auxiliary/interpret_subsample/chrombpnet_nobias.{profile,counts}_scores.h5
 #         auxiliary/30K_subsample_peaks.bed
 # Usage:
 #   export DATASET=<name>        # or DATASET_CONFIG=/path/to/config.yaml
@@ -67,11 +68,13 @@ fold="${folds[${SLURM_ARRAY_TASK_ID}]}"
 
 
 metadata_start "04.4.qc_full_model_interpret"
-metadata_params+=( "fold=${fold}" "subsample=30000" "seed=1234" "scores=profile" )
+metadata_params+=( "fold=${fold}" "subsample=30000" "seed=1234" "scores=profile,counts" )
 for dataset in "${datasets[@]}"; do
     _dir="${full_model_dir}/${dataset}_${peak_type}_fold_${fold}"
     metadata_inputs+=( "model=${_dir}/models/chrombpnet_nobias.h5" )
-    metadata_outputs+=( "contributions=${_dir}/auxiliary/interpret_subsample/chrombpnet_nobias.profile_scores.h5" )
+    for _head in profile counts; do
+        metadata_outputs+=( "contributions=${_dir}/auxiliary/interpret_subsample/chrombpnet_nobias.${_head}_scores.h5" )
+    done
     require_input "${_dir}/models/chrombpnet_nobias.h5" 04.0.train_full_model.sh
     require_input "${_dir}/auxiliary/chrombpnet_nobias_footprints.h5" 04.0.train_full_model.sh
 done
@@ -84,7 +87,7 @@ gpu_env
 
 for dataset in "${datasets[@]}"; do
     out_dir="${full_model_dir}/${dataset}_${peak_type}_fold_${fold}"
-    echo "[$(date)] [${dataset} fold ${fold}] DeepLIFT (profile) on the full model: ${out_dir}"
+    echo "[$(date)] [${dataset} fold ${fold}] DeepLIFT (profile + counts) on the full model: ${out_dir}"
     METADATA_RSS_FILE="${out_dir}/.peak_rss_gb_044"
     export METADATA_RSS_FILE
     # No `set -e` in this step: guard the call and its output explicitly.
@@ -95,7 +98,7 @@ for dataset in "${datasets[@]}"; do
         --data-type "${assay}"
     _rc=$?
     [[ -s "${METADATA_RSS_FILE}" ]] && metadata_metrics+=( "peak_rss_gb=$(<"${METADATA_RSS_FILE}")" )
-    _scores="${out_dir}/auxiliary/interpret_subsample/chrombpnet_nobias.profile_scores.h5"
+    _scores="${out_dir}/auxiliary/interpret_subsample/chrombpnet_nobias.counts_scores.h5"
     if [[ ${_rc} -ne 0 || ! -f "${_scores}" ]]; then
         echo "ERROR: run_full_model_qc.py --stage gpu failed for ${dataset} fold ${fold}; ${_scores} was not written." >&2
         exit 1

@@ -20,10 +20,12 @@ and that is all:
 | | provides | used by |
 |---|---|---|
 | **pixi `preprocess`** | python 3.13, pyranges1, pybigtools, pysam, pyfaidx, pybigwig, click | steps 00.0, 00.1, 02.0, and `cli.py download-references` |
-| **Apptainer container** | chrombpnet, tensorflow, bedtools, modisco | steps 01.0, 03.0, 03.1, 03.2, 04.0, 04.1 |
+| **pixi `motifs`** | python 3.13, modisco 2.5.2, memelite | steps 03.3, 04.5 (`src/motif_qc.py`) |
+| **Apptainer container** | chrombpnet, tensorflow, bedtools | steps 01.0, 03.0, 03.1, 03.2, 04.0–04.4 |
 
-The pixi environment is defined in `pixi.toml` (`[feature.preprocess]`) and
-mirrors `envs/preprocess.yml` dependency for dependency — keep the two in step.
+The pixi environments are defined in `pixi.toml` (`[feature.preprocess]`,
+`[feature.motifs]`) and mirror `envs/preprocess.yml` / `envs/motifs.yml`
+dependency for dependency — keep each pair in step.
 
 chrombpnet **cannot** move to pixi, which is why the container stays: chrombpnet
 1.0.1 pins `tensorflow==2.8.0`, `numpy==1.23.4` and `protobuf==3.20` against
@@ -160,10 +162,10 @@ bash workflows/molab/run_step.sh --list
 
 ```
 STEP                               ENV        ARRAY
-00.0.prepare_signal.sh             pixi       —
-00.1.preprocess_peaks.sh           pixi       —
-01.0.preprocess_nonpeaks.sh        container  —
-02.0.qc_training_data.sh            pixi       —
+00.0.prepare_signal.sh             pixi:preprocess  —
+00.1.preprocess_peaks.sh           pixi:preprocess  —
+01.0.preprocess_nonpeaks.sh        container        —
+02.0.qc_training_data.sh           pixi:preprocess  —
 03.0.train_bias_model.sh           container  0-19
 ...
 ```

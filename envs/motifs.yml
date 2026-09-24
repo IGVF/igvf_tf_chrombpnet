@@ -1,0 +1,37 @@
+# motifs environment — per-fold motif QC (03.3, 04.5): TF-MoDISco 2.5.2 on
+# both heads' DeepLIFT scores, its descriptive report and a MEME export
+# (src/motif_qc.py). CPU only; it reads the scores 03.2/04.4 wrote and never
+# imports chrombpnet or TensorFlow.
+#
+# Exists because modisco 2.5.2 needs memelite, which needs Python >= 3.9;
+# the chrombpnet env cannot move off its TF 2.8 stack.
+#
+#   conda env create -f envs/motifs.yml
+#
+# A hand-written spec, not a `conda env export`, like envs/preprocess.yml:
+# it is new, so there is no existing solve to preserve. Keep it in step with
+# [feature.motifs] in pixi.toml, which is what molab runs.
+name: motifs
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python>=3.12,<3.14
+  - numpy>=1.23
+  - pandas>=2.0
+  - scipy>=1.10
+  - h5py>=3.8
+  - hdf5plugin>=4.0   # chrombpnet's scores h5 is filter-compressed
+  - matplotlib-base>=3.7
+  - numba>=0.58
+  - scikit-learn>=1.3
+  - python-igraph>=0.10
+  - leidenalg>=0.10
+  - pyfaidx>=0.7
+  - jinja2>=3.1
+  - logomaker>=0.8
+  - pyyaml>=6
+  - pip
+  - pip:
+      - modisco==2.5.2      # TF-MoDISco; motif discovery identical to 2.0.7
+      - memelite>=0.4       # tomtom-lite, used by `modisco report -l`

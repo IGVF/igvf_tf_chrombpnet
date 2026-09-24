@@ -8,10 +8,11 @@
 #   sbatch     -> this script. `--array` is emulated by looping
 #                 SLURM_ARRAY_TASK_ID over the requested indices, in sequence
 #                 (one GPU, so parallelism would only contend).
-#   conda      -> either the pixi `preprocess` environment or the chrombpnet
-#                 container, chosen per step by the table below. That table is
-#                 derived from which env each step's `activate_env` call names:
-#                 `preprocess_conda` -> pixi, `CONDA_ENV` -> container.
+#   conda      -> a pixi environment or the chrombpnet container, chosen per
+#                 step by the table below. That table is derived from which
+#                 env each step's `activate_env` call names:
+#                 `preprocess_conda` -> pixi `preprocess`, `motifs_conda` ->
+#                 pixi `motifs`, `CONDA_ENV` -> container.
 #
 # Steps already done are skipped, and results never live only on this box.
 # A molab session that dies comes back as a fresh box with part of /marimo,
@@ -57,11 +58,12 @@ STEPS_DIR="${REPO_ROOT}/workflows/SLURM"
 # it would silently prefer the notebook's packages over its own lock.
 unset PYTHONPATH PYTHONHOME PYTHONSAFEPATH VIRTUAL_ENV
 
-# Which environment each step needs. Steps not listed default to the container,
-# which is the larger of the two and has chrombpnet in it.
+# Which environment each step needs: `pixi:<env>` or `container`. Steps not
+# listed default to the container, which has chrombpnet in it.
 step_env() {
     case "$1" in
-        00.0.prepare_signal.sh|00.1.preprocess_peaks.sh|02.0.qc_training_data.sh) echo pixi ;;
+        00.0.prepare_signal.sh|00.1.preprocess_peaks.sh|02.0.qc_training_data.sh) echo pixi:preprocess ;;
+        03.3.modisco_selected_bias.sh|04.5.modisco_full_model.sh) echo pixi:motifs ;;
         *) echo container ;;
     esac
 }
@@ -103,6 +105,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 step="${1:-}"
+# shellcheck disable=SC2218  # defined above; shellcheck 0.11 false positive (CLAUDE.md)
 [[ -n "${step}" ]] || { echo "ERROR: no step given" >&2; usage 1; }
 step="$(basename "${step}")"
 [[ -f "${STEPS_DIR}/${step}" ]] || { echo "ERROR: no such step: ${STEPS_DIR}/${step}" >&2; exit 1; }
@@ -124,6 +127,7 @@ expand_array() {
     echo "${out[@]}"
 }
 
+# shellcheck disable=SC2218  # defined above; shellcheck 0.11 false positive (CLAUDE.md)
 env_kind="$(step_env "${step}")"
 mkdir -p "${MOLAB_LOG_DIR}"
 
@@ -199,14 +203,14 @@ for idx in $(expand_array "${array_spec}"); do
         continue
     fi
 
-    if [[ "${env_kind}" == "pixi" ]]; then
+    if [[ "${env_kind}" == pixi:* ]]; then
         ( cd "${REPO_ROOT}" && \
           SLURM_ARRAY_TASK_ID="${idx}" SLURM_SUBMIT_DIR="${STEPS_DIR}" \
           SLURM_CPUS_PER_TASK="${MOLAB_CPUS}" \
           OMP_NUM_THREADS="${MOLAB_CPUS}" \
           NUMEXPR_NUM_THREADS="${MOLAB_CPUS}" NUMEXPR_MAX_THREADS="${MOLAB_CPUS}" \
           NUMBA_NUM_THREADS="${MOLAB_CPUS}" \
-          pixi run -e preprocess bash "${STEPS_DIR}/${step}" "$@" ) 2>&1 | tee "${log}"
+          pixi run -e "${env_kind#pixi:}" bash "${STEPS_DIR}/${step}" "$@" ) 2>&1 | tee "${log}"
     else
         container_exec "${idx}" bash -c \
             "cd '${STEPS_DIR}' && SLURM_SUBMIT_DIR='${STEPS_DIR}' bash '${STEPS_DIR}/${step}' $*" \

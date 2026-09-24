@@ -776,6 +776,7 @@ def download_references(dataset, path, reference_root, metadata_dir, verbose, qu
             "chrom_sizes_main",
             "blacklist",
             "ref_db_meme",
+            "chrombpnet_motifs_meme",
         ):
             md.add_output(role, ref[role])
         md.add_output("chrom_sizes", ref["chrom_sizes_main"] + ".json")

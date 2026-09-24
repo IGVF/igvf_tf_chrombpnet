@@ -146,6 +146,14 @@ bias_suffixes_sweep: ["_05", "_06", "_07", "_08"]
 # run records max_epochs; retrain with --force for a real model.
 # FULL_MODEL_EPOCHS in the environment overrides this.
 # full_model_epochs: 2
+
+# Motif QC (03.3 bias model, 04.5 full model; src/motif_qc.py; both heads).
+# The central window, in bp, TF-MoDISco runs over (default 400, its own
+# default; chrombpnet's pipeline used 500), and seqlets per metacluster
+# (default 5000 -- about 6 min per head, where chrombpnet's 50000 took an hour
+# on d0). MOTIF_QC_WINDOW / MOTIF_QC_MAX_SEQLETS override them.
+# motif_qc_window: 400
+# motif_qc_max_seqlets: 5000
 # bias_sweep_folds: ["0"]
 
 # Filled in by hand after 03.1 writes selected_bias_per_fold.tsv.

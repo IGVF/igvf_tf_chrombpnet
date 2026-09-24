@@ -74,11 +74,13 @@ export DATASET_CONFIG="${DATASET_CONFIG:-/marimo/data/test_data_d0/config/config
 # header and lib/bash/common.sh.
 export CONDA_INIT=""
 
-# lib/bash/common.sh names these four after conda because that is what the
-# cluster uses. On molab only the first is a real environment:
+# lib/bash/common.sh names these after conda because that is what the
+# cluster uses. On molab only the first two are real environments:
 #
 #   PREPROCESS_ENV         a pixi environment, defined in pixi.toml and
 #                          mirroring envs/preprocess.yml. Steps 00.0/00.1/02.0.
+#   MOTIFS_ENV             a pixi environment mirroring envs/motifs.yml
+#                          (TF-MoDISco 2.5.2). Steps 03.3/04.5.
 #   CHROMBPNET_ENV         NOT an environment path here -- chrombpnet, its
 #                          TensorFlow and bedtools come from the Apptainer
 #                          container, which run_step.sh execs directly. It
@@ -92,6 +94,7 @@ export CONDA_INIT=""
 # at the path), but they are set to a self-describing sentinel rather than left
 # unset, because unset would fall back to a Sherlock home directory.
 export PREPROCESS_ENV="${REPO_ROOT}/.pixi/envs/preprocess"
+export MOTIFS_ENV="${REPO_ROOT}/.pixi/envs/motifs"
 
 # The Python that lib/bash/config.sh and references.sh use to read the YAML
 # config (>= 3.9, stdlib only). Inside the chrombpnet container there is none:

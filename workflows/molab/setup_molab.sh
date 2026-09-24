@@ -261,13 +261,14 @@ if ! command -v pixi >/dev/null 2>&1; then
     ln -sf "${HOME}/.pixi/bin/pixi" /usr/local/bin/pixi
 fi
 log "pixi: $(pixi --version)"
-log "installing the pixi qc environment"
+log "installing the pixi qc and motifs environments"
 # Every pixi call runs from REPO_ROOT: pixi resolves a manifest from the cwd
 # upwards even for `clean cache`, and /marimo (the usual cwd here) holds
 # marimo's own pyproject.toml with no [tool.pixi], which pixi refuses.
 # The env is hardlinked out of the package cache, so clearing the cache frees
 # the downloaded archives (~1.5 GB) without touching the installed env.
-(cd "${REPO_ROOT}" && pixi install -e qc && pixi clean cache --yes >/dev/null)
+# `motifs`: TF-MoDISco 2.5.2 for 03.3/04.5.
+(cd "${REPO_ROOT}" && pixi install -e qc && pixi install -e motifs && pixi clean cache --yes >/dev/null)
 
 # ── 8. d0 test data ──────────────────────────────────────────────────────────
 log "fetching test data into ${MOLAB_DATA_DIR}"

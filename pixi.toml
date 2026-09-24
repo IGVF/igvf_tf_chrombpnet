@@ -69,10 +69,36 @@ pyyaml = ">=6"            # full YAML for config.py
 [feature.preprocess.pypi-dependencies]
 pyranges1 = ">=1.4"       # not on conda-forge/bioconda; conda's is the 0.x line
 
+# The `motifs` environment (03.3, 04.5): TF-MoDISco 2.5.2, whose memelite
+# dependency needs Python >= 3.9 -- the chrombpnet env cannot have it. Mirrors
+# envs/motifs.yml -- keep the two in step. Its own solve group so it cannot
+# move the versions the other environments get.
+[feature.motifs.dependencies]
+python = ">=3.12,<3.14"
+numpy = ">=1.23"
+pandas = ">=2.0"
+scipy = ">=1.10"
+h5py = ">=3.8"
+hdf5plugin = ">=4.0"     # chrombpnet's scores h5 is filter-compressed
+matplotlib-base = ">=3.7"
+numba = ">=0.58"
+scikit-learn = ">=1.3"
+python-igraph = ">=0.10"
+leidenalg = ">=0.10"
+pyfaidx = ">=0.7"
+jinja2 = ">=3.1"
+logomaker = ">=0.8"
+pyyaml = ">=6"
+
+[feature.motifs.pypi-dependencies]
+modisco = "==2.5.2"
+memelite = ">=0.4"       # tomtom-lite, used by `modisco report -l`
+
 [environments]
 default = { features = ["dev"], solve-group = "main" }
 qc = { features = ["qc"], solve-group = "main" }
 preprocess = { features = ["preprocess"], solve-group = "main" }
+motifs = { features = ["motifs"], solve-group = "motifs" }
 
 [tasks.lint]
 description = "ruff check over lib/ and src/"

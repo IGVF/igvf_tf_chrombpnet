@@ -154,9 +154,9 @@ derived output paths live in `config.sh`.
 All step scripts live in `workflows/SLURM/`. The Python they call lives in `src/`
 and is referenced as `${src_dir}/<name>.py`, never by a relative path:
 `predict_bias_metrics.py` (03.0),
-`select_bias_model.py` (03.1), `run_bias_qc.py` (03.2, 03.3), `chrombpnet_train.py`
+`select_bias_model.py` (03.1), `run_bias_qc.py` (03.2), `motif_qc.py` (03.3, 04.5), `chrombpnet_train.py`
 (03.0, 04.0), `qc_full_model.py` (04.1 and 04.2-combined), `predict_and_avg.py` (04.3),
-`run_full_model_qc.py` (04.4, 04.5), `average_contrib_scores.py` (06),
+`run_full_model_qc.py` (04.4), `average_contrib_scores.py` (06),
 `contribs_to_bigwig.py` (07), `motif_compendium.py` (09 and `_10`),
 `qc_datasets.py` (`qc_datasets.sh`).
 
@@ -195,11 +195,12 @@ cd workflows/SLURM && sbatch 00.1.preprocess_peaks.sh
 ```
 
 ### Environments
-Four, and they are not interchangeable:
+Five, and they are not interchangeable:
 
 | Where | What | Managed by |
 |---|---|---|
 | `chrombpnet` | training, contribs, predictions, MoDISco, all QC plots | `envs/chrombpnet.yml` |
+| `motifs` | per-fold motif QC, 03.3 and 04.5 (TF-MoDISco 2.5.2) | `envs/motifs.yml`; pixi `motifs` on molab |
 | `finemo` | steps 10, 11 | `envs/finemo.yml` |
 | `motif_compendium` | step 09, `_10` | `envs/motif_compendium.yml` |
 | pixi `default` / `qc` | local lint + syntax + plotting only | `pixi.toml` |
@@ -428,9 +429,9 @@ say which of the two kinds of verification a change actually got.
   `pipelines.bias_model_qc()` runs predictions, DeepLIFT interpretation, then
   TF-MoDISco and its reports in one call. Only the first two need a GPU;
   TF-MoDISco is CPU-only and is the long pole, so running them together left a
-  GPU idle for hours. `src/run_bias_qc.py --stage {gpu,modisco,all}` splits
-  them and each stage skips work whose outputs exist, so a failed MoDISco
-  re-runs without redoing interpretation. `all` keeps the original behaviour.
+  GPU idle for hours. `src/run_bias_qc.py --stage gpu` is 03.2. Its
+  `--stage {modisco,all}` (chrombpnet's TF-MoDISco 2.0.7) is no longer called
+  by any step; 03.3 runs `src/motif_qc.py` instead -- see the next item.
   Same reasoning as 08.0 below.
 
 - **The full model gets the same split: 04.0 trains, 04.4/04.5 interpret.**
@@ -439,14 +440,47 @@ say which of the two kinds of verification a change actually got.
   inside the same GPU job. `chrombpnet_train.py --stop-before-interpretation`
   (always passed by 04.0) replaces chrombpnet's interpretation entry point with
   a stop, so everything before it is chrombpnet's unmodified code and nothing
-  after it runs; `src/run_full_model_qc.py --stage {gpu,modisco}` then does
-  exactly what pipeline would have, as 04.4 (DeepLIFT, profile head -- the
-  pipeline's counts run is commented out upstream) and 04.5 (TF-MoDISco,
-  report, PDF, and the pipeline-mode HTML report). The 30K subsample is
+  after it runs; `src/run_full_model_qc.py --stage gpu` then runs the
+  interpretation exactly as pipeline would have, as 04.4 (DeepLIFT, profile
+  head -- the pipeline's counts run is commented out upstream), and 04.5 finds
+  the motifs with `src/motif_qc.py`. The 30K subsample is
   `utils.regions.subsample_regions`, chrombpnet's own rule (seed 1234), shared
   with the bias QC. Nothing downstream waits on 04.4/04.5: they are per-fold
   QC, while 05 gives analysis-grade scores on all peaks and 08 motifs on the
   fold average -- which can hide a bad fold, which is what 04.5 is for.
+
+- **Per-fold motif QC (03.3, 04.5) is `src/motif_qc.py`, not chrombpnet's
+  modisco: TF-MoDISco 2.5.2 at `-n 5000` on BOTH heads, in its own `motifs`
+  env.** The three changes, each for a measured reason (d0, fold 0, bias
+  `_065`, 2026-09-23):
+  - *Small budget.* Runtime is dominated by clustering, which grows with the
+    seqlet count: 63 min at chrombpnet's `-n 50000` (profile head) against
+    6 min at 5000 (counts head). This is QC; analysis-grade motifs come from
+    08.0 at the full budget on the fold average. `motif_qc_max_seqlets` in
+    config.yaml raises it.
+  - *Both heads.* chrombpnet scores and clusters the profile head only. On d0
+    the profile head was Tn5 (90% of seqlets in `TN5_*`-matching patterns),
+    while the counts head -- the one behind the bias model's r of 0.56 on
+    peaks vs 0.40 on non-peaks -- was GC-rich (positive) and AT-rich
+    (negative) composition, invisible from profile alone. So 03.2 and 04.4
+    score both heads (04.4 departs from the pipeline to do it).
+  - *2.5.2 is not faster by itself:* `core`/`affinitymat`/`cluster`/
+    `extract_seqlets` are byte-identical to the chrombpnet env's 2.0.7. It
+    needs Python >= 3.9 (memelite), hence the separate env. Its
+    `modisco report` writes `report.html`, so chrombpnet's `*_profile.pdf`
+    and pipeline-mode HTML report (which read `motifs.html`) are gone.
+  - The report matches against chrombpnet's own `motifs.meme.txt`
+    (`chrombpnet_motifs_meme`, fetched pinned to v1.0.1 by
+    `download-references`), because MotifCompendium has no Tn5 or DNase bias
+    motifs. tomtom-lite still assigns broad GC and Alu-repeat patterns to
+    `TN5_*` at tiny p-values; read the logos, not the labels.
+  - Per-seqlet annotation (tangermeme recursive seqlets + tomtom-lite, as
+    cherimoya does) was tried and dropped: 1% of seqlets matched Tn5 on a
+    model whose patterns were 90% Tn5.
+  - The script pins numba/OpenMP threads to `--threads` (the step passes
+    `SLURM_CPUS_PER_TASK`) before anything imports numba, which otherwise
+    sizes its pool to the host's cores. chrombpnet's scores h5 is
+    filter-compressed: reading it needs `import hdf5plugin`.
 
 - **`08.0.run_modisco.sh` is CPU-only on `engreitz` with `--qos=high_p`, on purpose.**
   tfmodisco-lite doesn't use a GPU, and the default QOS caps walltime at 2 days for
