@@ -66,6 +66,7 @@ Usage:
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -169,6 +170,14 @@ def main():
         )
         summary = {}
     force = args.force or bool(stale)
+    if force:
+        # Remove what a redo replaces BEFORE redoing it. The new settings are
+        # saved as soon as the first stage finishes, and every stage skips on
+        # existence, so a report left over from the old settings would
+        # otherwise pass as done if the report stage then failed or was killed.
+        f["modisco"].unlink(missing_ok=True)
+        f["meme"].unlink(missing_ok=True)
+        shutil.rmtree(f["report"], ignore_errors=True)
     summary.update(wanted)
     seconds = summary.setdefault("seconds", {})
 
