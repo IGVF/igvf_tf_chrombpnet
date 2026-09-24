@@ -224,8 +224,9 @@ environments*, and in `activate_env`'s error when the checkout is missing):
 
 ```bash
 export CHROMBPNET_REPO=/path/to/chrombpnet    # a checkout used only by this pipeline
-# the pinned SHA, read from lib/bash/common.sh (run from this checkout)
-export CHROMBPNET_REV=$(REPO_ROOT=$PWD bash -c 'source lib/bash/common.sh >/dev/null && echo "$CHROMBPNET_REV"')
+# the pinned SHA, read from lib/bash/common.sh (run from this checkout; no python
+# needed, which a fresh cluster login may not have)
+export CHROMBPNET_REV=$(sed -n 's/^CHROMBPNET_REV="${CHROMBPNET_REV:-\([0-9a-f]\{40\}\)}"$/\1/p' lib/bash/common.sh)
 git clone https://github.com/NNFC-GMD/chrombpnet "$CHROMBPNET_REPO"
 (cd "$CHROMBPNET_REPO" && git checkout --detach "$CHROMBPNET_REV")
 CONDA_OVERRIDE_CUDA=13.0 pixi install --locked \
