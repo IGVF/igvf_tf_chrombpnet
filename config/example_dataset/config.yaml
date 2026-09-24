@@ -143,7 +143,7 @@ bias_suffixes_sweep: ["_05", "_06", "_07", "_08"]
 # Cap the full-model training (04.0) for a pipeline TEST. Unset = chrombpnet's
 # default of 50 epochs with early stopping, which takes hours. A capped model
 # is written where the real one would be (04.1/04.3 read it there), and the
-# run records max_epochs; retrain with --force for a real model.
+# run records max_epochs; retrain with RETRAIN=1 for a real model.
 # FULL_MODEL_EPOCHS in the environment overrides this.
 # full_model_epochs: 2
 

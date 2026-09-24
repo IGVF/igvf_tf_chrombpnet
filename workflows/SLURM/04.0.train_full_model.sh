@@ -135,7 +135,9 @@ metadata_params+=( "fold=${fold}" "bias_suffix=${suffix}" )
 # FULL_MODEL_EPOCHS (environment, which wins) passes -e. The model lands in
 # the SAME directory -- 04.1 and 04.3 look for it there, and exercising them
 # is the point of a capped run -- so the cap is recorded as max_epochs, and a
-# real training afterwards needs a forced rerun (run_step.sh --force).
+# real training afterwards needs RETRAIN=1 (below). run_step.sh --force is not
+# enough: it only bypasses molab's step_done check, and this step's own skip
+# rule would still keep the capped model.
 #
 # What a capped run keeps: chrombpnet 2.x's Keras 3 EarlyStopping restores
 # the weights of the best epoch even when training runs all -e epochs without
@@ -148,6 +150,7 @@ if [[ -n "${max_epochs}" ]]; then
     epoch_args=( -e "${max_epochs}" )
 fi
 metadata_params+=( "max_epochs=${max_epochs:-50}" )
+metadata_params+=( "retrain=${RETRAIN:-0}" )
 
 
 gpu_env
@@ -174,8 +177,10 @@ for dataset in "${datasets[@]}"; do
     metadata_outputs+=( "footprints=${out_dir}/evaluation/chrombpnet_nobias_max_bias_response.txt" )
     metadata_outputs+=( "footprints=${eval_marker}" )
 
-    if [[ -f "${model_file}" && -f "${eval_marker}" ]]; then
-        echo "  [${dataset} fold ${fold}] Already done, skipping."
+    # RETRAIN=1 retrains over a finished model: the way to replace a capped
+    # test model (above) with a real one. The rm -rf below clears it first.
+    if [[ "${RETRAIN:-0}" != "1" && -f "${model_file}" && -f "${eval_marker}" ]]; then
+        echo "  [${dataset} fold ${fold}] Already done, skipping (RETRAIN=1 to retrain)."
         continue
     fi
 
