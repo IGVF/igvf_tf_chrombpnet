@@ -51,19 +51,20 @@
 
 set -uo pipefail
 
+# A step's Python must come from its own environment, never from the shell
+# that launched it. marimo's kernel -- and every terminal or subprocess it
+# starts -- exports PYTHONPATH=/tmp/uv-venv/lib/python3.13/site-packages, and
+# a python that honours it prefers the notebook's packages over its own lock.
+# activate_env drops these too; dropping them here, before env.sh, also covers
+# what runs before it (env.sh's config lookups, config.sh's bootstrap python,
+# the metadata trap).
+unset PYTHONPATH PYTHONHOME PYTHONSAFEPATH VIRTUAL_ENV
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=workflows/molab/env.sh
 source "${SCRIPT_DIR}/env.sh"
 
 STEPS_DIR="${REPO_ROOT}/workflows/SLURM"
-
-# A step's Python must come from its own environment, never from the shell
-# that launched it. marimo's kernel -- and every terminal or subprocess it
-# starts -- exports PYTHONPATH=/tmp/uv-venv/lib/python3.13/site-packages, and
-# a python that honours it prefers the notebook's packages over its own lock.
-# activate_env drops these too; dropping them here also covers what a step
-# runs before it (config.sh's bootstrap python, the metadata trap).
-unset PYTHONPATH PYTHONHOME PYTHONSAFEPATH VIRTUAL_ENV
 
 usage() { sed -n '2,50p' "$0"; exit "${1:-0}"; }
 

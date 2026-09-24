@@ -134,7 +134,7 @@ export LOG_LEVEL="${LOG_LEVEL:-INFO}"
 # printing nothing, when the config does not resolve.
 molab_config() {
     # shellcheck disable=SC2016  # expanded by the child bash, after config.sh
-    bash -c 'source "$1/lib/bash/config.sh" >/dev/null 2>&1 || exit 1; shift
+    bash -c 'REPO_ROOT="$1"; source "$1/lib/bash/config.sh" >/dev/null 2>&1 || exit 1; shift
              for _e in "$@"; do eval "printf \"%s\\n\" \"${_e}\""; done' _ "${REPO_ROOT}" "$@"
 }
 

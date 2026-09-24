@@ -52,6 +52,12 @@
 
 set -euo pipefail
 
+# Nothing from the notebook's shell may reach env.sh's config lookups, the
+# installs or the checks below: its PYTHONPATH/venv would leak packages into
+# every environment's python, and a CUDA on LD_LIBRARY_PATH would shadow JAX's
+# own CUDA wheels. (activate_env drops the same variables for every step.)
+unset PYTHONPATH PYTHONHOME PYTHONSAFEPATH VIRTUAL_ENV LD_LIBRARY_PATH
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=workflows/molab/env.sh
 source "${SCRIPT_DIR}/env.sh"
@@ -85,11 +91,6 @@ log "setup_molab.sh started (log: ${MOLAB_SETUP_LOG})"
 [[ -n "${GCP_BUCKET:-}" ]]  || { echo "ERROR: GCP_BUCKET is not set (see workflows/molab/.env.example)" >&2; exit 1; }
 [[ -n "${GCP_SA_JSON:-}" ]] || { echo "ERROR: GCP_SA_JSON is not set (see workflows/molab/.env.example)" >&2; exit 1; }
 
-# Nothing from the notebook's shell may reach the installs or the checks
-# below: its PYTHONPATH/venv would leak packages into every environment's
-# python, and a CUDA on LD_LIBRARY_PATH would shadow JAX's own CUDA wheels.
-# (activate_env drops the same variables for every step.)
-unset PYTHONPATH PYTHONHOME PYTHONSAFEPATH VIRTUAL_ENV LD_LIBRARY_PATH
 # The CUDA environments declare a __cuda virtual package. The override lets
 # them install and run even when the session came back without its GPU;
 # gpu-check below is what says whether the GPU actually works.
@@ -99,7 +100,7 @@ export CONDA_OVERRIDE_CUDA="${CONDA_OVERRIDE_CUDA:-13.0}"
 # .env). Read it from there rather than repeat the SHA; a child bash, so
 # nothing else common.sh sets leaks into this script.
 # shellcheck disable=SC2016  # expanded by the child bash
-CHROMBPNET_REV="$(bash -c 'source "$1/lib/bash/common.sh" >/dev/null 2>&1; printf "%s" "${CHROMBPNET_REV:-}"' _ "${REPO_ROOT}")"
+CHROMBPNET_REV="$(bash -c 'REPO_ROOT="$1"; source "$1/lib/bash/common.sh" >/dev/null 2>&1; printf "%s" "${CHROMBPNET_REV:-}"' _ "${REPO_ROOT}")"
 [[ "${CHROMBPNET_REV}" =~ ^[0-9a-f]{40}$ ]] \
     || { echo "ERROR: could not read a full CHROMBPNET_REV from lib/bash/common.sh (got '${CHROMBPNET_REV}')" >&2; exit 1; }
 
