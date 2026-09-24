@@ -6,6 +6,9 @@
 # No DATASET selection needed: it discovers the configs under config/ (plus
 # DATASET_CONFIG when set), resolves each one's results through config.sh, and
 # combines whichever have 04.1 output.
+# CPU only and small: src/qc_full_model.py --combined reads the model_metrics.tsv
+# tables and needs only pandas, numpy, matplotlib and scipy, which the
+# chrombpnet env it activates provides.
 
 #SBATCH --job-name=model_qc_combined
 #SBATCH --mem=8G
