@@ -27,6 +27,39 @@
 #   already been run in the 1.x results tree; a chrombpnet 2.x results tree
 #   starts empty.)
 #
+# Settings: TF-MoDISco 2.5.2 (the `modisco` package, tfmodisco-lite) from the
+#   chrombpnet 2.x environment, with chrombpnet 1.x's pattern settings passed
+#   explicitly: `-l 2 -z 20 -f 5 -t 20 -g 5 -j 0`. modisco-lite 2.0.7, which
+#   1.x ran, fixed seqlet core 20 / flank 5 / final flank 0 and used trim 20 /
+#   initial flank 5; 2.5.2 defaults to -t 30 -g 10, which makes every pattern
+#   50 bp wide. These are the values chrombpnet 2.x's own
+#   evaluation/modisco/run.py passes. -n 500000 -w 500 is this step's full
+#   seqlet budget (the per-fold QC in 03.3/04.5 uses 5000).
+#
+# Report: `modisco report-simple` writes {head}_report/motifs.html with
+#   trimmed_logos/ and the matched motifs' logos -- the report 2.0.7's
+#   `modisco report` wrote; 2.5.2's `modisco report` is a different,
+#   descriptive one. Matches come from MEME's `tomtom` (q-values), which
+#   chrombpnet's linux pixi environments ship; the step checks for it up front
+#   because it is only needed after days of `modisco motifs`. No -s:
+#   report-simple pastes it straight in front of each match-logo file name, so
+#   an absolute path without a trailing slash breaks those links, while the
+#   default ./ keeps every link relative to motifs.html.
+#
+# Threads: numba (modisco, memelite) sizes its thread pool to the cores the
+#   kernel reports -- the host's, not the allocation's -- so NUMBA_NUM_THREADS,
+#   OMP_NUM_THREADS, MKL_NUM_THREADS and OPENBLAS_NUM_THREADS are pinned to
+#   SLURM_CPUS_PER_TASK. memelite compiles with numba's on-disk cache, which
+#   needs a writable directory: NUMBA_CACHE_DIR, default ${log_dir}/numba_cache.
+#
+# Skip rule, per head: `modisco motifs` is skipped when
+#   modisco_{head}_results.h5 exists, and the report when {head}_report/
+#   motifs.html does. The two heads run back to back and the 4-day --time was
+#   set when this ran one, so a job that times out during profile resumes
+#   there when resubmitted. modisco writes its h5 in place at the very end, so
+#   a job killed in that moment leaves a truncated h5 that the report then
+#   fails on: delete it to redo that head. Delete any output to redo it.
+#
 # Partition/GPU/QOS: modisco motifs (tfmodisco-lite) is CPU-only, so this
 # runs on the engreitz partition (no GPU request) with --qos=high_p. The
 # default QOS on any partition caps walltime at 2 days for this account
@@ -37,14 +70,16 @@
 # Input:  ${averaged_dir}/{dataset}/{dataset}_average_shaps.{counts,profile}.h5  (06.0)
 # Output: ${averaged_dir}/{dataset}/modisco/
 #             modisco_{counts,profile}_results.h5
-#             {counts,profile}_report/
+#             {counts,profile}_report/motifs.html  (+ trimmed_logos/, match logos)
 #
 # Usage:
 #   export DATASET=<name>        # or DATASET_CONFIG=/path/to/config.yaml
 #   sbatch 08.0.run_modisco.sh              # dataset 0 (the default --array=0)
 #   sbatch --array=1 08.0.run_modisco.sh    # dataset 1 of ${datasets[@]}
 #
-# Prerequisites: 06.0.average_contrib_scores.sh must have completed.
+# Prerequisites: 06.0.average_contrib_scores.sh must have completed; the
+#   chrombpnet 2.x environment (CHROMBPNET_REPO, see lib/bash/common.sh) with
+#   MEME's tomtom; the MotifCompendium database (cli.py download-references).
 
 # --- bootstrap: locate the repo root (identical block in every workflow step) --
 # sbatch copies the submitted script to a node-local spool dir, so BASH_SOURCE
@@ -77,11 +112,20 @@ dataset="${datasets[${SLURM_ARRAY_TASK_ID}]}"
 
 score_types=("counts" "profile")  # see the header
 
+# TF-MoDISco settings -- see the header. The pattern flags reproduce what
+# chrombpnet 1.x's modisco-lite 2.0.7 did; 2.5.2's defaults differ.
+modisco_max_seqlets=500000
+modisco_window=500
+modisco_pattern_args=( -l 2 -z 20 -f 5 -t 20 -g 5 -j 0 )
+modisco_dir="${averaged_dir}/${dataset}/modisco"
+
 metadata_start "08.0.run_modisco"
-metadata_params+=( "dataset=${dataset}" )
+metadata_params+=( "dataset=${dataset}" "max_seqlets=${modisco_max_seqlets}" "window=${modisco_window}" )
+metadata_params+=( "pattern_args=${modisco_pattern_args[*]}" "threads=${SLURM_CPUS_PER_TASK:-4}" )
 for score_type in "${score_types[@]}"; do
     metadata_inputs+=( "contributions=${averaged_dir}/${dataset}/${dataset}_average_shaps.${score_type}.h5" )
-    metadata_outputs+=( "motifs=${averaged_dir}/${dataset}/modisco/modisco_${score_type}_results.h5" )
+    metadata_outputs+=( "motifs=${modisco_dir}/modisco_${score_type}_results.h5" )
+    metadata_outputs+=( "motif_report=${modisco_dir}/${score_type}_report/motifs.html" )
     require_input "${averaged_dir}/${dataset}/${dataset}_average_shaps.${score_type}.h5" 06.0.average_contrib_scores.sh
 done
 metadata_inputs+=( "motif_db=${ref_db_meme}" )
@@ -90,26 +134,68 @@ preflight_check
 
 mkdir -p "${log_dir}"
 for score_type in "${score_types[@]}"; do
-    mkdir -p "${averaged_dir}/${dataset}/modisco/${score_type}_report"
+    mkdir -p "${modisco_dir}/${score_type}_report"
 done
 
 activate_env "${chrombpnet_env}"
 
+# report-simple shells out to MEME's tomtom; find out now, not after days of
+# `modisco motifs`.
+if ! command -v tomtom >/dev/null 2>&1; then
+    echo "ERROR: MEME's tomtom is not on PATH in ${chrombpnet_env}." >&2
+    echo "  modisco report-simple needs it to match patterns against ${ref_db_meme}." >&2
+    echo "  chrombpnet's linux pixi environments include MEME; a conda env needs 'meme' installed." >&2
+    exit 1
+fi
+
+# numba threads and cache -- see the header. Pinned, not defaulted: numba
+# would otherwise size its pool to the host's cores, not the allocation.
+_threads="${SLURM_CPUS_PER_TASK:-4}"
+export NUMBA_NUM_THREADS="${_threads}" OMP_NUM_THREADS="${_threads}"
+export MKL_NUM_THREADS="${_threads}" OPENBLAS_NUM_THREADS="${_threads}"
+NUMBA_CACHE_DIR="${NUMBA_CACHE_DIR:-${log_dir}/numba_cache}"
+mkdir -p "${NUMBA_CACHE_DIR}"
+export NUMBA_CACHE_DIR
+echo "[$(date)] modisco: ${_threads} numba threads, NUMBA_CACHE_DIR=${NUMBA_CACHE_DIR}"
+
 for score_type in "${score_types[@]}"; do
-    echo "[$(date)] Dataset ${dataset}: running MoDISco on averaged ${score_type} scores..."
+    scores_h5="${averaged_dir}/${dataset}/${dataset}_average_shaps.${score_type}.h5"
+    results_h5="${modisco_dir}/modisco_${score_type}_results.h5"
+    report_dir="${modisco_dir}/${score_type}_report"
 
-    modisco motifs \
-        -i "${averaged_dir}/${dataset}/${dataset}_average_shaps.${score_type}.h5" \
-        -n 500000 \
-        -o "${averaged_dir}/${dataset}/modisco/modisco_${score_type}_results.h5" \
-        -w 500 \
-        -v
+    if [[ -f "${results_h5}" ]]; then
+        echo "[$(date)] Dataset ${dataset}: ${results_h5} exists, skipping modisco motifs."
+    else
+        echo "[$(date)] Dataset ${dataset}: running MoDISco on averaged ${score_type} scores..."
+        modisco motifs \
+            -i "${scores_h5}" \
+            -n "${modisco_max_seqlets}" \
+            -o "${results_h5}" \
+            -w "${modisco_window}" \
+            "${modisco_pattern_args[@]}" \
+            -v
+        _rc=$?
+        # No `set -e` in this step: guard each call and its output explicitly.
+        if [[ ${_rc} -ne 0 || ! -f "${results_h5}" ]]; then
+            echo "ERROR: modisco motifs failed for ${dataset} ${score_type} (exit ${_rc}); ${results_h5} was not written." >&2
+            exit 1
+        fi
+    fi
 
-    modisco report \
-        -i "${averaged_dir}/${dataset}/modisco/modisco_${score_type}_results.h5" \
-        -o "${averaged_dir}/${dataset}/modisco/${score_type}_report" \
-        -s "${averaged_dir}/${dataset}/modisco/${score_type}_report" \
-        -m "${ref_db_meme}"
+    if [[ -f "${report_dir}/motifs.html" ]]; then
+        echo "[$(date)] Dataset ${dataset}: ${report_dir}/motifs.html exists, skipping the report."
+    else
+        modisco report-simple \
+            -i "${results_h5}" \
+            -o "${report_dir}/" \
+            -m "${ref_db_meme}"
+        _rc=$?
+        if [[ ${_rc} -ne 0 || ! -f "${report_dir}/motifs.html" ]]; then
+            echo "ERROR: modisco report-simple failed for ${dataset} ${score_type} (exit ${_rc}); ${report_dir}/motifs.html was not written." >&2
+            echo "  If modisco motifs was killed while saving, ${results_h5} is truncated: delete it and resubmit." >&2
+            exit 1
+        fi
+    fi
 
     echo "[$(date)] Dataset ${dataset}: ${score_type} MoDISco complete"
 done
