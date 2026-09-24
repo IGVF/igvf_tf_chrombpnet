@@ -42,7 +42,6 @@ from __future__ import annotations
 # %%
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -85,14 +84,23 @@ def load_metrics_json(path):
 def parse_bias_response(path):
     """Parse chrombpnet_nobias_max_bias_response.txt.
 
-    Example content:  corrected_0.001_0.001/0.001/0.001/0.001/0.001
-    Returns dict with keys tn5_1 ... tn5_5 (floats).
+    chrombpnet's marginal footprinting writes
+    ``<corrected|uncorrected>_<mean>_<v1>/<v2>/...`` -- one max response per
+    bias motif (five Tn5 motifs for ATAC), e.g.
+    ``corrected_0.001_0.001/0.002/0.001/0.001/0.0``. Split the way chrombpnet's
+    own report does (make_html.py: ``data.split("_")``). The old parser only
+    stripped a ``corrected_`` prefix, so tn5_1 was the mean, the last motif was
+    dropped, and an ``uncorrected_`` file shifted every value once more.
+    Returns tn5_1 ... tn5_N as floats.
     """
     text = path.read_text().strip()
-    text = re.sub(r"^corrected_", "", text)
-    parts = re.split(r"[_/]", text)
+    try:
+        _status, _mean, values = text.split("_", 2)
+    except ValueError:
+        logger.warning("unexpected max-bias-response format in %s: %r", path, text)
+        return {}
     responses = {}
-    for i, val in enumerate(parts[:5], start=1):
+    for i, val in enumerate(values.split("/"), start=1):
         try:
             responses[f"tn5_{i}"] = float(val)
         except ValueError:
