@@ -95,22 +95,35 @@ GENCODE_RELEASE = "43"
 GENCODE_ACCESSION = "IGVFFI9573KOZR"
 GENCODE_MD5 = "230008ce6a9bbc0320ac3b7d7e8fbf23"
 
+#: MotifCompendium's human reference database, which 08.0's modisco report and
+#: 09.0's annotation match against. Pinned to the commit of MotifCompendium
+#: v1.0.19, the version the motif-compendium environment installs, rather than
+#: to `main`: the file changed at v1.0.17 (v1.0.16's copy has md5
+#: aa2314af189c1cbddc543e5d5c09a4f8), so a floating URL meant two installs of
+#: "the same" pipeline could annotate against different databases. The local
+#: file name carries the version for the same reason chrombpnet's does below:
+#: an install made from `main` before the pin keeps its old unversioned name,
+#: so it is neither overwritten nor mistaken for the pinned file.
+MOTIF_DB_VERSION = "1.0.19"
 MOTIF_DB_URL = (
-    "https://raw.githubusercontent.com/kundajelab/MotifCompendium/main/"
+    "https://raw.githubusercontent.com/kundajelab/MotifCompendium/"
+    "7e9d1c2f932ea7f53fd36e174affef26eaf086c4/"
     "pipeline/data/MotifCompendium-Database-Human.meme.txt"
 )
+MOTIF_DB_MD5 = "b54441e0bfb9623345b6802763472d3c"
 
 #: chrombpnet's own motif database -- the one its TF-MoDISco report matches
 #: against. Unlike MotifCompendium it carries the assay-bias motifs (TN5_1..8,
 #: DNASE_*) next to the TF ones, which is what lets the per-fold motif QC
 #: (03.3/04.5, src/motif_qc.py) say how many seqlets are Tn5 at all:
 #: annotated against MotifCompendium, a bias model's Tn5 seqlets are forced
-#: onto their nearest TF motif. Pinned to the release tag and md5 of the
-#: chrombpnet the pipeline runs (1.0.1); the tag's file is byte-identical to
-#: the container's chrombpnet/data/motifs.meme.txt (checked 2026-09-23).
+#: onto their nearest TF motif. Fetched from the 1.0.1 release tag, which
+#: cannot move, and pinned by md5. The file has not changed since: it is
+#: byte-identical to chrombpnet/data/motifs.meme.txt as packaged by the
+#: chrombpnet 2.x the pipeline runs (NNFC-GMD/chrombpnet at 7dfb285; compared
+#: with cmp, 2026-09-24).
 CHROMBPNET_MOTIFS_URL = (
-    "https://raw.githubusercontent.com/kundajelab/chrombpnet/v1.0.1/"
-    "chrombpnet/data/motifs.meme.txt"
+    "https://raw.githubusercontent.com/kundajelab/chrombpnet/v1.0.1/chrombpnet/data/motifs.meme.txt"
 )
 CHROMBPNET_MOTIFS_MD5 = "30d5f17c169eb2ea0588c7546acfbf4d"
 
@@ -188,8 +201,11 @@ def layout(reference_root=None) -> dict:
         "chrombpnet_input_window": CHROMBPNET_INPUT_WINDOW,
         "blacklist_slop_bp": slop,
         "blacklist_slop": str(blacklist_dir / "blacklist_slop.bed.gz"),
-        "ref_db_meme": str(motif_dir / "MotifCompendium-Database-Human.meme.txt"),
+        "ref_db_meme": str(
+            motif_dir / f"MotifCompendium-{MOTIF_DB_VERSION}-Database-Human.meme.txt"
+        ),
         "ref_db_meme_url": MOTIF_DB_URL,
+        "ref_db_meme_md5": MOTIF_DB_MD5,
         "chrombpnet_motifs_meme": str(motif_dir / "chrombpnet-1.0.1.motifs.meme.txt"),
         "chrombpnet_motifs_url": CHROMBPNET_MOTIFS_URL,
         "chrombpnet_motifs_md5": CHROMBPNET_MOTIFS_MD5,
@@ -310,6 +326,17 @@ def _relative_symlink(target, link, log=print) -> None:
     link.symlink_to(Path(target).name)
 
 
+def _check_pinned_md5(path, pinned: str, what: str) -> None:
+    """Raise unless ``path`` has the md5 this module pins for it."""
+    actual = _md5(path)
+    if actual != pinned:
+        raise RuntimeError(
+            f"{what} md5 {actual} does not match the pinned {pinned} ({path}). "
+            "If it is an old or damaged copy, remove it and re-run "
+            "`cli.py download-references` to fetch the pinned file."
+        )
+
+
 def _verify(path, pinned: str, metadata_url: str, what: str, log=print) -> None:
     """Check a download against the pinned md5, and against the portal's.
 
@@ -318,9 +345,8 @@ def _verify(path, pinned: str, metadata_url: str, what: str, log=print) -> None:
     different md5 the file has been revised upstream, and silently accepting
     that would mean two people running "the same" pipeline on different data.
     """
-    actual = _md5(path)
-    if pinned and actual != pinned:
-        raise RuntimeError(f"{what} md5 {actual} does not match the pinned {pinned} ({path})")
+    if pinned:
+        _check_pinned_md5(path, pinned, what)
     published = published_md5(metadata_url)
     if published is None:
         log(f"  {what} md5 matches the pinned value (portal unreachable)")
@@ -332,6 +358,25 @@ def _verify(path, pinned: str, metadata_url: str, what: str, log=print) -> None:
         )
     else:
         log(f"  {what} md5 verified (pinned and portal agree)")
+
+
+def _fetch_pinned(url: str, dest, pinned: str, what: str, log=print) -> Path:
+    """Download ``url`` to ``dest`` unless it is present, then check its md5.
+
+    For files with no metadata API behind them (the GitHub-hosted motif
+    databases), so the pinned md5 is the whole check. A file that is already
+    present is checked as well: a copy fetched before the pin, or a damaged
+    one, then fails here, once, rather than in whichever step reads it.
+    """
+    dest = Path(dest)
+    if dest.is_file() and dest.stat().st_size:
+        log(f"  {what} present")
+    else:
+        log(f"  downloading {what}")
+        download(url, dest, log=log)
+    _check_pinned_md5(dest, pinned, what)
+    log(f"  {what} md5 verified (pinned)")
+    return dest
 
 
 def fetch_all(reference_root=None, log=print) -> dict:
@@ -419,24 +464,21 @@ def fetch_all(reference_root=None, log=print) -> dict:
         download(ref["blacklist_url"], raw, log=log)
     _relative_symlink(raw, ref["blacklist"])
 
-    # 4. motif database
-    meme = Path(ref["ref_db_meme"])
-    if meme.is_file() and meme.stat().st_size:
-        log("  MotifCompendium DB present")
-    else:
-        log("  downloading MotifCompendium reference DB")
-        download(ref["ref_db_meme_url"], meme, log=log)
-    cbp = Path(ref["chrombpnet_motifs_meme"])
-    if cbp.is_file() and cbp.stat().st_size:
-        log("  chrombpnet motif DB present")
-    else:
-        log("  downloading chrombpnet's motif DB (Tn5/DNase bias + TF motifs)")
-        download(ref["chrombpnet_motifs_url"], cbp, log=log)
-    if _md5(cbp) != ref["chrombpnet_motifs_md5"]:
-        raise RuntimeError(
-            f"chrombpnet motif DB md5 {_md5(cbp)} does not match the pinned "
-            f"{ref['chrombpnet_motifs_md5']} ({cbp})"
-        )
+    # 4. motif databases
+    _fetch_pinned(
+        ref["ref_db_meme_url"],
+        ref["ref_db_meme"],
+        ref["ref_db_meme_md5"],
+        f"MotifCompendium {MOTIF_DB_VERSION} reference DB",
+        log,
+    )
+    _fetch_pinned(
+        ref["chrombpnet_motifs_url"],
+        ref["chrombpnet_motifs_meme"],
+        ref["chrombpnet_motifs_md5"],
+        "chrombpnet motif DB (Tn5/DNase bias + TF motifs)",
+        log,
+    )
 
     # 5. TSS list for QC, derived from the GENCODE annotation
     tss = Path(ref["tss_bed"])
