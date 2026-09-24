@@ -16,14 +16,19 @@
 #            igvf11_h7_hesc, igvf_endothelial (d3 iPSC-EC)
 #
 # This script does NOT require DATASET_DIR; it operates at the collaboration
-# root and hardcodes the four per-dataset MoDISco H5 paths.
+# root and hardcodes the four per-dataset MoDISco H5 paths. Those resolve under
+# ${data_root} (DATASET_ROOT, default REPO_ROOT), the root a dataset config's
+# output_dir sits under (config/igvf3_cardiomyocyte/config.yaml:
+# ${DATASET_ROOT}/igvf3_cardiomyocyte/results). The compendium itself is
+# still written under REPO_ROOT, where 10.0 reads it.
 #
 # CPU only, in ${motif_compendium_env} (this repo's motif-compendium pixi
 # environment, MotifCompendium v1.0.19). Clustering is cpm_leiden at
 # ${motif_compendium_threshold}, passed to src/motif_compendium.py explicitly:
 # v1.0.19's default appends a k-centroids pass that ignores the threshold.
 #
-# Input:  Per-dataset fold-averaged MoDISco H5s (step 08 for each dataset)
+# Input:  Per-dataset fold-averaged MoDISco H5s (step 08 for each dataset),
+#           ${data_root}/<dataset>/results/contrib_scores/.../modisco_counts_results.h5
 #         ${ref_db_meme} (from `cli.py download-references`)
 # Output (inside ${REPO_ROOT}/results/compendium/modisco_compiled/):
 #   modisco_compiled.h5         - clustered motifs for FiNeMo (cross-dataset)
@@ -64,7 +69,7 @@ export REPO_ROOT
 # --- end bootstrap -------------------------------------------------------------
 
 # Cross-dataset step: no DATASET_DIR, so source common.sh directly rather than
-# config.sh. It provides motif_compendium_env, ref_db_meme and
+# config.sh. It provides motif_compendium_env, ref_db_meme, data_root and
 # motif_compendium_threshold.
 # shellcheck source=lib/bash/common.sh
 source "${REPO_ROOT}/lib/bash/common.sh" || exit 1
@@ -81,12 +86,15 @@ mkdir -p "${out_dir}" "${log_dir}"
 # motif_compendium_threshold in common.sh take over.
 motif_compendium_algorithm="${motif_compendium_algorithm:-cpm_leiden}"
 
-# Per-dataset MoDISco H5 paths
+# Per-dataset MoDISco H5 paths, under the dataset data root. igvf_endothelial's
+# lacks the <dataset>/ level the other three have. Leave it unless the cluster
+# layout says otherwise: a wrong path only [WARN]s and drops the dataset (see
+# CLAUDE.md, "The endothelial dataset is named two ways").
 declare -A h5_map=(
-    [igvf3_cardiomyocyte]="${REPO_ROOT}/igvf3_cardiomyocyte/results/contrib_scores/igvf3_cardiomyocyte/modisco/modisco_counts_results.h5"
-    [igvf6_definitive_endoderm]="${REPO_ROOT}/igvf6_definitive_endoderm/results/contrib_scores/igvf6_definitive_endoderm/modisco/modisco_counts_results.h5"
-    [igvf11_h7_hesc]="${REPO_ROOT}/igvf11_h7_hesc/results/contrib_scores/igvf11_h7_hesc/modisco/modisco_counts_results.h5"
-    [igvf_endothelial]="${REPO_ROOT}/igvf_endothelial/results/contrib_scores/modisco/modisco_counts_results.h5"
+    [igvf3_cardiomyocyte]="${data_root}/igvf3_cardiomyocyte/results/contrib_scores/igvf3_cardiomyocyte/modisco/modisco_counts_results.h5"
+    [igvf6_definitive_endoderm]="${data_root}/igvf6_definitive_endoderm/results/contrib_scores/igvf6_definitive_endoderm/modisco/modisco_counts_results.h5"
+    [igvf11_h7_hesc]="${data_root}/igvf11_h7_hesc/results/contrib_scores/igvf11_h7_hesc/modisco/modisco_counts_results.h5"
+    [igvf_endothelial]="${data_root}/igvf_endothelial/results/contrib_scores/modisco/modisco_counts_results.h5"
 )
 
 # Build config TSV
