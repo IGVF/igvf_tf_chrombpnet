@@ -135,9 +135,11 @@ metadata_params+=( "fold=${fold}" "bias_suffix=${suffix}" )
 # FULL_MODEL_EPOCHS (environment, which wins) passes -e. The model lands in
 # the SAME directory -- 04.1 and 04.3 look for it there, and exercising them
 # is the point of a capped run -- so the cap is recorded as max_epochs, and a
-# real training afterwards needs RETRAIN=1 (below). run_step.sh --force is not
-# enough: it only bypasses molab's step_done check, and this step's own skip
-# rule would still keep the capped model.
+# real training afterwards needs RETRAIN=1 (below). On molab it needs both:
+# `RETRAIN=1 run_step.sh --force ... 04.0.train_full_model.sh`. --force alone
+# only bypasses step_done (this step's own skip rule keeps the capped model),
+# and RETRAIN alone never runs, because step_done finds the capped run's record
+# and its outputs, restored from the bucket byte for byte, and skips the step.
 #
 # What a capped run keeps: chrombpnet 2.x's Keras 3 EarlyStopping restores
 # the weights of the best epoch even when training runs all -e epochs without

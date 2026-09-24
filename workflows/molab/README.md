@@ -165,8 +165,10 @@ inert off SLURM.
   uploads with `sync_to_gcs.sh`. A killed run leaves outputs but no record, so
   it is rerun, not trusted. `--force` reruns anyway: a record cannot tell that
   the config changed. It only skips this check, though: each step's own
-  file-exists rules still apply, so finished work is not redone (04.0 takes
-  `RETRAIN=1` to retrain over a finished model). `--no-bucket` skips the restore and the uploads.
+  file-exists rules still apply, so finished work is not redone. 04.0 retrains
+  over a finished model with `RETRAIN=1 bash workflows/molab/run_step.sh --force
+  --array <folds> 04.0.train_full_model.sh` -- both: without --force, step_done
+  skips the step before it reads RETRAIN. `--no-bucket` skips the restore and the uploads.
 - **`step_done.py`** — that check, stdlib only (it runs on the bare `python3`).
   `step_done.py <metadata_dir> <step> <index>` exits 0 and prints the record
   when the step is done, 1 with the reason otherwise.
