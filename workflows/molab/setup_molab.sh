@@ -1,66 +1,52 @@
 #!/bin/bash
 # setup_molab.sh
 # Purpose: Prepare a molab (marimo cloud) box to run this pipeline end to end.
-#   Updates apt, installs Apptainer and its userspace dependencies, fetches the
-#   chrombpnet container from the private molab bucket and unpacks it, bakes
-#   the low-memory one-hot encoder into it, deletes the image once the unpacked
-#   copy is verified, installs pixi's `qc` environment, and downloads the d0
-#   test data and the shared references. Idempotent: everything already
-#   present is verified and skipped.
+#   Installs the few system tools it needs (git, curl, openssl), a pinned pixi,
+#   the chrombpnet 2.x checkout at the pinned commit with its pixi environment,
+#   and this repo's pixi environments; checks the chrombpnet tools and the GPU;
+#   then downloads the d0 test data and the shared references. Idempotent:
+#   everything already present is checked and skipped, so re-run it after
+#   every new session.
 #
-# Why a container at all: the cluster runs chrombpnet from `envs/chrombpnet.yml`,
-# which pins tensorflow 2.8 / numpy 1.23 against CUDA 11 wheels. Those wheels do
-# not exist for this hardware, so molab uses a prebuilt image instead (built
-# from gs://${GCP_BUCKET}/chrombpnet/build_files/chrombpnet.Dockerfile). pixi's
-# `qc` environment stands in for `envs/preprocess.yml` (it is a superset:
-# python >= 3.12, pyranges1, pybigtools, pysam, pyfaidx, bedtools).
+# Why pixi and nothing else: chrombpnet 2.x (Keras 3 on JAX) brings its CUDA
+# libraries as pip wheels inside its own environment, so the box needs no
+# system CUDA, no conda and no container -- only an NVIDIA driver new enough
+# for the wheels (>= 580 for cuda13). Every environment is installed with
+# --locked, from a lock file: chrombpnet's own pixi.lock, the one the port was
+# validated with, and this repo's pixi.lock for preprocess / qc / finemo /
+# motif-compendium. A lock file that no longer matches its manifest stops the
+# install instead of being re-solved on the box.
 #
-# Why the container is UNPACKED to a directory rather than run as a .sif: molab
-# runs under gVisor, which has no loop devices and no kernel squashfs, and
-# fuse-overlayfs fails there ("cannot read lower dirs: Function not
-# implemented"). Apptainer therefore cannot mount a .sif at all. Unsquashing it
-# to a plain directory sidesteps every one of those: Apptainer execs the
-# directory using underlay bind mounts only. `unsquashfs` exits 2 because it
-# cannot mknod device nodes under gVisor; that is harmless and expected, but it
-# makes `apptainer build --sandbox` delete its own output, which is why this
-# script calls unsquashfs directly.
+# Why a separate chrombpnet checkout (${CHROMBPNET_REPO}, default
+# /marimo/chrombpnet-igvf): setup moves its HEAD to CHROMBPNET_REV, the commit
+# lib/bash/common.sh pins, with `git checkout --detach`. It refuses to do that
+# to a checkout that is on a branch or has local changes, so it cannot move a
+# development checkout (such as /marimo/chrombpnet) by accident.
 #
-# Why the .sif is DELETED as soon as it is unpacked: the box reports no disk
-# quota (`df` says 8.0E), so nothing here can see how close it is to a real
-# one, and the image is dead weight once unpacked. Its md5 is checked against
-# the bucket and its entry count taken BEFORE extraction, so nothing reads it
-# after unsquashfs returns; a failed count means re-downloading, which is what
-# gcs_fetch's resume path is for. Peak: ~24 GB at the end of the unpack (image
-# + sandbox), ~16 GB from then on. Two markers under `.igvf_molab/`:
-# `unpacked` (sandbox matches the image) and `complete` (encoder verified), so
-# a rerun never touches the image again and a failed bake re-bakes only.
+# Why pixi is pinned: a box image may ship no pixi, or an older one than the
+# lock files were written with. setup then puts pixi ${PIXI_VERSION} in
+# ${MOLAB_SCRATCH}/bin, which env.sh puts first on PATH -- under /marimo, so a
+# new session keeps it, as it keeps the package caches beside it.
 #
-# Why output goes to ${MOLAB_SETUP_LOG} and unsquashfs runs -no-progress: runs
-# from marimo's web terminal repeatedly killed the whole session during the
-# unpack, while the same script with output going to a file got through the
-# same 24 GB peak. The cause is not proven, but the ~400k progress-bar redraws
-# are the obvious difference, and if a session dies anyway the log in /marimo
-# shows how far it got. Each line carries the space used on /: the memory
-# figures gVisor exposes stay flat while files are written, so that is the
-# only counter that moves.
+# Why the GPU check only warns: steps 00.0-02.0 need no GPU, and a recreated
+# molab session can come back without one (no /dev/nvidia*, JAX quietly on the
+# CPU). Saying so here, loudly, beats a GPU step finding out hours in.
 #
-# Why the one-hot encoder is baked in here but monkey-patched on the cluster:
-# the cluster runs the stock .sif, so `src/chrombpnet_train.py` calls
-# `utils.onehot.install()` at runtime. The sandbox is ours to edit, so here
-# `lib/python/utils/onehot.py` is copied into chrombpnet's package and rebinds
-# `one_hot.dna_to_one_hot` -- which reaches every entry point (interpretation,
-# bigwig helpers), not only training. The stock file is kept as
-# `one_hot.py.upstream`, the patch is re-applied from it on every run so edits
-# to onehot.py propagate, and it is checked byte-for-byte against upstream
-# inside the container before anything is deleted.
+# Why output goes to ${MOLAB_SETUP_LOG}: a session can end mid-setup, and the
+# log in /marimo then shows how far it got. Each line carries the space used
+# on /, because the box shows no disk quota (df reports 8.0E) and that is the
+# only disk counter that moves.
 #
 # Input:  none (everything is fetched)
-# Output: ${MOLAB_SANDBOX}, the pixi `qc` env, ${MOLAB_DATA_DIR}, ${REFERENCE_ROOT}
+# Output: pixi in ${MOLAB_SCRATCH}/bin (when needed), caches under
+#         ${MOLAB_SCRATCH}/cache, ${CHROMBPNET_REPO} and its .pixi/envs/,
+#         this repo's .pixi/envs/, ${MOLAB_DATA_DIR}, ${REFERENCE_ROOT}
 # Usage:  bash workflows/molab/setup_molab.sh
 #         bash workflows/molab/setup_molab.sh --skip-references
+# Exit:   0 ready (a missing GPU is a warning only); 1 something failed to
+#         install, or the chrombpnet tool check failed.
 # Prerequisites: root (for apt), outbound HTTPS, and GCP_BUCKET + GCP_SA_JSON
-#   (the service-account key as inline JSON) in the .env env.sh sources. Disk:
-#   ~24 GB at the end of the unpack (image + sandbox), ~17 GB after it.
+#   (the service-account key as inline JSON) in the .env env.sh sources.
 
 # shellcheck disable=SC2218  # 0.11.0 false positive (see CLAUDE.md): log() is defined before use
 
@@ -70,15 +56,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=workflows/molab/env.sh
 source "${SCRIPT_DIR}/env.sh"
 
-SIF_OBJECT="chrombpnet/containers/chrombpnet.sif"
 TEST_DATA_PREFIX="chrombpnet/test_data_d0/"
 MOLAB_DATA_DIR="${MOLAB_DATA_DIR:-/marimo/data/test_data_d0}"
-APPTAINER_VERSION="1.5.3"
+PIXI_VERSION="${PIXI_VERSION:-0.81.0}"
+CHROMBPNET_URL="${CHROMBPNET_URL:-https://github.com/NNFC-GMD/chrombpnet}"
+# This repo's environments (pixi.toml). finemo-cu126 is left out: pixi.toml
+# keeps it for drivers below 580, and its torch cannot drive Blackwell.
+LOCAL_ENVS=( preprocess qc finemo motif-compendium )
 APT=(env DEBIAN_FRONTEND=noninteractive apt-get -y -qq
      -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
 
 SKIP_REFERENCES=0
-[[ "${1:-}" == "--skip-references" ]] && SKIP_REFERENCES=1
+for a in "$@"; do
+    case "$a" in
+        --skip-references) SKIP_REFERENCES=1 ;;
+        -h|--help) sed -n '2,49p' "$0"; exit 0 ;;
+        *) echo "ERROR: unknown option $a" >&2; exit 1 ;;
+    esac
+done
 
 MOLAB_SETUP_LOG="${MOLAB_SETUP_LOG:-/marimo/setup_molab.log}"
 mkdir -p "$(dirname "${MOLAB_SETUP_LOG}")"
@@ -90,188 +85,192 @@ log "setup_molab.sh started (log: ${MOLAB_SETUP_LOG})"
 [[ -n "${GCP_BUCKET:-}" ]]  || { echo "ERROR: GCP_BUCKET is not set (see workflows/molab/.env.example)" >&2; exit 1; }
 [[ -n "${GCP_SA_JSON:-}" ]] || { echo "ERROR: GCP_SA_JSON is not set (see workflows/molab/.env.example)" >&2; exit 1; }
 
+# Nothing from the notebook's shell may reach the installs or the checks
+# below: its PYTHONPATH/venv would leak packages into every environment's
+# python, and a CUDA on LD_LIBRARY_PATH would shadow JAX's own CUDA wheels.
+# (activate_env drops the same variables for every step.)
+unset PYTHONPATH PYTHONHOME PYTHONSAFEPATH VIRTUAL_ENV LD_LIBRARY_PATH
+# The CUDA environments declare a __cuda virtual package. The override lets
+# them install and run even when the session came back without its GPU;
+# gpu-check below is what says whether the GPU actually works.
+export CONDA_OVERRIDE_CUDA="${CONDA_OVERRIDE_CUDA:-13.0}"
+
+# CHROMBPNET_REV is defined once, in lib/bash/common.sh (or overridden from the
+# .env). Read it from there rather than repeat the SHA; a child bash, so
+# nothing else common.sh sets leaks into this script.
+# shellcheck disable=SC2016  # expanded by the child bash
+CHROMBPNET_REV="$(bash -c 'source "$1/lib/bash/common.sh" >/dev/null 2>&1; printf "%s" "${CHROMBPNET_REV:-}"' _ "${REPO_ROOT}")"
+[[ "${CHROMBPNET_REV}" =~ ^[0-9a-f]{40}$ ]] \
+    || { echo "ERROR: could not read a full CHROMBPNET_REV from lib/bash/common.sh (got '${CHROMBPNET_REV}')" >&2; exit 1; }
+
 # ── 0. apt ────────────────────────────────────────────────────────────────────
-# The image ships with empty package lists, so every install below fails
-# without this. No `upgrade`: nothing here needs newer packages, and on a box
-# whose every written byte counts against a hidden limit it is pure cost.
-log "apt: update"
-"${APT[@]}" update
+# The image ships with empty package lists, so any install fails without an
+# update -- but a rerun that installs nothing does not need one. No `upgrade`:
+# nothing here needs newer packages, and on a box whose every written byte
+# counts against a hidden limit it is pure cost.
+apt_updated=0
+apt_install() {
+    if [[ "${apt_updated}" == "0" ]]; then
+        log "apt: update"
+        "${APT[@]}" update
+        apt_updated=1
+    fi
+    log "apt: install $*"
+    "${APT[@]}" install "$@" >/dev/null
+}
 
 # ── 1. locale ─────────────────────────────────────────────────────────────────
 # The image sets LC_ALL=en_US.UTF-8 but ships no generated locale, so every
 # bash invocation prints a setlocale warning that buries real output.
 if ! locale -a 2>/dev/null | grep -qi '^en_US\.utf-\?8$'; then
     log "generating en_US.UTF-8 locale"
-    "${APT[@]}" install locales >/dev/null
+    apt_install locales
     sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
     grep -q '^en_US.UTF-8' /etc/locale.gen || echo 'en_US.UTF-8 UTF-8' >> /etc/locale.gen
     locale-gen >/dev/null
     update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 fi
 
-# ── 2. Apptainer + userspace deps ────────────────────────────────────────────
-# squashfuse/fuse2fs/fuse-overlayfs are Apptainer's unprivileged mount helpers;
-# squashfs-tools provides the unsquashfs used below. Debian trixie has no
-# apptainer package, so take the upstream trixie build.
-if ! command -v apptainer >/dev/null 2>&1; then
-    log "installing apptainer ${APPTAINER_VERSION} and dependencies"
-    "${APT[@]}" install \
-        squashfs-tools squashfuse fuse2fs fuse3 uidmap fuse-overlayfs \
-        libseccomp2 cryptsetup-bin ca-certificates curl openssl >/dev/null
-    deb="$(mktemp -d)/apptainer.deb"
-    curl -fsSL -o "${deb}" \
-        "https://github.com/apptainer/apptainer/releases/download/v${APPTAINER_VERSION}/apptainer_${APPTAINER_VERSION}-trixie%2B_amd64.deb"
-    "${APT[@]}" install "${deb}" >/dev/null
-    rm -f "${deb}"
+# ── 2. system tools ───────────────────────────────────────────────────────────
+# curl + openssl + CA certificates for gcs.sh and the pixi download, git for
+# the chrombpnet checkout. Everything else comes from pixi environments.
+missing=()
+for tool in curl openssl git; do
+    command -v "${tool}" >/dev/null 2>&1 || missing+=( "${tool}" )
+done
+[[ -s /etc/ssl/certs/ca-certificates.crt ]] || missing+=( ca-certificates )
+if [[ ${#missing[@]} -gt 0 ]]; then
+    apt_install "${missing[@]}"
     "${APT[@]}" clean
 fi
-log "apptainer: $(apptainer --version)"
 
-# Overlay is unusable under gVisor; underlay (plain bind mounts) is not.
-if grep -q '^enable overlay = yes' /etc/apptainer/apptainer.conf 2>/dev/null; then
-    log "apptainer.conf: disabling overlay, enabling underlay (gVisor has no working overlayfs)"
-    cp /etc/apptainer/apptainer.conf /etc/apptainer/apptainer.conf.orig
-    sed -i 's/^enable overlay = .*/enable overlay = no/'  /etc/apptainer/apptainer.conf
-    sed -i 's/^enable underlay = .*/enable underlay = yes/' /etc/apptainer/apptainer.conf
-fi
-
-# ── 3. GCS access ────────────────────────────────────────────────────────────
+# ── 3. GCS access ─────────────────────────────────────────────────────────────
 # The bucket is private and there is no gcloud on the box; gcs.sh mints an
 # OAuth token from the service-account key with openssl (read-only here).
+# Checked now, so a bad key fails in seconds rather than after the installs.
 # shellcheck source=workflows/molab/gcs.sh
 source "${SCRIPT_DIR}/gcs.sh"
 GCS_TOKEN=$(gcs_token)
 log "authenticated to gs://${GCP_BUCKET} as $(sa_field client_email)"
 
-# ── 4. container: image -> sandbox ──────────────────────────────────────────
-# Two markers: `unpacked` once the sandbox matches the image (the image is
-# gone from then on), `complete` once the baked encoder has verified too. A
-# rerun after a failed bake therefore re-bakes without re-downloading.
-UNPACKED="${MOLAB_SANDBOX}/.igvf_molab/unpacked"
-MARKER="${MOLAB_SANDBOX}/.igvf_molab/complete"
-# `complete` alone is a sandbox from before `unpacked` existed; it was verified.
-if [[ -f "${UNPACKED}" || -f "${MARKER}" ]]; then
-    log "sandbox present and matches its image: ${MOLAB_SANDBOX} (image not needed)"
-else
-    # Whatever is here without the marker is a killed unpack: start clean,
-    # before the download, so the two never add up on disk.
-    rm -rf "${MOLAB_SANDBOX}"
-    mkdir -p "$(dirname "${MOLAB_SIF}")"
-    gcs_fetch "${SIF_OBJECT}" "${MOLAB_SIF}"
-
-    # The squashfs partition's byte offset inside the SIF, from its header.
-    offset=$(apptainer sif list "${MOLAB_SIF}" | awk -F'|' '/Squashfs/ {split($4,a,"-"); gsub(/ /,"",a[1]); print a[1]}')
-    [[ -n "${offset}" ]] || { echo "ERROR: could not find the squashfs offset in ${MOLAB_SIF}" >&2; exit 1; }
-
-    # Every entry in the image, less its root and the device nodes gVisor
-    # cannot create, must exist in the sandbox. Counted BEFORE extraction, so
-    # the image can be deleted the moment unsquashfs returns. Streamed.
-    want=$(unsquashfs -o "${offset}" -lls "${MOLAB_SIF}" 2>/dev/null \
-        | awk '/^[-dlps][rwxsStT-]{9}/ {n++} END {print n - 1}')
-    [[ "${want}" -gt 0 ]] || { echo "ERROR: could not list ${MOLAB_SIF}" >&2; exit 1; }
-
-    log "unpacking container to ${MOLAB_SANDBOX} (squashfs at offset ${offset}, ${want} entries)"
-    # -no-exit-code: gVisor forbids mknod, so device nodes fail and
-    # unsquashfs would exit 2 on an otherwise complete extraction.
-    # -no-progress: the bar redraws ~400k times, which buries the log and is
-    # a lot to push through marimo's web terminal.
-    unsquashfs -no-exit-code -ignore-errors -no-progress -p "${MOLAB_CPUS}" \
-        -d "${MOLAB_SANDBOX}" -o "${offset}" "${MOLAB_SIF}"
-    log "removing ${MOLAB_SIF} (md5-checked and listed; not read again)"
-    rm -f "${MOLAB_SIF}" "${MOLAB_SIF}.part"
-
-    have=$(find "${MOLAB_SANDBOX}" -mindepth 1 -not -path "${MOLAB_SANDBOX}/.igvf_molab*" | wc -l)
-    if [[ "${want}" != "${have}" ]]; then
-        echo "ERROR: sandbox has ${have} entries, image has ${want}; removing it, rerun to re-download" >&2
-        rm -rf "${MOLAB_SANDBOX}"
-        exit 1
-    fi
-    mkdir -p "$(dirname "${UNPACKED}")"
-    date -Is > "${UNPACKED}"
-    log "sandbox matches image: ${have} entries"
+# ── 4. pixi ───────────────────────────────────────────────────────────────────
+mkdir -p "${MOLAB_SCRATCH}/bin" "${PIXI_CACHE_DIR}" "${UV_CACHE_DIR}" \
+    "${JAX_COMPILATION_CACHE_DIR}" "${KERAS_HOME}" "${MPLCONFIGDIR}" "${NUMBA_CACHE_DIR}"
+have_pixi=""
+if command -v pixi >/dev/null 2>&1; then
+    have_pixi="$(pixi --version 2>/dev/null | awk '{print $2}')" || have_pixi=""
 fi
+if [[ -z "${have_pixi}" \
+      || "$(printf '%s\n' "${PIXI_VERSION}" "${have_pixi}" | sort -V | head -n1)" != "${PIXI_VERSION}" ]]; then
+    log "pixi ${have_pixi:-not found}: installing ${PIXI_VERSION} into ${MOLAB_SCRATCH}/bin"
+    curl -fsSL -o "${MOLAB_SCRATCH}/bin/pixi.tmp" \
+        "https://github.com/prefix-dev/pixi/releases/download/v${PIXI_VERSION}/pixi-$(uname -m)-unknown-linux-musl"
+    chmod 0755 "${MOLAB_SCRATCH}/bin/pixi.tmp"
+    mv "${MOLAB_SCRATCH}/bin/pixi.tmp" "${MOLAB_SCRATCH}/bin/pixi"
+    [[ ":${PATH}:" == *":${MOLAB_SCRATCH}/bin:"* ]] || export PATH="${MOLAB_SCRATCH}/bin:${PATH}"
+fi
+log "$(pixi --version) ($(command -v pixi))"
 
-# ── 5. bake the low-memory one-hot encoder into the sandbox ─────────────────
-utils_dir="${MOLAB_SANDBOX}/opt/chrombpnet/chrombpnet/training/utils"
-[[ -f "${utils_dir}/one_hot.py" ]] || { echo "ERROR: ${utils_dir}/one_hot.py not found" >&2; exit 1; }
-[[ -f "${utils_dir}/one_hot.py.upstream" ]] || cp -p "${utils_dir}/one_hot.py" "${utils_dir}/one_hot.py.upstream"
-cp "${REPO_ROOT}/lib/python/utils/onehot.py" "${utils_dir}/igvf_onehot.py"
-{
-    cat "${utils_dir}/one_hot.py.upstream"
-    echo
-    echo "# --- igvf_tf_chrombpnet: low-memory encoder, baked in by workflows/molab/setup_molab.sh ---"
-    echo "_upstream_dna_to_one_hot = dna_to_one_hot"
-    echo "from chrombpnet.training.utils.igvf_onehot import dna_to_one_hot  # noqa: E402,F401"
-} > "${utils_dir}/one_hot.py"
-rm -f "${utils_dir}"/__pycache__/one_hot.*.pyc "${utils_dir}"/__pycache__/igvf_onehot.*.pyc
-
-log "verifying the baked encoder against upstream inside the container"
-# --cleanenv: the check needs nothing from this shell, least of all the key.
-# 5000 x 2114 crosses the 4096-sequence chunk boundary at ~0.2 GB peak.
-if ! apptainer exec --cleanenv "${MOLAB_SANDBOX}" python3 - <<'PY'
-import numpy as np
-from chrombpnet.training.utils import one_hot
-
-new, old = one_hot.dna_to_one_hot, one_hot._upstream_dna_to_one_hot
-assert getattr(new, "_igvf_low_memory", False), "baked encoder is not the igvf one"
-probe = ["ACGTACGT", "acgtACGT", "NNNNACGT", "ACGTNRYK", "TTTTTTTT"]
-assert np.array_equal(old(probe), new(probe)), "probe differs"
-rng = np.random.default_rng(0)
-codes = rng.choice(np.frombuffer(b"ACGTACGTACGTacgtNNRYKn", dtype=np.uint8), size=(5000, 2114))
-seqs = [row.tobytes().decode("ascii") for row in codes]
-a, b = old(seqs), new(seqs)
-assert a.dtype == b.dtype and a.shape == b.shape and np.array_equal(a, b), "random set differs"
-print("baked encoder byte-identical to upstream on %d x %d" % a.shape[:2])
-PY
-then
-    cp -p "${utils_dir}/one_hot.py.upstream" "${utils_dir}/one_hot.py"
-    rm -f "${utils_dir}/igvf_onehot.py"
-    echo "ERROR: baked encoder failed verification; upstream one_hot.py restored" >&2
+# ── 5. chrombpnet checkout at CHROMBPNET_REV ─────────────────────────────────
+cloned=0
+if [[ ! -e "${CHROMBPNET_REPO}" ]]; then
+    log "cloning ${CHROMBPNET_URL} into ${CHROMBPNET_REPO}"
+    git clone --quiet "${CHROMBPNET_URL}" "${CHROMBPNET_REPO}"
+    cloned=1
+elif [[ ! -e "${CHROMBPNET_REPO}/.git" ]]; then
+    echo "ERROR: ${CHROMBPNET_REPO} exists but is not a git checkout; move it, or set CHROMBPNET_REPO" >&2
     exit 1
 fi
 
-# ── 6. keep only what is needed ─────────────────────────────────────────────
-[[ -f "${MARKER}" ]] || date -Is > "${MARKER}"
-# The image went right after the unpack; this only catches a stray one.
-rm -f "${MOLAB_SIF}" "${MOLAB_SIF}.part"
-log "sandbox: $(du -sh "${MOLAB_SANDBOX}" | cut -f1)"
+head_rev="$(git -C "${CHROMBPNET_REPO}" rev-parse HEAD 2>/dev/null || true)"
+if [[ "${head_rev}" != "${CHROMBPNET_REV}" && "${cloned}" == "0" ]]; then
+    # Only ever move a checkout this script made: detached and clean. A branch
+    # or local edits mean someone works in it.
+    if branch="$(git -C "${CHROMBPNET_REPO}" symbolic-ref -q --short HEAD)"; then
+        echo "ERROR: ${CHROMBPNET_REPO} is on branch '${branch}', not at CHROMBPNET_REV=${CHROMBPNET_REV}." >&2
+        echo "  setup only moves a detached checkout, so it will not touch a working copy." >&2
+        echo "  Point CHROMBPNET_REPO at a dedicated checkout (default /marimo/chrombpnet-igvf)," >&2
+        echo "  or detach this one yourself: git -C ${CHROMBPNET_REPO} checkout --detach ${CHROMBPNET_REV}" >&2
+        exit 1
+    fi
+    if [[ -n "$(git -C "${CHROMBPNET_REPO}" status --porcelain --untracked-files=no)" ]]; then
+        echo "ERROR: ${CHROMBPNET_REPO} has local changes; not moving it to ${CHROMBPNET_REV}." >&2
+        git -C "${CHROMBPNET_REPO}" status --short --untracked-files=no >&2
+        exit 1
+    fi
+fi
 
-mkdir -p "${MOLAB_CUDA_CACHE}" "${MOLAB_MPLCONFIG}"
+if [[ "${cloned}" == "0" ]]; then
+    log "fetching ${CHROMBPNET_REPO}"
+    git -C "${CHROMBPNET_REPO}" fetch --quiet origin \
+        || log "WARNING: git fetch failed; carrying on if ${CHROMBPNET_REV:0:7} is already here"
+fi
+if ! git -C "${CHROMBPNET_REPO}" cat-file -e "${CHROMBPNET_REV}^{commit}" 2>/dev/null; then
+    # Not on any branch head (a rewritten branch, say): ask for it by SHA.
+    git -C "${CHROMBPNET_REPO}" fetch --quiet origin "${CHROMBPNET_REV}" \
+        || { echo "ERROR: commit ${CHROMBPNET_REV} not found in ${CHROMBPNET_URL}" >&2; exit 1; }
+fi
+if [[ "${head_rev}" != "${CHROMBPNET_REV}" ]]; then
+    log "checking out ${CHROMBPNET_REV:0:7} (was ${head_rev:0:7})"
+    git -C "${CHROMBPNET_REPO}" checkout --quiet --detach "${CHROMBPNET_REV}"
+fi
+log "chrombpnet checkout: ${CHROMBPNET_REPO} @ $(git -C "${CHROMBPNET_REPO}" rev-parse --short HEAD)"
 
-# ── 6b. is there a GPU? ─────────────────────────────────────────────────────
-# A molab session recreated after a crash came back WITHOUT its GPU: no
-# /dev/nvidia*, an empty /proc/driver/nvidia, and TensorFlow listing none.
-# Nothing failed -- 03.0 simply trained on one CPU core, still in epoch 1 of 50
-# after 12 minutes. Ask the container's TensorFlow, which is what the GPU steps
-# use, and say so loudly; it is not an error, because the CPU-only steps
-# (00.x-02.0) are fine without one.
-gpus=$(apptainer exec --nv --cleanenv "${MOLAB_SANDBOX}" python3 -c \
-    'import tensorflow as tf; print(len(tf.config.list_physical_devices("GPU")))' 2>/dev/null | tail -1)
-if [[ "${gpus}" =~ ^[1-9] ]]; then
-    log "GPU: TensorFlow in the container sees ${gpus} GPU(s)"
+# ── 6. pixi environments ──────────────────────────────────────────────────────
+# Every call names its manifest, so none depends on the cwd -- /marimo, the
+# usual one here, holds marimo's own pyproject.toml with no [tool.pixi], which
+# pixi refuses. --locked: install exactly the lock file, never re-solve.
+CHROMBPNET_MANIFEST="${CHROMBPNET_REPO}/pyproject.toml"
+log "installing chrombpnet 2.x: pixi ${CHROMBPNET_PIXI_ENV} from ${CHROMBPNET_MANIFEST}"
+pixi install --locked --manifest-path "${CHROMBPNET_MANIFEST}" -e "${CHROMBPNET_PIXI_ENV}" \
+    || { echo "ERROR: pixi install of ${CHROMBPNET_PIXI_ENV} failed (see above)" >&2; exit 1; }
+for env in "${LOCAL_ENVS[@]}"; do
+    log "installing pixi ${env} from ${REPO_ROOT}/pixi.toml"
+    pixi install --locked --manifest-path "${REPO_ROOT}/pixi.toml" -e "${env}" \
+        || { echo "ERROR: pixi install of ${env} failed (see above)" >&2; exit 1; }
+done
+
+# ── 7. checks ─────────────────────────────────────────────────────────────────
+# The command-line tools the chrombpnet steps shell out to, all from the
+# chrombpnet environment: bedtools (01.0 negatives), samtools, MEME's tomtom
+# (modisco report-simple) and modisco itself (03.3, 04.5, 08.0).
+status=0
+log "chrombpnet env: versions"
+pixi run --frozen --manifest-path "${CHROMBPNET_MANIFEST}" -e "${CHROMBPNET_PIXI_ENV}" versions || status=1
+log "chrombpnet env: tools"
+# shellcheck disable=SC2016  # expanded by the inner bash
+pixi run --frozen --manifest-path "${CHROMBPNET_MANIFEST}" -e "${CHROMBPNET_PIXI_ENV}" bash -c \
+    'set -e; bedtools --version; samtools --version | head -n1; printf "tomtom "; tomtom -version; modisco --help >/dev/null; echo "modisco ok"' \
+    || status=1
+[[ "${status}" == "0" ]] || log "ERROR: the chrombpnet environment is missing a tool (see above)"
+
+if gpu="$(nvidia-smi --query-gpu=name,compute_cap,driver_version --format=csv,noheader 2>/dev/null)" \
+        && [[ -n "${gpu}" ]]; then
+    log "GPU (name, compute capability, driver): ${gpu}"
+    driver="${gpu%%$'\n'*}"; driver="${driver##*, }"; driver_major="${driver%%.*}"
+    if [[ "${CHROMBPNET_PIXI_ENV}" == cuda13* && "${driver_major}" =~ ^[0-9]+$ && "${driver_major}" -lt 580 ]]; then
+        log "WARNING: driver ${driver} is older than 580, which CUDA 13 needs: set CHROMBPNET_PIXI_ENV=cuda12"
+    fi
 else
-    log "WARNING: TensorFlow in the container sees NO GPU. Steps 03.x/04.x would run on the CPU,"
-    log "         which takes days instead of minutes. Restart the molab session on a GPU machine."
+    log "WARNING: nvidia-smi lists no GPU."
+fi
+log "chrombpnet env: gpu-check"
+if pixi run --frozen --manifest-path "${CHROMBPNET_MANIFEST}" -e "${CHROMBPNET_PIXI_ENV}" gpu-check; then
+    log "GPU: JAX in the chrombpnet environment runs on it"
+else
+    log "WARNING: ================================================================"
+    log "WARNING: JAX in the chrombpnet environment sees NO GPU. The GPU steps"
+    log "WARNING: (#SBATCH --gres=gpu:1) would stop, or run on the CPU for days."
+    log "WARNING: Restart the molab session on a GPU machine. Steps 00.0-02.0"
+    log "WARNING: need no GPU and can run meanwhile."
+    log "WARNING: ================================================================"
 fi
 
-# ── 7. pixi qc environment (stands in for envs/preprocess.yml) ───────────────
-if ! command -v pixi >/dev/null 2>&1; then
-    log "installing pixi"
-    curl -fsSL https://pixi.sh/install.sh | bash >/dev/null
-    ln -sf "${HOME}/.pixi/bin/pixi" /usr/local/bin/pixi
-fi
-log "pixi: $(pixi --version)"
-log "installing the pixi qc and motifs environments"
-# Every pixi call runs from REPO_ROOT: pixi resolves a manifest from the cwd
-# upwards even for `clean cache`, and /marimo (the usual cwd here) holds
-# marimo's own pyproject.toml with no [tool.pixi], which pixi refuses.
-# The env is hardlinked out of the package cache, so clearing the cache frees
-# the downloaded archives (~1.5 GB) without touching the installed env.
-# `motifs`: TF-MoDISco 2.5.2 for 03.3/04.5.
-(cd "${REPO_ROOT}" && pixi install -e qc && pixi install -e motifs && pixi clean cache --yes >/dev/null)
-
-# ── 8. d0 test data ──────────────────────────────────────────────────────────
+# ── 8. d0 test data ───────────────────────────────────────────────────────────
 log "fetching test data into ${MOLAB_DATA_DIR}"
+# A token lasts an hour, which the installs above can outlast; gcs_list does
+# not retry, so mint a fresh one first.
+GCS_TOKEN=$(gcs_token)
 # Only config/ and inputs/: sync_to_gcs.sh writes results/, repo.bundle and
 # the manifest under the same prefix, and none of that is setup's to fetch.
 # fd 3, not stdin: gcs_fetch runs commands that read stdin.
@@ -281,14 +280,31 @@ for sub in config/ inputs/; do
     done 3< <(gcs_list "${TEST_DATA_PREFIX}${sub}")
 done
 
-# ── 9. shared references ─────────────────────────────────────────────────────
+# ── 9. shared references ──────────────────────────────────────────────────────
 if [[ "${SKIP_REFERENCES}" == "1" ]]; then
     log "skipping references (--skip-references)"
 else
     log "fetching references into ${REFERENCE_ROOT}"
-    (cd "${REPO_ROOT}" && pixi run -e qc python src/cli.py download-references --path "${DATASET_CONFIG}")
+    pixi run --frozen --manifest-path "${REPO_ROOT}/pixi.toml" -e preprocess \
+        python "${REPO_ROOT}/src/cli.py" download-references --path "${DATASET_CONFIG}"
 fi
 
+# ── 10. disk ──────────────────────────────────────────────────────────────────
+# du counts a hardlinked file once, under the first argument that reaches it,
+# so the caches listed after the environments show only what is NOT linked
+# into one (mostly downloaded archives; `pixi clean cache` reclaims them).
+log "disk used by the environments and caches:"
+du -sh "${CHROMBPNET_REPO}/.pixi/envs/${CHROMBPNET_PIXI_ENV}" \
+    "${LOCAL_ENVS[@]/#/${REPO_ROOT}/.pixi/envs/}" \
+    "${PIXI_CACHE_DIR}" "${UV_CACHE_DIR}" "${JAX_COMPILATION_CACHE_DIR}" 2>/dev/null || true
+if [[ -d /marimo/containers ]]; then
+    log "NOTE: /marimo/containers (the chrombpnet 1.x container) is no longer used; rm -rf it to free the space."
+fi
+
+if [[ "${status}" != "0" ]]; then
+    log "setup finished WITH ERRORS (see above)."
+    exit 1
+fi
 log "setup complete."
 echo
 echo "Next:"

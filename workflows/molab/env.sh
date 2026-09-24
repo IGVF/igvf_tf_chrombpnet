@@ -3,23 +3,23 @@
 # Purpose: Every environment variable the pipeline needs on a molab box, in one
 #   place. Source it before running any step:  source workflows/molab/env.sh
 #
-# Why these values: lib/bash/common.sh defaults each of the four conda
-# environments to a path under another user's Sherlock home. None of those
-# exist here and none should be referenced, so every one is overridden below.
-# On molab there is no conda at all:
+# Why so little is set here: every step enters its own environment through
+# activate_env (lib/bash/common.sh), and every default there is a pixi
+# environment -- this repo's pixi.toml for preprocess / finemo /
+# motif-compendium, and a pinned chrombpnet 2.x checkout for chrombpnet. So
+# CHROMBPNET_ENV, PREPROCESS_ENV, FINEMO_ENV and MOTIF_COMPENDIUM_ENV are
+# deliberately left UNSET: common.sh's pixi defaults are what molab runs. Only
+# the box-specific values are set below: where the chrombpnet checkout lives,
+# where pixi and the caches live (under /marimo, which survives a new
+# session; $HOME does not), the real CPU count, and the data locations.
 #
-#   * steps 00.0 / 00.1 / 02.0 run in the pixi `preprocess` environment, which
-#     reproduces envs/preprocess.yml (see pixi.toml);
-#   * steps 01.0 / 03.x / 04.x run inside the chrombpnet container, which
-#     already has chrombpnet, tensorflow and bedtools on PATH.
+# BOOTSTRAP_PYTHON is left unset as well. The container era pointed it at the
+# qc env so config.sh had a python inside the container; the side effect was
+# that every step's run metadata recorded the qc env's packages instead of the
+# step's own. common.sh's bootstrap_python now finds one on PATH.
 #
-# In both cases the tools are on PATH before the step starts, so CONDA_INIT is
-# set EMPTY, which makes activate_env a no-op (lib/bash/common.sh). Empty is
-# opt-in and meaningful; unset would fall back to the Sherlock default and the
-# step would die with "conda init script not found".
-#
-# Input:  none
-# Output: exported variables only
+# Input:  an optional .env (see .env.example)
+# Output: exported variables, and the molab_config function
 # Usage:  source workflows/molab/env.sh
 # Prerequisites: run setup_molab.sh once first.
 
@@ -67,79 +67,89 @@ export DATASET="${DATASET:-d0}"
 # and would NOT be for a real one (see config/HEP3B/config.yaml, tracked).
 export DATASET_CONFIG="${DATASET_CONFIG:-/marimo/data/test_data_d0/config/config.yaml}"
 
-# ── No conda anywhere ────────────────────────────────────────────────────────
-# molab uses pixi for everything reproducible and Apptainer for chrombpnet.
-# There is no conda on the box and none is installed. Empty CONDA_INIT is the
-# opt-in that makes activate_env a no-op instead of a hard error; see the
-# header and lib/bash/common.sh.
+# ── Software environments ────────────────────────────────────────────────────
+# chrombpnet 2.x comes from its own checkout, installed by setup_molab.sh from
+# that repo's lock file. NOT /marimo/chrombpnet: that is a development
+# checkout, and setup moves this one's HEAD to the pinned commit. The commit
+# itself, CHROMBPNET_REV, is defined once in lib/bash/common.sh; set it in the
+# .env only to try another one on purpose (activate_env warns on a mismatch).
+export CHROMBPNET_REPO="${CHROMBPNET_REPO:-/marimo/chrombpnet-igvf}"
+# cuda13 needs NVIDIA driver >= 580; cuda12 is chrombpnet's fallback.
+export CHROMBPNET_PIXI_ENV="${CHROMBPNET_PIXI_ENV:-cuda13}"
+
+# No conda on the box. activate_env only reads CONDA_INIT for an environment
+# given as a conda prefix, which none of the defaults is; empty keeps a stray
+# prefix from reaching for a conda that does not exist.
 export CONDA_INIT=""
 
-# lib/bash/common.sh names these after conda because that is what the
-# cluster uses. On molab only the first two are real environments:
-#
-#   PREPROCESS_ENV         a pixi environment, defined in pixi.toml and
-#                          mirroring envs/preprocess.yml. Steps 00.0/00.1/02.0.
-#   MOTIFS_ENV             a pixi environment mirroring envs/motifs.yml
-#                          (TF-MoDISco 2.5.2). Steps 03.3/04.5.
-#   CHROMBPNET_ENV         NOT an environment path here -- chrombpnet, its
-#                          TensorFlow and bedtools come from the Apptainer
-#                          container, which run_step.sh execs directly. It
-#                          cannot be a pixi env: chrombpnet 1.0.1 pins
-#                          tensorflow==2.8.0 / numpy==1.23.4 against CUDA 11
-#                          wheels that do not exist for this GPU.
-#   FINEMO_ENV             steps 10/11, not wired up on molab yet.
-#   MOTIF_COMPENDIUM_ENV   step 09, not wired up on molab yet.
-#
-# The last three are never dereferenced (activate_env returns before it looks
-# at the path), but they are set to a self-describing sentinel rather than left
-# unset, because unset would fall back to a Sherlock home directory.
-export PREPROCESS_ENV="${REPO_ROOT}/.pixi/envs/preprocess"
-export MOTIFS_ENV="${REPO_ROOT}/.pixi/envs/motifs"
+# A shell that sourced the container-era env.sh still exports its values, and
+# common.sh would honour them: the PREPROCESS_ENV directory would be taken for
+# a conda prefix and, with CONDA_INIT empty, silently not entered. Drop
+# exactly those values; anything else set on purpose is kept.
+[[ "${CHROMBPNET_ENV:-}" != apptainer:* ]] || unset CHROMBPNET_ENV
+[[ "${FINEMO_ENV:-}" != unconfigured:* ]] || unset FINEMO_ENV
+[[ "${MOTIF_COMPENDIUM_ENV:-}" != unconfigured:* ]] || unset MOTIF_COMPENDIUM_ENV
+[[ "${PREPROCESS_ENV:-}" != "${REPO_ROOT}/.pixi/envs/preprocess" ]] || unset PREPROCESS_ENV
+[[ "${BOOTSTRAP_PYTHON:-}" != "${REPO_ROOT}/.pixi/envs/qc/bin/python" ]] || unset BOOTSTRAP_PYTHON
 
-# The Python that lib/bash/config.sh and references.sh use to read the YAML
-# config (>= 3.9, stdlib only). Inside the chrombpnet container there is none:
-# its python is 3.8. It used to work by accident -- the notebook kernel puts
-# its own venv (/tmp/uv-venv/bin, python 3.13) on PATH, Apptainer binds /tmp,
-# so the container found the NOTEBOOK's python. Once launches stopped
-# inheriting that venv, every container step died with "need python >= 3.9".
-# The pixi qc env's python lives under /marimo (bound into the container at
-# the same path) and runs there: it needs glibc 2.31, which the container has.
-export BOOTSTRAP_PYTHON="${BOOTSTRAP_PYTHON:-${REPO_ROOT}/.pixi/envs/qc/bin/python}"
-export CHROMBPNET_ENV="apptainer:${MOLAB_SANDBOX:-/marimo/containers/chrombpnet_sandbox}"
-export FINEMO_ENV="unconfigured:molab"
-export MOTIF_COMPENDIUM_ENV="unconfigured:molab"
+# Pinned pixi, caches and anything else setup writes outside the checkouts.
+# Under /marimo so a new session keeps them, next to the checkouts' .pixi/
+# directories so pixi can hardlink packages out of its cache instead of
+# copying them. One PIXI_CACHE_DIR serves both checkouts (this repo's
+# environments and chrombpnet's), so a package they share is stored once.
+export MOLAB_SCRATCH="${MOLAB_SCRATCH:-/marimo/igvf-scratch}"
+# setup_molab.sh puts a pinned pixi here when the box has none, or an older one.
+if [[ -x "${MOLAB_SCRATCH}/bin/pixi" && ":${PATH}:" != *":${MOLAB_SCRATCH}/bin:"* ]]; then
+    export PATH="${MOLAB_SCRATCH}/bin:${PATH}"
+fi
+export PIXI_CACHE_DIR="${PIXI_CACHE_DIR:-${MOLAB_SCRATCH}/cache/rattler}"
+export UV_CACHE_DIR="${UV_CACHE_DIR:-${MOLAB_SCRATCH}/cache/uv}"
+export JAX_COMPILATION_CACHE_DIR="${JAX_COMPILATION_CACHE_DIR:-${MOLAB_SCRATCH}/cache/jax}"
+export KERAS_HOME="${KERAS_HOME:-${MOLAB_SCRATCH}/cache/keras}"
+export MPLCONFIGDIR="${MPLCONFIGDIR:-${MOLAB_SCRATCH}/cache/matplotlib}"
+export NUMBA_CACHE_DIR="${NUMBA_CACHE_DIR:-${MOLAB_SCRATCH}/cache/numba}"
+
+# ── GPU memory ───────────────────────────────────────────────────────────────
+# JAX allocates on demand instead of grabbing most of the card at start-up.
+# chrombpnet sets the same default when it is imported; exporting it covers
+# everything that imports jax first.
+export XLA_PYTHON_CLIENT_PREALLOCATE="${XLA_PYTHON_CLIENT_PREALLOCATE:-false}"
+# XLA_PYTHON_CLIENT_MEM_FRACTION is deliberately NOT defaulted. Unset, a step
+# may use the whole card, which is what a box running only this pipeline
+# wants. Set it (e.g. 0.25 in the .env) when the GPU is shared with other
+# jobs: it caps this process at that fraction of the card's TOTAL memory, and
+# DeepSHAP sizes its batches from what is free.
 
 # ── Data locations ───────────────────────────────────────────────────────────
 export REFERENCE_ROOT="${REFERENCE_ROOT:-/marimo/data/references}"
 export DATASET_ROOT="${DATASET_ROOT:-/marimo/data}"
 export LOG_LEVEL="${LOG_LEVEL:-INFO}"
 
-# ── Container ────────────────────────────────────────────────────────────────
-export MOLAB_SIF="${MOLAB_SIF:-/marimo/containers/chrombpnet.sif}"
-export MOLAB_SANDBOX="${MOLAB_SANDBOX:-/marimo/containers/chrombpnet_sandbox}"
-export MOLAB_CUDA_CACHE="${MOLAB_CUDA_CACHE:-/marimo/containers/cuda_jit_cache}"
-export MOLAB_MPLCONFIG="${MOLAB_MPLCONFIG:-/marimo/containers/mplconfig}"
-# Launcher logs. Default to the pipeline's OWN log_dir (lib/bash/config.sh:
-# log_dir="${results_path}/logs"), derived from this dataset's output_dir,
-# rather than inventing a second location. Override to put them elsewhere.
-if [[ -z "${MOLAB_LOG_DIR:-}" ]]; then
-    _molab_cfg="${DATASET_CONFIG:-${REPO_ROOT}/config/${DATASET}/config.yaml}"
-    _molab_out=""
-    if [[ -f "${_molab_cfg}" ]]; then
-        _molab_out=$(python3 "${REPO_ROOT}/lib/python/utils/config.py" export "${_molab_cfg}" 2>/dev/null \
-            | sed -n 's/^output_dir=//p' | tr -d '"')
-    fi
-    export MOLAB_LOG_DIR="${_molab_out:-${REPO_ROOT}/results}/logs"
-    unset _molab_cfg _molab_out
-fi
+# molab_config <expr>... — print each shell expression, one per line, as
+# lib/bash/config.sh evaluates it for the selected dataset, e.g.
+#   molab_config '${metadata_dir}' '${#folds[@]}'
+# config.sh runs in a child bash, the same derivation every step makes, so the
+# launchers' paths cannot drift from the steps' (a sed over the YAML export
+# used to leave an output_dir of "${DATASET_ROOT}/..." unexpanded). Fails,
+# printing nothing, when the config does not resolve.
+molab_config() {
+    # shellcheck disable=SC2016  # expanded by the child bash, after config.sh
+    bash -c 'source "$1/lib/bash/config.sh" >/dev/null 2>&1 || exit 1; shift
+             for _e in "$@"; do eval "printf \"%s\\n\" \"${_e}\""; done' _ "${REPO_ROOT}" "$@"
+}
 
-# Bind-mount the tree the data and results live under, into the container at
-# the same path, so every absolute path in config.yaml resolves identically
-# inside and outside.
-export MOLAB_BIND="${MOLAB_BIND:-/marimo}"
+# Launcher logs. Default to the pipeline's OWN log_dir (lib/bash/config.sh:
+# log_dir="${results_path}/logs") rather than inventing a second location.
+# Override to put them elsewhere.
+if [[ -z "${MOLAB_LOG_DIR:-}" ]]; then
+    # shellcheck disable=SC2016  # expanded by molab_config's child bash
+    MOLAB_LOG_DIR="$(molab_config '${log_dir}' 2>/dev/null)" || MOLAB_LOG_DIR=""
+    export MOLAB_LOG_DIR="${MOLAB_LOG_DIR:-${REPO_ROOT}/results/logs}"
+fi
 
 # ── Real resources ───────────────────────────────────────────────────────────
 # The box reports the host's CPUs and RAM (20+ cores, 160 GB), not the slice we
-# actually get. Left unpinned, TensorFlow and OpenMP size their thread pools to
-# the phantom count and thrash. Set this to the REAL core count.
+# actually get. Left unpinned, OpenMP, BLAS and numba size their thread pools
+# to the phantom count and thrash; run_step.sh caps them all at this. Set it to
+# the REAL core count.
 export MOLAB_CPUS="${MOLAB_CPUS:-4}"
