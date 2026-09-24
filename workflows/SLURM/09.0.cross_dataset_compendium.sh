@@ -119,6 +119,13 @@ if [[ "${n_found}" -eq 0 ]]; then
     exit 1
 fi
 
+# The reference DB has a versioned name that `cli.py download-references`
+# fetches, which an install made before the pin does not have yet. Check it
+# here, before the environment and the compendium build, rather than meet it
+# as a MotifCompendium traceback after both.
+require_input "${ref_db_meme}" "cli.py download-references"
+preflight_check
+
 # Run MotifCompendium clustering + annotation
 activate_env "${motif_compendium_env}"
 
