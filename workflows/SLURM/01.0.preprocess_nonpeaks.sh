@@ -106,7 +106,7 @@ preflight_check
 
 # ChromBPNet's env, not preprocess: `prep nonpeaks` shells out to bedtools
 # slop/sort/merge/intersect, which that env pins.
-activate_env "${CONDA_ENV}"
+activate_env "${chrombpnet_env}"
 
 # The one step where probing the ChromBPNet version earns its cost. `chrombpnet
 # --version` imports TensorFlow, which is why 00.0 does not do it -- but the

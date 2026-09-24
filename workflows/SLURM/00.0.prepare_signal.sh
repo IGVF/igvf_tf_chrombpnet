@@ -122,7 +122,7 @@ preflight_check
 # src/cli.py, which needs click, pybigtools and pysam. The chrombpnet env has
 # none of the three, so activating it here fails on `import click` before any
 # work happens.
-activate_env "${preprocess_conda}"
+activate_env "${preprocess_env}"
 
 mkdir -p "${prepared_dir}"
 

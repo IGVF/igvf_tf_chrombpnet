@@ -100,7 +100,7 @@ metadata_inputs+=( "motif_db=${chrombpnet_motifs_meme}" )
 require_input "${chrombpnet_motifs_meme}" "cli.py download-references"
 preflight_check
 
-activate_env "${motifs_conda}"
+activate_env "${chrombpnet_env}"
 metadata_params+=( "fold=${fold}" "bias_suffix=${suffix}" "scores=profile,counts" "max_seqlets=${max_seqlets}" "window=${window}" )
 echo "[$(date)] [fold ${fold}] Motif QC on selected bias model (suffix ${suffix}): ${out_dir}"
 

@@ -71,7 +71,7 @@ require_input "${regions_file}" 05.0.get_contrib_scores.sh
 metadata_outputs+=( "contributions=${averaged_dir}/${dataset}/${dataset}_average_shaps.counts.bw" )
 preflight_check
 
-activate_env "${CONDA_ENV}"
+activate_env "${chrombpnet_env}"
 metadata_params+=( "dataset=${dataset}" )
 if [[ ! -f "${regions_file}" ]]; then
     echo "[${dataset}] Regions BED not found: ${regions_file}" >&2

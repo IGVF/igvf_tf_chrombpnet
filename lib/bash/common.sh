@@ -23,28 +23,43 @@ fi
 # export them in your shell profile, or in the conda env's activate.d. The
 # defaults below are the Engreitz-lab Sherlock install.
 
-# ── Cluster software ──────────────────────────────────────────────────────────
-# Recreate the envs from the pinned specs: conda env create -f envs/<name>.yml
-# `:-` would resolve an explicitly EMPTY CONDA_INIT back to this default, and
-# empty is meaningful: it means "no conda, the tools are already on PATH"
-# (a container, or a pixi environment). `-` keeps the empty value.
+# ── Software environments ─────────────────────────────────────────────────────
+# Every environment is a pixi environment, on the cluster and on molab alike,
+# named as `pixi:<manifest>#<environment>` and entered by activate_env below.
+#
+#   chrombpnet 2.x (Keras 3 / JAX, CUDA from its own wheels) comes from a
+#   separate chrombpnet checkout at a pinned commit, installed from ITS lock
+#   file -- the one the port was validated against -- rather than re-solved
+#   here. Its manifest is pyproject.toml; chrombpnet has no pixi.toml. Once:
+#
+#     git clone https://github.com/NNFC-GMD/chrombpnet "$CHROMBPNET_REPO"
+#     (cd "$CHROMBPNET_REPO" && git checkout --detach "$CHROMBPNET_REV")
+#     CONDA_OVERRIDE_CUDA=13.0 pixi install --locked \
+#         --manifest-path "$CHROMBPNET_REPO/pyproject.toml" -e cuda13
+#
+#   (CONDA_OVERRIDE_CUDA lets a login node without a GPU install it; cuda13
+#   needs NVIDIA driver >= 580 at run time, `cuda12` is the fallback.)
+#
+#   preprocess, finemo, finemo-cu126 and motif-compendium are this repo's own
+#   pixi.toml environments: `pixi install -e <name>` from the checkout.
+#
+# Any of these can instead be a plain conda prefix, which activate_env enters
+# with `conda activate` through CONDA_INIT.
+CHROMBPNET_REPO="${CHROMBPNET_REPO:-}"
+# The commit of NNFC-GMD/chrombpnet the pipeline is tested against: branch
+# pipeline-hooks, i.e. PR kundajelab/chrombpnet#284 plus -bw on the training
+# commands, `pipeline --skip-interpretation` and the lookup-table one-hot
+# encoder. activate_env warns when the checkout is elsewhere.
+CHROMBPNET_REV="${CHROMBPNET_REV:-7dfb285f88330d4384244264527424dd4d01b63f}"
+CHROMBPNET_PIXI_ENV="${CHROMBPNET_PIXI_ENV:-cuda13}"
+chrombpnet_env="${CHROMBPNET_ENV:-pixi:${CHROMBPNET_REPO}/pyproject.toml#${CHROMBPNET_PIXI_ENV}}"
+preprocess_env="${PREPROCESS_ENV:-pixi:${REPO_ROOT}/pixi.toml#preprocess}"
+finemo_env="${FINEMO_ENV:-pixi:${REPO_ROOT}/pixi.toml#finemo}"
+motif_compendium_env="${MOTIF_COMPENDIUM_ENV:-pixi:${REPO_ROOT}/pixi.toml#motif-compendium}"
+# Only for an environment given as a conda prefix. `:-` would resolve an
+# explicitly EMPTY CONDA_INIT back to this default, and empty is meaningful:
+# "no conda, the tools are already on PATH". `-` keeps the empty value.
 CONDA_INIT="${CONDA_INIT-/home/groups/engreitz/Software/anaconda3/etc/profile.d/conda.sh}"
-CONDA_ENV="${CHROMBPNET_ENV:-/home/groups/engreitz/Users/opushkar/.conda/envs/chrombpnet}"
-finemo_conda="${FINEMO_ENV:-/home/groups/engreitz/Users/opushkar/.conda/envs/finemo}"
-motif_compendium_conda="${MOTIF_COMPENDIUM_ENV:-/home/groups/engreitz/Users/opushkar/.conda/envs/motif_compendium}"
-# Steps 00/01 and the reference builder: pyranges1 needs Python >= 3.12, which
-# none of the three envs above have. Create it with:
-#   conda env create -f envs/preprocess.yml
-# Path is a placeholder in the same location as the others until it exists.
-# NB this default differs from the other three: the `preprocess` env was added
-# with the lib/src refactor and never existed under the opushkar prefix, so
-# 00.0/00.1/02.0 pointed at a path that was never created and failed on import.
-# Built from envs/preprocess.yml on 2026-09-21.
-preprocess_conda="${PREPROCESS_ENV:-/home/groups/engreitz/Users/emattei/.conda/envs/preprocess}"
-# Steps 03.3/04.5 (src/motif_qc.py): TF-MoDISco 2.5.2, which needs Python
-# >= 3.9. Create it with `conda env create -f envs/motifs.yml`; like
-# preprocess, the default is where it is meant to go, not where it already is.
-motifs_conda="${MOTIFS_ENV:-/home/groups/engreitz/Users/emattei/.conda/envs/motifs}"
 
 # Default root for dataset data/results; config/site.sh usually repoints this
 # at a shared collaboration tree.
@@ -75,13 +90,14 @@ bootstrap_python() {
         return 0
     fi
     local _c
-    # PATH first (a module-loaded or already-active interpreter wins), then the
-    # conda envs this file has just configured. Those are >= 3.10 and are the
-    # reason the pipeline works on Sherlock at all, where /usr/bin/python3 is
-    # 3.6.8 and there is no newer python on the bare PATH -- without this
-    # fallback every step needs BOOTSTRAP_PYTHON exported by hand.
+    # PATH first (a module-loaded or already-active interpreter wins), then this
+    # repo's own pixi environments. Those are 3.13 and are the reason the
+    # pipeline works on Sherlock at all, where /usr/bin/python3 is 3.6.8 and
+    # there is no newer python on the bare PATH -- without this fallback every
+    # step needs BOOTSTRAP_PYTHON exported by hand.
     for _c in python3.13 python3.12 python3.11 python3.10 python3.9 python3 python \
-              "${preprocess_conda}/bin/python" "${CONDA_ENV}/bin/python"; do
+              "${REPO_ROOT}/.pixi/envs/preprocess/bin/python" \
+              "${REPO_ROOT}/.pixi/envs/default/bin/python"; do
         [[ -n "${_c}" ]] || continue
         command -v "${_c}" >/dev/null 2>&1 || continue
         "${_c}" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' 2>/dev/null || continue
@@ -112,7 +128,7 @@ metadata_dir="${METADATA_DIR:-${REPO_ROOT}/results/metadata}"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 #
-# Only the four below exist, because only they are used. The steps write their
+# Only the ones below exist, because only they are used. The steps write their
 # own progress lines with `echo "[$(date)] ..."` and their own input checks with
 # `[[ -f ... ]] || { echo ...; exit 1; }`. Adding a log()/require_file() here
 # means converting those ~40 call sites in the same change, not leaving a second
@@ -170,15 +186,19 @@ load_bias_sweep() {
     echo "           ${#bias_factors[@]} distinct factor(s): ${bias_factors[*]}"
 }
 
-# activate_env <conda-env-path> — initialise conda and activate an env.
-# Deliberately does NOT set -euo pipefail: conda's activation scripts are not
-# written against `set -u`, which is why the scripts that do use it set it
-# after this call rather than at the top of the file.
+# activate_env <env> — enter a software environment for the rest of the step.
+# <env> is `pixi:<manifest>#<environment>` (every default above) or a conda
+# prefix. Deliberately does NOT set -euo pipefail: neither conda's activation
+# scripts nor pixi's are written against `set -u`, which is why the scripts
+# that do use it set it after this call rather than at the top of the file.
 activate_env() {
     local env_path="${1:?activate_env: missing env path}"
+    if [[ "${env_path}" == pixi:* ]]; then
+        activate_pixi_env "${env_path#pixi:}"
+        return 0
+    fi
     # CONDA_INIT set to the empty string means "there is no conda here; the
-    # tools this step needs are already on PATH" -- a container image, or a
-    # pixi environment (see workflows/molab/). This is opt-in: an UNSET or
+    # tools this step needs are already on PATH". This is opt-in: an UNSET or
     # merely missing CONDA_INIT stays a hard error below, because carrying on
     # in whatever environment happened to be active is precisely the failure
     # this function exists to prevent.
@@ -199,9 +219,8 @@ activate_env() {
     # created on this cluster is the normal way this goes wrong.
     if [[ ! -x "${env_path}/bin/python" ]]; then
         echo "ERROR: conda env not found (no ${env_path}/bin/python)." >&2
-        echo "  Create it:  conda env create -f \${REPO_ROOT}/envs/<name>.yml -p ${env_path}" >&2
-        echo "  Or point the pipeline at an existing one with CHROMBPNET_ENV /" >&2
-        echo "  PREPROCESS_ENV / MOTIFS_ENV / FINEMO_ENV / MOTIF_COMPENDIUM_ENV." >&2
+        echo "  Or point the pipeline at another with CHROMBPNET_ENV /" >&2
+        echo "  PREPROCESS_ENV / FINEMO_ENV / MOTIF_COMPENDIUM_ENV." >&2
         exit 1
     fi
     # shellcheck disable=SC1090  # path is a cluster location, not resolvable here
@@ -212,36 +231,91 @@ activate_env() {
     fi
 }
 
-# load_render_modules — cairo/pango, needed by the motif-report rendering
-# (weasyprint/logomaker) that chrombpnet and modisco do at the end of a run.
-load_render_modules() {
-    # No `module` system (a laptop, a container, a non-Lmod cluster): skip
-    # quietly so a step reaches its own preflight check instead of dying here.
-    command -v ml >/dev/null 2>&1 || { echo "[modules] no 'ml' on PATH, skipping module load" >&2; return 0; }
-    ml devel
-    ml system
-    ml cairo
-    ml pango/1.40.10
-}
-
-# load_gpu_modules — the render stack plus CUDA, loaded by every GPU step
-# before activating conda.
+# activate_pixi_env <manifest>#<environment> — activate_env's pixi branch.
 #
-# The cuda/11.5.0 here is what the --constraint="GPU_CC:7.0|7.5|8.0|8.6" in
-# 03.0 and 04.0 is pinned against: it cannot drive Ada (8.9) or Hopper (9.0).
-# Steps that load this without that constraint can land on a GPU cuda 11.5
-# does not support.
-load_gpu_modules() {
-    load_render_modules
-    command -v ml >/dev/null 2>&1 || return 0
-    ml cuda/11.5.0
-    ml cudnn/8.6.0.163
+# `pixi shell-hook` prints the activation script; eval'ing it here puts the
+# environment on PATH for the rest of the step, the way `conda activate` did,
+# so each step still names its environment in one place: its activate_env
+# line. --frozen installs from the lock file if the environment is missing and
+# never re-solves, so a job cannot rewrite a lock file or pick up new versions.
+activate_pixi_env() {
+    local spec="${1:?activate_pixi_env: missing <manifest>#<environment>}"
+    local manifest="${spec%#*}" environment="${spec##*#}"
+    if [[ "${manifest}" == "${spec}" || -z "${environment}" ]]; then
+        echo "ERROR: pixi environment must be pixi:<manifest>#<environment>, got pixi:${spec}" >&2
+        exit 1
+    fi
+    if ! command -v pixi >/dev/null 2>&1; then
+        echo "ERROR: pixi is not on PATH (needed for pixi:${spec})." >&2
+        echo "  Install it: curl -fsSL https://pixi.sh/install.sh | bash" >&2
+        exit 1
+    fi
+    if [[ ! -f "${manifest}" ]]; then
+        echo "ERROR: no pixi manifest at '${manifest}' (for environment ${environment})." >&2
+        if [[ "${manifest}" == */pyproject.toml ]]; then
+            echo "  This is the chrombpnet checkout. Set CHROMBPNET_REPO to it, or create it" >&2
+            echo "  as described under 'Software environments' in lib/bash/common.sh:" >&2
+            echo "    git clone https://github.com/NNFC-GMD/chrombpnet <dir>" >&2
+            echo "    (cd <dir> && git checkout --detach ${CHROMBPNET_REV})" >&2
+            echo "    CONDA_OVERRIDE_CUDA=13.0 pixi install --locked --manifest-path <dir>/pyproject.toml -e ${CHROMBPNET_PIXI_ENV}" >&2
+        fi
+        exit 1
+    fi
+    # Anything on these would shadow the environment: a system CUDA or cuDNN on
+    # LD_LIBRARY_PATH (a cluster module, a login-shell profile) breaks JAX's and
+    # torch's own CUDA wheels at start-up, and a notebook's PYTHONPATH/venv leaks
+    # its packages into the environment's python.
+    unset LD_LIBRARY_PATH PYTHONPATH PYTHONHOME PYTHONSAFEPATH VIRTUAL_ENV
+    export PYTHONNOUSERSITE=1
+    local hook
+    # CUDA environments declare a __cuda virtual package; the override lets a
+    # CPU-only node (01.0, 03.1, 06-08) enter one. GPU steps check for a GPU
+    # themselves (require_gpu, --device gpu), so this cannot hide a missing one.
+    if ! hook="$(CONDA_OVERRIDE_CUDA="${CONDA_OVERRIDE_CUDA:-13.0}" \
+            pixi shell-hook --manifest-path "${manifest}" -e "${environment}" \
+            --frozen --no-completions --shell bash)"; then
+        echo "ERROR: pixi could not activate ${environment} from ${manifest}" >&2
+        exit 1
+    fi
+    eval "${hook}"
+    echo "[$(date)] activate_env: pixi ${environment} (${manifest})"
+    # The chrombpnet checkout is a separate repo: say so when it is not at the
+    # commit the pipeline was tested against. A warning, not a stop, so a newer
+    # chrombpnet can be tried on purpose; the run metadata records the commit.
+    if [[ -n "${CHROMBPNET_REPO}" && "${manifest}" == "${CHROMBPNET_REPO}/pyproject.toml" ]]; then
+        local head
+        # cd, not `git -C`: Sherlock's git 1.8.3.1 predates -C.
+        head="$(cd "${CHROMBPNET_REPO}" && git rev-parse HEAD 2>/dev/null || true)"
+        if [[ -n "${head}" && "${head}" != "${CHROMBPNET_REV}" ]]; then
+            echo "WARNING: ${CHROMBPNET_REPO} is at ${head}, not CHROMBPNET_REV=${CHROMBPNET_REV}" >&2
+        fi
+    fi
 }
 
-# gpu_env — TensorFlow GPU settings shared by every GPU step.
+# gpu_env — settings shared by every GPU step.
 gpu_env() {
-    export CUDA_VISIBLE_DEVICES=0
-    export TF_FORCE_GPU_ALLOW_GROWTH=true
+    # SLURM sets this to the allocated device; default to the first one.
+    export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
+}
+
+# require_gpu <jax|torch> — stop now if the framework cannot see a GPU.
+#
+# Both fall back to the CPU with at most a warning, and a GPU job on the CPU
+# runs for its whole time limit before anyone notices. chrombpnet's training
+# commands take --device gpu for this; interpretation, prediction and Fi-NeMo
+# have no such flag, so those steps call this after activate_env.
+require_gpu() {
+    local framework="${1:?require_gpu: jax or torch}" probe
+    case "${framework}" in
+        jax)   probe='import jax, sys; print("JAX devices:", jax.devices()); sys.exit(jax.default_backend() != "gpu")' ;;
+        torch) probe='import torch, sys; print("torch", torch.__version__, "CUDA", torch.version.cuda); sys.exit(not torch.cuda.is_available())' ;;
+        *) echo "ERROR: require_gpu: unknown framework '${framework}'" >&2; exit 1 ;;
+    esac
+    if ! python -c "${probe}"; then
+        echo "ERROR: ${framework} sees no GPU on $(hostname)." >&2
+        echo "  Check nvidia-smi and the driver: CUDA 13 builds need driver >= 580." >&2
+        exit 1
+    fi
 }
 
 # ── Run metadata ──────────────────────────────────────────────────────────────

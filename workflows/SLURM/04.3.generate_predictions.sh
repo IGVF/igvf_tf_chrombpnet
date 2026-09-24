@@ -64,9 +64,7 @@ source "${REPO_ROOT}/lib/bash/config.sh" || exit 1
 dataset="${datasets[${SLURM_ARRAY_TASK_ID}]}"
 [[ -z "${dataset}" ]] && { echo "No dataset at array index ${SLURM_ARRAY_TASK_ID}, exiting."; exit 0; }
 
-load_gpu_modules
-
-activate_env "${CONDA_ENV}"
+activate_env "${chrombpnet_env}"
 
 metadata_start "04.3.generate_predictions"
 

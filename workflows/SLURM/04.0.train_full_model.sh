@@ -105,8 +105,7 @@ done
 unset _ds
 preflight_check
 
-load_gpu_modules
-activate_env "${CONDA_ENV}"
+activate_env "${chrombpnet_env}"
 metadata_params+=( "fold=${fold}" "bias_suffix=${suffix}" )
 
 # Epoch cap. chrombpnet trains up to 50 epochs and early stopping decides; at

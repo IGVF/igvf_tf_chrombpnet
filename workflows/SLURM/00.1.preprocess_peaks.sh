@@ -69,7 +69,7 @@ require_input "${blacklist}" "cli.py download-references"
 require_input "${peak_chrom_sizes}" "cli.py download-references"
 preflight_check
 
-activate_env "${preprocess_conda}"
+activate_env "${preprocess_env}"
 
 for dataset in "${datasets[@]}"; do
     echo "Processing peaks for ${dataset}..."

@@ -70,7 +70,7 @@ score_types=("profile")  # counts already done; add "counts" here to redo/extend
 out_dir="${averaged_dir}/${dataset}"
 mkdir -p "${out_dir}" "${log_dir}"
 
-activate_env "${CONDA_ENV}"
+activate_env "${chrombpnet_env}"
 
 metadata_start "06.0.average_contrib_scores"
 metadata_inputs+=( "model=${full_model_dir_selected}" )

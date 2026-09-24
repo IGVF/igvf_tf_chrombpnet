@@ -78,9 +78,7 @@ for score_type in "${score_types[@]}"; do
     mkdir -p "${averaged_dir}/${dataset}/modisco/${score_type}_report"
 done
 
-load_render_modules
-
-activate_env "${CONDA_ENV}"
+activate_env "${chrombpnet_env}"
 
 metadata_start "08.0.run_modisco"
 metadata_inputs+=( "contributions=${averaged_dir}/${dataset}" )

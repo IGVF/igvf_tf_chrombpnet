@@ -81,8 +81,7 @@ done
 require_input "${genome_fa}" "cli.py download-references"
 preflight_check
 
-load_gpu_modules
-activate_env "${CONDA_ENV}"
+activate_env "${chrombpnet_env}"
 gpu_env
 
 for dataset in "${datasets[@]}"; do

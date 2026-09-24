@@ -41,7 +41,7 @@ export REPO_ROOT
 # --- end bootstrap -------------------------------------------------------------
 # shellcheck source=lib/bash/config.sh
 source "${REPO_ROOT}/lib/bash/config.sh" || exit 1
-activate_env "${CONDA_ENV}"
+activate_env "${chrombpnet_env}"
 
 metadata_start "03.1.select_bias"
 metadata_inputs+=( "bias_model=${results_path}/bias_models" )

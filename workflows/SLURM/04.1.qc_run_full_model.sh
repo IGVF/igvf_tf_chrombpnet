@@ -33,7 +33,7 @@ export REPO_ROOT
 # shellcheck source=lib/bash/config.sh
 source "${REPO_ROOT}/lib/bash/config.sh" || exit 1
 
-activate_env "${CONDA_ENV}"
+activate_env "${chrombpnet_env}"
 
 metadata_start "04.1.qc_run_full_model"
 metadata_inputs+=( "model=${full_model_dir}" )

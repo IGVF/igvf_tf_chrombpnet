@@ -85,7 +85,7 @@ require_input "${hits_tsv}" 10.0.run_finemo_unified.sh
 require_input "${finemo_npz}" 10.0.run_finemo_unified.sh
 preflight_check
 
-activate_env "${finemo_conda}"
+activate_env "${finemo_env}"
 metadata_outputs+=( "motif_report=${report_dir}/motif_report.tsv" )
 metadata_params+=( "dataset=${dataset}" )
 

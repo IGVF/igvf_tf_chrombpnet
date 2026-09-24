@@ -96,7 +96,7 @@ metadata_outputs+=( "metrics=${out_dir}/combined_model_metrics.tsv" )
 metadata_outputs+=( "plot=${out_dir}/combined_performance_boxplot.pdf" )
 for _m in "${metrics_args[@]}"; do metadata_inputs+=( "metrics=${_m#*=}" ); done
 
-activate_env "${CONDA_ENV}"
+activate_env "${chrombpnet_env}"
 
 echo "[$(date)] Combining full-model QC across: ${combined_datasets[*]}"
 

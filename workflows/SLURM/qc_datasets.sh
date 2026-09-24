@@ -41,7 +41,7 @@ export REPO_ROOT
 # shellcheck source=lib/bash/common.sh
 source "${REPO_ROOT}/lib/bash/common.sh" || exit 1
 
-activate_env "${CONDA_ENV}"
+activate_env "${preprocess_env}"
 
 metadata_start "qc_datasets"
 

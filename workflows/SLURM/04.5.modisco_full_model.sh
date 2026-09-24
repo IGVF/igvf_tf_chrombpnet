@@ -88,7 +88,7 @@ metadata_inputs+=( "motif_db=${chrombpnet_motifs_meme}" )
 require_input "${chrombpnet_motifs_meme}" "cli.py download-references"
 preflight_check
 
-activate_env "${motifs_conda}"
+activate_env "${chrombpnet_env}"
 
 for dataset in "${datasets[@]}"; do
     out_dir="${full_model_dir}/${dataset}_${peak_type}_fold_${fold}"

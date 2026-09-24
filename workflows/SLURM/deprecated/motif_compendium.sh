@@ -92,7 +92,7 @@ if [[ "${n_found}" -eq 0 ]]; then
 fi
 
 # Run MotifCompendium clustering + annotation
-activate_env "${motif_compendium_conda}"
+activate_env "${motif_compendium_env}"
 
 metadata_start "deprecated/motif_compendium"
 metadata_inputs+=( "config_tsv=${config_tsv}" "ref_db=${ref_db_meme}" )

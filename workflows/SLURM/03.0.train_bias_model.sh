@@ -150,8 +150,7 @@ require_input "${genome_fa}"   "cli.py download-references"
 require_input "${chrom_sizes}" "cli.py download-references"
 preflight_check
 
-load_gpu_modules
-activate_env "${CONDA_ENV}"
+activate_env "${chrombpnet_env}"
 gpu_env
 metadata_outputs+=( "bias_model=${model_file}" )
 # The metrics JSON is a real output of this step and the ONLY thing 03.1 reads

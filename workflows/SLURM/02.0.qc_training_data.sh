@@ -111,7 +111,7 @@ require_input "${peaks_np}"      00.1.preprocess_peaks.sh
 require_input "${negatives_bed}" 01.0.preprocess_nonpeaks.sh
 preflight_check
 
-activate_env "${preprocess_conda}"
+activate_env "${preprocess_env}"
 
 # TSS enrichment needs a TSS list. `cli.py download-references` derives one from
 # refGene; without it the rest of the QC still runs.

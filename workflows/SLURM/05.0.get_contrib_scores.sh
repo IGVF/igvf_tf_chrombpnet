@@ -53,9 +53,7 @@ source "${REPO_ROOT}/lib/bash/config.sh" || exit 1
 fold="${folds[${SLURM_ARRAY_TASK_ID}]}"
 [[ -z "${fold}" ]] && { echo "No fold at array index ${SLURM_ARRAY_TASK_ID}, exiting."; exit 0; }
 
-load_gpu_modules
-
-activate_env "${CONDA_ENV}"
+activate_env "${chrombpnet_env}"
 
 metadata_start "05.0.get_contrib_scores"
 for _ds in "${datasets[@]}"; do

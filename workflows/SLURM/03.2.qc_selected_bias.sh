@@ -92,8 +92,7 @@ metadata_outputs+=( "contributions=${out_dir}/auxiliary/interpret_subsample/${fi
 metadata_outputs+=( "contributions=${out_dir}/auxiliary/interpret_subsample/${file_prefix}_bias.profile_scores.h5" )
 preflight_check
 
-load_gpu_modules
-activate_env "${CONDA_ENV}"
+activate_env "${chrombpnet_env}"
 gpu_env
 metadata_params+=( "fold=${fold}" "bias_suffix=${suffix}" )
 echo "[$(date)] [fold ${fold}] Full QC on selected bias model (suffix ${suffix})"

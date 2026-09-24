@@ -112,7 +112,7 @@ require_input "${compiled_h5}" 09.0.cross_dataset_compendium.sh
 require_input "${peaks_file}" 05.0.get_contrib_scores.sh
 preflight_check
 
-activate_env "${finemo_conda}"
+activate_env "${finemo_env}"
 gpu_env
 metadata_outputs+=( "hits=${hits_file}" )
 metadata_params+=( "alpha=${finemo_alpha}" "dataset=${dataset}" )
