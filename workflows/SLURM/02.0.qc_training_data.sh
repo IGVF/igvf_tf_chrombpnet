@@ -1,6 +1,6 @@
 #!/bin/bash
 # shellcheck disable=SC2218  # false positive in shellcheck 0.11.0: helpers come from common.sh
-#SBATCH --job-name=qc_signal_peaks
+#SBATCH --job-name=qc_training_data
 #SBATCH --mem=16G
 #SBATCH --cpus-per-task=2
 #SBATCH --time=2:00:00
@@ -8,8 +8,18 @@
 #SBATCH --output=%x_%j.log
 #SBATCH --error=%x_%j.log
 
-# 02.0.qc_signal_peaks.sh
-# Purpose: QC the signal, peaks and background BEFORE committing GPU time.
+# 02.0.qc_training_data.sh
+# Purpose: QC the assembled TRAINING SET before committing GPU time.
+#
+# Named for what only this step can do. 00.1 already QCs the peaks -- it has
+# to, since it filters them -- so a second step called "qc_signal_peaks" read
+# as redundant. What is NOT available until here is the BACKGROUND: the
+# GC-matched negatives come from 01.0, and the TSS list from
+# download-references. Every distinctive check below needs one of those:
+# auroc_peaks_vs_nonpeaks, the GC-match comparison, the bias-threshold scan
+# and tss_enrichment. This is the first point at which signal, peaks and
+# background all exist, which is the only point where the training set can be
+# judged as a whole.
 #
 # Runs on the three artifacts training will actually use -- the prepared bigwig
 # from 00.0, the filtered narrowPeak from 00.1 and the GC-matched negatives
@@ -43,7 +53,7 @@
 #
 # Usage:
 #   export DATASET=<name>
-#   cd workflows/SLURM && sbatch 02.0.qc_signal_peaks.sh
+#   cd workflows/SLURM && sbatch 02.0.qc_training_data.sh
 #
 # Prerequisites: 00.0.prepare_signal.sh, 00.1.preprocess_peaks.sh and
 #   01.0.preprocess_nonpeaks.sh.
@@ -77,7 +87,7 @@ source "${REPO_ROOT}/lib/bash/config.sh" || exit 1
 
 dataset="${datasets[0]}"
 signal_bw="${data_path}/signal/data_unstranded.bw"
-peaks_np="${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
+peaks_np="${peaks_dir}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
 qc_dir="${results_path}/plots/signal_qc"
 
 # One fold's negatives, not all five. Every fold draws from the same candidate
@@ -86,10 +96,10 @@ qc_dir="${results_path}/plots/signal_qc"
 qc_fold="${folds[0]}"
 negatives_bed="${data_path}/${dataset}/output_${peak_type}_fold_${qc_fold}_negatives.bed"
 
-metadata_start "02.0.qc_signal_peaks"
-metadata_inputs+=( "bigwig=${signal_bw}" "peaks=${peaks_np}" "negatives=${negatives_bed}" )
-metadata_outputs+=( "qc_json=${qc_dir}/${dataset}_signal_qc.json" )
-metadata_outputs+=( "qc_tsv=${qc_dir}/${dataset}_signal_qc.tsv" )
+metadata_start "02.0.qc_training_data"
+metadata_inputs+=( "signal=${signal_bw}" "peaks=${peaks_np}" "negatives=${negatives_bed}" )
+metadata_outputs+=( "qc=${qc_dir}/${dataset}_signal_qc.json" )
+metadata_outputs+=( "qc=${qc_dir}/${dataset}_signal_qc.tsv" )
 metadata_outputs+=( "profile_peaks=${qc_dir}/${dataset}_profile_peaks.pdf" )
 metadata_outputs+=( "profile_tss=${qc_dir}/${dataset}_profile_tss.pdf" )
 metadata_outputs+=( "peaks_vs_background=${qc_dir}/${dataset}_peaks_vs_background.pdf" )

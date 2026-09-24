@@ -112,8 +112,12 @@ unset _required
 # DATASET picks the folder; dataset_name names the outputs. They can legitimately
 # differ when a config is selected by path, but when they differ under DATASET=
 # it is almost always a copied template that was not finished renaming.
+# Only meaningful when DATASET= picked the folder. With DATASET_CONFIG= the
+# path was given explicitly and the folder name carries no intent -- a config
+# that lives beside its inputs is a legitimate layout, and warning about it
+# every run trains people to ignore the warning.
 _config_folder="$(basename "$(dirname "${dataset_config}")")"
-if [[ -n "${dataset_name}" && "${dataset_name}" != "${_config_folder}" ]]; then
+if [[ -z "${DATASET_CONFIG:-}" && -n "${dataset_name}" && "${dataset_name}" != "${_config_folder}" ]]; then
     echo "WARNING: dataset_name is '${dataset_name}' but the config folder is" >&2
     echo "  '${_config_folder}' (${dataset_config})." >&2
     echo "  Outputs will be named '${dataset_name}'. Rename one to match if that" >&2
@@ -151,6 +155,12 @@ predictions_dir="${results_path}/predictions"
 averaged_dir="${results_path}/contrib_scores"
 compendium_dir="${results_path}/compendium"
 log_dir="${results_path}/logs"
+# 02.0 writes this; 03.0 reads it to decide which bias factors are worth a GPU
+# job at all. See qc.bias_threshold_viability().
+# 00.1 writes the filtered narrowPeak and its sidecar here, beside signal/.
+peaks_dir="${data_path}/peaks"
+signal_qc_dir="${results_path}/plots/signal_qc"
+bias_scan_file="${signal_qc_dir}/${bias_dataset}_bias_threshold_scan.tsv"
 # Per-dataset run metadata lives with that dataset's results; common.sh
 # defaulted it to the collaboration root for cross-dataset steps.
 metadata_dir="${METADATA_DIR:-${results_path}/metadata}"

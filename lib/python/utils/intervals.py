@@ -19,9 +19,15 @@ pinned by `tests/test_intervals.py`; three of them are not obvious:
 - `bedtools slop` clamps to `[0, chromlen]` and never drops an interval.
   `clip_ranges(chromsizes)` agrees (`remove=False` is the default).
 - narrowPeak's summit is an offset from `Start`, floor-divided.
+
+Two ways in: a plain BED of regions, summit = midpoint (`read_bed`), or a
+peak caller's narrowPeak re-centred on its OWN summit (`read_narrowpeak` +
+`summit_windows`), which is what a summit-anchored model wants.
 """
 
 from __future__ import annotations
+
+import math
 
 import pandas as pd
 import pyranges1 as pr
@@ -48,6 +54,58 @@ NARROWPEAK_OUT_COLUMNS = [
 def read_bed(path) -> pr.PyRanges:
     """Read a local BED (optionally gzipped) into a PyRanges. Extra columns are kept."""
     return pr.read_bed(str(path))
+
+
+def read_narrowpeak(path) -> pr.PyRanges:
+    """Read a 10-column narrowPeak (e.g. MACS2) with its columns named.
+
+    ``read_bed`` would name columns 7-10 after BED12's thickStart/thickEnd/
+    itemRgb/blockCount, so the summit would be read as a "blockCount". This
+    names them for what narrowPeak says they are and fails on any other shape.
+    """
+    df = pd.read_csv(path, sep="\t", header=None, comment="#")
+    if df.shape[1] != 10:
+        raise ValueError(f"{path}: expected a 10-column narrowPeak, found {df.shape[1]} columns")
+    df.columns = NARROWPEAK_OUT_COLUMNS
+    return pr.PyRanges(df)
+
+
+def summit_windows(peaks: pr.PyRanges, window: int, max_qvalue: float | None = None):
+    """Re-centre narrowPeak rows on their summit: ``[summit - w//2, summit + w - w//2)``.
+
+    For ``window=1000`` that is 500 bp either side, i.e. bases summit-500 ..
+    summit+499 inclusive. Every row is a window of its own, so a region MACS2
+    called with several summits yields several (overlapping) windows -- one per
+    summit, as chrombpnet's reference preprocessing does. Afterwards the
+    midpoint IS the summit, so ``summit_offsets`` and ``to_narrowpeak`` need no
+    special case.
+
+    ``max_qvalue`` keeps rows with q <= it, reading column 9 as -log10(q) the
+    way MACS2 writes it; a file with q = -1 (not computed) cannot be filtered
+    and raises. Windows that would start before base 0 are dropped.
+
+    Returns ``(windows, {"qvalue": n_dropped, "before_chrom_start": n_dropped})``.
+    """
+    if window <= 0:
+        raise ValueError(f"window must be positive, got {window}")
+    dropped = {"qvalue": 0, "before_chrom_start": 0}
+    if max_qvalue is not None:
+        if not 0.0 < max_qvalue <= 1.0:
+            raise ValueError(f"max_qvalue must be in (0, 1], got {max_qvalue}")
+        if (peaks["qvalue"] < 0).all():
+            raise ValueError("no q-values in this narrowPeak (column 9 is -1); cannot filter on q")
+        keep = (peaks["qvalue"] >= -math.log10(max_qvalue)).to_numpy()
+        dropped["qvalue"] = int((~keep).sum())
+        peaks = peaks[keep]
+    summit = (peaks["Start"] + peaks["summit"]).to_numpy()
+    start = summit - window // 2
+    ok = start >= 0
+    dropped["before_chrom_start"] = int((~ok).sum())
+    out = peaks[ok].copy()
+    out["Start"] = start[ok]
+    out["End"] = start[ok] + window
+    out["summit"] = window // 2
+    return pr.PyRanges(out), dropped
 
 
 def read_bed3(source) -> pr.PyRanges:
@@ -138,6 +196,8 @@ def drop_windows_off_chromosome(peaks: pr.PyRanges, chromsizes: dict[str, int], 
 def to_narrowpeak(peaks: pr.PyRanges) -> pd.DataFrame:
     """Build the 10-column narrowPeak chrombpnet consumes, summit at the midpoint.
 
+    (After ``summit_windows`` the midpoint is the caller's summit.)
+
     Replaces the awk in the old ``00.1.preprocess_peaks.sh``:
 
         summit = int(($3-$2)/2); print $1,$2,$3,"peak_"NR,0,".",0,-1,-1,summit
@@ -156,9 +216,10 @@ def to_narrowpeak(peaks: pr.PyRanges) -> pd.DataFrame:
     out["name"] = [f"peak_{i}" for i in range(1, len(out) + 1)]
     out["score"] = 0
     out["strand"] = "."
-    out["signal"] = 0
-    out["pvalue"] = -1
-    out["qvalue"] = -1
+    # A caller's narrowPeak (read_narrowpeak) keeps its own signal/p/q; a
+    # plain BED has none, and gets the awk's placeholders.
+    for col, placeholder in (("signal", 0), ("pvalue", -1), ("qvalue", -1)):
+        out[col] = peaks[col].to_numpy() if col in peaks.columns else placeholder
     out["summit"] = (out["End"] - out["Start"]) // 2  # see summit_offsets()
     return out[NARROWPEAK_OUT_COLUMNS]
 

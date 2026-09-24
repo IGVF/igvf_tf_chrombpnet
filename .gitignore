@@ -44,3 +44,9 @@ __pycache__/
 
 # pixi
 .pixi/
+
+# Credentials and machine-local overrides (see workflows/molab/.env.example)
+workflows/molab/.env
+.env
+*.env
+!*.env.example

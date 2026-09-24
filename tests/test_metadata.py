@@ -20,6 +20,19 @@ sys.path.insert(0, str(REPO / "lib" / "python"))
 from utils import metadata  # noqa: E402
 
 
+def _of_type(rec, parameter_type):
+    """Entries of one parameter_type from the unified `parameters` list."""
+    return [p for p in rec["parameters"] if p["parameter_type"] == parameter_type]
+
+
+def _inputs(rec):
+    return _of_type(rec, "input")
+
+
+def _outputs(rec):
+    return _of_type(rec, "output")
+
+
 @pytest.fixture
 def sample(tmp_path):
     p = tmp_path / "in.txt"
@@ -50,13 +63,13 @@ def test_md5_is_chunk_size_independent(sample):
 def test_checksums_can_be_disabled_distinguishably(sample, monkeypatch):
     monkeypatch.setenv(metadata.CHECKSUM_ENV_VAR, "0")
     rec = metadata.file_record("x", sample)
-    assert rec["md5"] is None and rec["md5_skipped"] == "disabled"
-    assert rec["exists"] is True and rec["size_bytes"] > 0  # still described
+    assert rec["md5sum"] is None and rec["md5_skipped"] == "disabled"
+    assert rec["file_exists"] is True and rec["file_size"] > 0  # still described
 
 
 def test_missing_file_is_distinguishable_from_disabled(tmp_path):
     rec = metadata.file_record("x", tmp_path / "nope.txt")
-    assert rec["exists"] is False and rec["md5_skipped"] == "missing"
+    assert rec["file_exists"] is False and rec["md5_skipped"] == "missing"
 
 
 # ── the record ────────────────────────────────────────────────────────────────
@@ -72,10 +85,11 @@ def test_successful_run_writes_a_record(tmp_path, sample):
 
     (rec_path,) = list((tmp_path / "meta").rglob("*.json"))
     rec = json.loads(rec_path.read_text())
-    assert rec["status"] == "ok" and rec["step"] == "demo" and rec["dataset"] == "ds"
-    assert rec["inputs"][0]["md5"] == metadata.md5sum(sample)
-    assert rec["outputs"][0]["exists"] is True
-    assert rec["params"] == [{"key": "n", "value": "3"}]
+    assert rec["run_status"] == "ok" and rec["step"] == "demo" and rec["dataset"] == "ds"
+    assert _inputs(rec)[0]["md5sum"] == metadata.md5sum(sample)
+    assert _outputs(rec)[0]["file_exists"] is True
+    settings = _of_type(rec, "param")
+    assert [(p["parameter_name"], p["parameter_value"]) for p in settings] == [("n", "3")]
 
 
 def test_outputs_are_hashed_at_exit_not_declaration(tmp_path):
@@ -86,8 +100,8 @@ def test_outputs_are_hashed_at_exit_not_declaration(tmp_path):
         out.write_text("written after declaration")
 
     rec = json.loads(next((tmp_path / "meta").rglob("*.json")).read_text())
-    assert rec["outputs"][0]["exists"] is True
-    assert rec["outputs"][0]["md5"] == metadata.md5sum(out)
+    assert _outputs(rec)[0]["file_exists"] is True
+    assert _outputs(rec)[0]["md5sum"] == metadata.md5sum(out)
 
 
 def test_failed_run_still_writes_a_record_and_reraises(tmp_path):
@@ -96,16 +110,16 @@ def test_failed_run_still_writes_a_record_and_reraises(tmp_path):
         raise ValueError("boom")
 
     rec = json.loads(next((tmp_path / "meta").rglob("*.json")).read_text())
-    assert rec["status"] == "failed"
+    assert rec["run_status"] == "failed"
     assert "boom" in rec["error"]
-    assert rec["outputs"][0]["exists"] is False  # records what it meant to make
+    assert _outputs(rec)[0]["file_exists"] is False  # records what it meant to make
 
 
 def test_record_captures_environment_and_tools(tmp_path):
     with metadata.record("demo", out_dir=tmp_path / "meta"):
         pass
     rec = json.loads(next((tmp_path / "meta").rglob("*.json")).read_text())
-    assert any(t["name"] == "python" for t in rec["tools"])
+    assert any(t["software_name"] == "python" for t in rec["software_versions"])
     assert rec["schema_version"] == metadata.SCHEMA_VERSION
     assert set(rec["slurm"]) >= {"job_id", "array_task_id"}
     assert rec["duration_s"] >= 0
@@ -210,9 +224,9 @@ def test_emit_metadata_cli_produces_the_same_schema(tmp_path, sample):
         capture_output=True,
     )
     rec = json.loads(next(meta_dir.rglob("*.json")).read_text())
-    assert rec["step"] == "04.0.train_full_model" and rec["status"] == "ok"
-    assert rec["inputs"][0]["md5"] == metadata.md5sum(sample)
-    assert {"name": "chrombpnet", "version": "1.0.1"} in rec["tools"]
+    assert rec["step"] == "04.0.train_full_model" and rec["run_status"] == "ok"
+    assert _inputs(rec)[0]["md5sum"] == metadata.md5sum(sample)
+    assert {"software_name": "chrombpnet", "software_version": "1.0.1"} in rec["software_versions"]
 
 
 def test_emit_metadata_cli_marks_nonzero_exit_as_failed(tmp_path):
@@ -232,7 +246,7 @@ def test_emit_metadata_cli_marks_nonzero_exit_as_failed(tmp_path):
         capture_output=True,
     )
     rec = json.loads(next(meta_dir.rglob("*.json")).read_text())
-    assert rec["status"] == "failed" and rec["exit_status"] == 3
+    assert rec["run_status"] == "failed" and rec["exit_status"] == 3
 
 
 # ── the reason the schema is shaped this way ──────────────────────────────────
@@ -258,15 +272,68 @@ def test_heterogeneous_records_union_into_one_duckdb_table(tmp_path, sample):
     steps = con.sql(f"SELECT step FROM {src} ORDER BY step").fetchall()
     assert steps == [("step_a",), ("step_b",)]
 
-    # outputs unnest to one row per produced file, with its checksum
+    # One UNNEST of `parameters` answers every question about a run; the kinds
+    # are told apart by parameter_type, not by living in separate arrays.
     files = con.sql(
-        f"SELECT step, o.role, o.md5 FROM {src}, UNNEST(outputs) AS t(o) ORDER BY step"
+        f"SELECT step, p.parameter_name, p.md5sum, p.file_format "
+        f"FROM {src}, UNNEST(parameters) AS t(p) "
+        f"WHERE p.parameter_type = 'output' ORDER BY step"
     ).fetchall()
     assert sorted(f[1] for f in files) == ["fragments", "narrowpeak"]
     assert all(f[2] == metadata.md5sum(sample) for f in files)
+    # file_format is DERIVED from the extension, never hand-written
+    assert all(f[3] is not None for f in files)
 
-    # params stay queryable despite differing between the two steps
+    # settings stay queryable despite differing between the two steps
     keys = con.sql(
-        f"SELECT DISTINCT p.key FROM {src}, UNNEST(params) AS t(p) ORDER BY p.key"
+        f"SELECT DISTINCT p.parameter_name FROM {src}, UNNEST(parameters) AS t(p) "
+        f"WHERE p.parameter_type = 'param' ORDER BY p.parameter_name"
     ).fetchall()
     assert [k[0] for k in keys] == ["chroms", "index", "input_window"]
+
+
+def test_record_measures_its_own_peak_rss(tmp_path):
+    """The in-process path DID the work, so its RSS is the step's RSS."""
+    with metadata.record("99.0.fake", out_dir=tmp_path) as md:
+        md.add_param("x", 1)
+    rec = json.loads(next(tmp_path.glob("*.json")).read_text())
+    assert rec["peak_rss_gb"] is not None
+    assert rec["peak_rss_gb"] > 0
+
+
+def test_emit_metadata_cli_does_not_invent_a_peak_rss(tmp_path):
+    """emit_metadata.py runs as a SIBLING of the work it records.
+
+    Its own RSS is a few tens of MB regardless of what the step did, so
+    reporting it as the step's footprint is worse than reporting nothing --
+    it is wrong and it looks plausible. Same rule as `started_at`.
+    """
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO / "src" / "emit_metadata.py"),
+            "--step", "99.0.fake",
+            "--out-dir", str(tmp_path),
+            "--exit-status", "0",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    rec = json.loads(next(tmp_path.glob("*.json")).read_text())
+    assert rec["peak_rss_gb"] is None
+
+
+def test_report_peak_rss_writes_gib_when_asked(tmp_path, monkeypatch):
+    """03.0, 03.2 and 03.3 read this file into their peak_rss_gb metric."""
+    target = tmp_path / ".peak_rss_gb"
+    monkeypatch.setenv("METADATA_RSS_FILE", str(target))
+    metadata.report_peak_rss()
+    peak = float(target.read_text())
+    assert 0 < peak < 1024  # a test process: some MB, never zero, never TB
+
+
+def test_report_peak_rss_is_silent_when_not_asked(tmp_path, monkeypatch):
+    monkeypatch.delenv("METADATA_RSS_FILE", raising=False)
+    monkeypatch.chdir(tmp_path)
+    metadata.report_peak_rss()
+    assert list(tmp_path.iterdir()) == []

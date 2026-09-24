@@ -106,7 +106,7 @@ out_dir="${finemo_unified_dir}/${dataset}_${peak_type}"
 hits_file="${out_dir}/hits.bed.gz"
 
 
-metadata_inputs+=( "counts_h5=${counts_h5}" "compiled_h5=${compiled_h5}" "peaks=${peaks_file}" )
+metadata_inputs+=( "contributions=${counts_h5}" "compiled_h5=${compiled_h5}" "peaks=${peaks_file}" )
 require_input "${counts_h5}" 06.0.average_contrib_scores.sh
 require_input "${compiled_h5}" 09.0.cross_dataset_compendium.sh
 require_input "${peaks_file}" 05.0.get_contrib_scores.sh

@@ -25,7 +25,10 @@ fi
 
 # ── Cluster software ──────────────────────────────────────────────────────────
 # Recreate the envs from the pinned specs: conda env create -f envs/<name>.yml
-CONDA_INIT="${CONDA_INIT:-/home/groups/engreitz/Software/anaconda3/etc/profile.d/conda.sh}"
+# `:-` would resolve an explicitly EMPTY CONDA_INIT back to this default, and
+# empty is meaningful: it means "no conda, the tools are already on PATH"
+# (a container, or a pixi environment). `-` keeps the empty value.
+CONDA_INIT="${CONDA_INIT-/home/groups/engreitz/Software/anaconda3/etc/profile.d/conda.sh}"
 CONDA_ENV="${CHROMBPNET_ENV:-/home/groups/engreitz/Users/opushkar/.conda/envs/chrombpnet}"
 finemo_conda="${FINEMO_ENV:-/home/groups/engreitz/Users/opushkar/.conda/envs/finemo}"
 motif_compendium_conda="${MOTIF_COMPENDIUM_ENV:-/home/groups/engreitz/Users/opushkar/.conda/envs/motif_compendium}"
@@ -38,6 +41,10 @@ motif_compendium_conda="${MOTIF_COMPENDIUM_ENV:-/home/groups/engreitz/Users/opus
 # 00.0/00.1/02.0 pointed at a path that was never created and failed on import.
 # Built from envs/preprocess.yml on 2026-09-21.
 preprocess_conda="${PREPROCESS_ENV:-/home/groups/engreitz/Users/emattei/.conda/envs/preprocess}"
+# Steps 03.3/04.5 (src/motif_qc.py): TF-MoDISco 2.5.2, which needs Python
+# >= 3.9. Create it with `conda env create -f envs/motifs.yml`; like
+# preprocess, the default is where it is meant to go, not where it already is.
+motifs_conda="${MOTIFS_ENV:-/home/groups/engreitz/Users/emattei/.conda/envs/motifs}"
 
 # Default root for dataset data/results; config/site.sh usually repoints this
 # at a shared collaboration tree.
@@ -59,7 +66,11 @@ data_root="${DATASET_ROOT:-${REPO_ROOT}}"
 #
 # Defined here, above the references.sh source, because that file needs it too.
 bootstrap_python() {
-    if [[ -n "${BOOTSTRAP_PYTHON}" ]]; then
+    # `:-` matters: steps that use `set -u` (00.1, 01.0, 03.1) abort here on an
+    # unset BOOTSTRAP_PYTHON, and because this runs from the metadata EXIT trap
+    # the only symptom was "no python >= 3.9 found; run metadata not written" --
+    # a silently missing provenance record on an otherwise successful step.
+    if [[ -n "${BOOTSTRAP_PYTHON:-}" ]]; then
         echo "${BOOTSTRAP_PYTHON}"
         return 0
     fi
@@ -107,12 +118,74 @@ metadata_dir="${METADATA_DIR:-${REPO_ROOT}/results/metadata}"
 # means converting those ~40 call sites in the same change, not leaving a second
 # way to do it.
 
+# load_bias_sweep — set bias_factors and bias_suffixes_sweep from 02.0's scan.
+#
+# 02.0 replays chrombpnet's own background-selection arithmetic over a fine
+# grid and writes ${bias_scan_file}, which knows two things a hand-written list
+# cannot: which factors leave ZERO non-peaks (those jobs cannot succeed), and
+# which are DUPLICATES of each other, because counts are integers and the
+# training set only changes when the cutoff crosses one.
+#
+# Shared by 03.0 and 03.1 deliberately. When only 03.0 read the scan, 03.1 went
+# on reading the config, the two disagreed, and 03.1 "selected" a winner from
+# whichever single model happened to overlap -- silently, because a selection
+# from one candidate looks exactly like a selection from six.
+#
+# Falls back to the config when there is no scan, so a cluster run that never
+# executed 02.0 is unaffected. BIAS_FACTORS_FROM_SCAN=0 forces the config.
+load_bias_sweep() {
+    if [[ "${BIAS_FACTORS_FROM_SCAN:-1}" != "1" || ! -s "${bias_scan_file}" ]]; then
+        # Falling back to the config, which may legitimately not list a sweep:
+        # a dataset that always runs 02.0 has no reason to. Say so, rather than
+        # letting n_factors=0 divide by zero three lines later.
+        if [[ ${#bias_factors[@]} -eq 0 ]]; then
+            echo "ERROR: no bias sweep to run." >&2
+            echo "  No scan at ${bias_scan_file}, and the dataset config sets no" >&2
+            echo "  bias_factors. Either run 02.0 to generate the scan, or set" >&2
+            echo "  bias_factors / bias_suffixes_sweep in the config." >&2
+            exit 1
+        fi
+        echo "[$(date)] bias sweep from the dataset config (no scan at ${bias_scan_file})"
+        return 0
+    fi
+    local _f _sfx _thr _nafter _nnon _distinct _verdict
+    local _factors=() _suffixes=()
+    while IFS=$'\t' read -r _f _sfx _thr _nafter _nnon _distinct _verdict; do
+        [[ "${_f}" == "factor" ]] && continue        # header
+        [[ "${_distinct}" == "True" ]] || continue   # one per DISTINCT training set
+        _factors+=( "${_f}" )
+        _suffixes+=( "${_sfx}" )
+    done < "${bias_scan_file}"
+
+    if [[ ${#_factors[@]} -eq 0 ]]; then
+        echo "ERROR: ${bias_scan_file} lists no viable bias factor." >&2
+        echo "  Every candidate leaves zero non-peaks after chrombpnet's outlier" >&2
+        echo "  filter, so no training can succeed. Widen the grid or raise the" >&2
+        echo "  outlier threshold, and re-run 02.0." >&2
+        exit 1
+    fi
+    bias_factors=( "${_factors[@]}" )
+    bias_suffixes_sweep=( "${_suffixes[@]}" )
+    echo "[$(date)] bias sweep from ${bias_scan_file}"
+    echo "           ${#bias_factors[@]} distinct factor(s): ${bias_factors[*]}"
+}
+
 # activate_env <conda-env-path> — initialise conda and activate an env.
 # Deliberately does NOT set -euo pipefail: conda's activation scripts are not
 # written against `set -u`, which is why the scripts that do use it set it
 # after this call rather than at the top of the file.
 activate_env() {
     local env_path="${1:?activate_env: missing env path}"
+    # CONDA_INIT set to the empty string means "there is no conda here; the
+    # tools this step needs are already on PATH" -- a container image, or a
+    # pixi environment (see workflows/molab/). This is opt-in: an UNSET or
+    # merely missing CONDA_INIT stays a hard error below, because carrying on
+    # in whatever environment happened to be active is precisely the failure
+    # this function exists to prevent.
+    if [[ -z "${CONDA_INIT}" ]]; then
+        echo "[$(date)] activate_env: CONDA_INIT empty, using tools on PATH (not activating ${env_path})"
+        return 0
+    fi
     if [[ ! -f "${CONDA_INIT}" ]]; then
         echo "ERROR: conda init script not found: ${CONDA_INIT}" >&2
         echo "  Export CONDA_INIT to your conda's etc/profile.d/conda.sh." >&2
@@ -128,7 +201,7 @@ activate_env() {
         echo "ERROR: conda env not found (no ${env_path}/bin/python)." >&2
         echo "  Create it:  conda env create -f \${REPO_ROOT}/envs/<name>.yml -p ${env_path}" >&2
         echo "  Or point the pipeline at an existing one with CHROMBPNET_ENV /" >&2
-        echo "  PREPROCESS_ENV / FINEMO_ENV / MOTIF_COMPENDIUM_ENV." >&2
+        echo "  PREPROCESS_ENV / MOTIFS_ENV / FINEMO_ENV / MOTIF_COMPENDIUM_ENV." >&2
         exit 1
     fi
     # shellcheck disable=SC1090  # path is a cluster location, not resolvable here
@@ -194,6 +267,7 @@ metadata_step="${metadata_step:-}"
 metadata_inputs=()
 metadata_outputs=()
 metadata_params=()
+metadata_metrics=()
 metadata_tools=()
 
 # metadata_start <step-name> — record the start time and arrange for emission
@@ -226,6 +300,7 @@ metadata_emit() {
     for item in "${metadata_inputs[@]+"${metadata_inputs[@]}"}";  do args+=( --input  "${item}" ); done
     for item in "${metadata_outputs[@]+"${metadata_outputs[@]}"}"; do args+=( --output "${item}" ); done
     for item in "${metadata_params[@]+"${metadata_params[@]}"}";  do args+=( --param  "${item}" ); done
+    for item in "${metadata_metrics[@]+"${metadata_metrics[@]}"}"; do args+=( --metric "${item}" ); done
     for item in "${metadata_tools[@]+"${metadata_tools[@]}"}";    do args+=( --tool   "${item}" ); done
 
     # Same interpreter rule as config.sh and references.sh. The EXIT trap fires

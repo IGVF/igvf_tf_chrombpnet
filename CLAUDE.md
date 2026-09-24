@@ -130,14 +130,17 @@ derived output paths live in `config.sh`.
 | `00.0.prepare_signal.sh` | — (loops internally) | no (hardcoded paths) |
 | `00.1.preprocess_peaks.sh` | — | yes |
 | `01.0.preprocess_nonpeaks.sh` | — | yes |
-| `02.0.qc_signal_peaks.sh` | — | yes |
+| `02.0.qc_training_data.sh` | — | yes |
 | `03.0.train_bias_model.sh` | `fold_idx * n_factors + factor_idx` | yes |
 | `03.1.select_bias.sh` | no SBATCH header — run with `bash` | yes |
 | `03.2.qc_selected_bias.sh` | fold | yes |
+| `03.3.modisco_selected_bias.sh` | fold | yes |
 | `04.0.train_full_model.sh` | fold | yes |
 | `04.1.qc_run_full_model.sh` | — | yes |
-| `04.2.qc_combined_boxplot.sh` | — | no (hardcoded `CORE_PATH`) |
+| `04.2.qc_combined_boxplot.sh` | — | no (discovers `config/*/config.yaml` plus `DATASET_CONFIG`) |
 | `04.3.generate_predictions.sh` | dataset | yes |
+| `04.4.qc_full_model_interpret.sh` | fold | yes |
+| `04.5.modisco_full_model.sh` | fold | yes |
 | `05.0.get_contrib_scores.sh` | fold | yes |
 | `06.0.average_contrib_scores.sh` | dataset | yes |
 | `07.0.contribs_to_bigwig.sh` | dataset | yes |
@@ -151,8 +154,9 @@ derived output paths live in `config.sh`.
 All step scripts live in `workflows/SLURM/`. The Python they call lives in `src/`
 and is referenced as `${src_dir}/<name>.py`, never by a relative path:
 `predict_bias_metrics.py` (03.0),
-`select_bias_model.py` (03.1), `run_bias_qc.py` (03.2), `qc_full_model.py` (04.1 and
-04.2-combined), `predict_and_avg.py` (04.2), `average_contrib_scores.py` (06),
+`select_bias_model.py` (03.1), `run_bias_qc.py` (03.2), `motif_qc.py` (03.3, 04.5), `chrombpnet_train.py`
+(03.0, 04.0), `qc_full_model.py` (04.1 and 04.2-combined), `predict_and_avg.py` (04.3),
+`run_full_model_qc.py` (04.4), `average_contrib_scores.py` (06),
 `contribs_to_bigwig.py` (07), `motif_compendium.py` (09 and `_10`),
 `qc_datasets.py` (`qc_datasets.sh`).
 
@@ -191,11 +195,12 @@ cd workflows/SLURM && sbatch 00.1.preprocess_peaks.sh
 ```
 
 ### Environments
-Four, and they are not interchangeable:
+Five, and they are not interchangeable:
 
 | Where | What | Managed by |
 |---|---|---|
 | `chrombpnet` | training, contribs, predictions, MoDISco, all QC plots | `envs/chrombpnet.yml` |
+| `motifs` | per-fold motif QC, 03.3 and 04.5 (TF-MoDISco 2.5.2) | `envs/motifs.yml`; pixi `motifs` on molab |
 | `finemo` | steps 10, 11 | `envs/finemo.yml` |
 | `motif_compendium` | step 09, `_10` | `envs/motif_compendium.yml` |
 | pixi `default` / `qc` | local lint + syntax + plotting only | `pixi.toml` |
@@ -256,20 +261,39 @@ say which of the two kinds of verification a change actually got.
   with its metric value; that text is the fallback for readers colour cannot serve,
   so keep it.
 - **Every step emits a run-metadata JSON.** One record per invocation under
-  `${metadata_dir}` (`<dataset>/results/metadata/<step>/<ts>_<runid>.json`;
-  cross-dataset steps use `${REPO_ROOT}/results/metadata`). It carries inputs and
-  outputs with md5/size/mtime, params, tool versions, SLURM ids, the git commit,
-  and **GitHub permalinks** (`commit_url`, `script_url`) to the exact code that ran.
+  `${metadata_dir}` (`<dataset>/results/metadata/<ts>_<step>_<runid>.json`, a flat directory;
+  cross-dataset steps use `${REPO_ROOT}/results/metadata`). Schema version 2.
   Python steps use `with metadata.record(...)`; bash steps call
   `metadata_start "<step>"` and append to `metadata_inputs`/`metadata_outputs`/
   `metadata_params`/`metadata_tools`, and an EXIT trap emits via
-  `src/emit_metadata.py`. **Both paths produce the same schema** — that is the
-  point, so don't add fields to one without the other.
-  - `params` is a list of `{key, value}` with string values *on purpose*: a plain
-    object would give every step a different STRUCT and DuckDB's union would go
-    ragged. `command` keeps the full argv.
+  `src/emit_metadata.py`. **Both paths produce the same schema** — they share
+  `StepMetadata`, so don't add fields to one without the other.
+  - **Everything a run consumed, produced, was configured with, or measured is
+    ONE long-format list, `parameters`.** `parameter_type` tells the four kinds
+    apart: `input` and `output` are files, `param` is a setting that controlled
+    the run, `metric` is a quantity it measured. One `UNNEST` answers every
+    question about a run; `queries.sql` exposes `run_parameters`, `run_files`,
+    `run_settings` and `run_metrics` over it.
+  - **Field names are ENCODE/IGVF-flavoured and unambiguous on their own**,
+    because UNNEST flattens these structs into one table where a bare `key`,
+    `value`, `name` or `path` says nothing: `parameter_name`/`parameter_value`,
+    `software_name`/`software_version`, `file`/`filepath`/`file_size`/`md5sum`,
+    `uuid`, `date_created`/`date_completed`. Run outcome is `run_status`, NOT
+    `status` — on the portal `status` means an object's lifecycle (released /
+    in progress / archived), not whether a process exited 0. No `@id`, `@type`
+    or `accession` is emitted: those are portal-assigned, and inventing them
+    would make a local record look like a registered IGVF object.
+  - **`parameter_name` says WHAT the data is; `file_format` says how it is
+    encoded.** Neither borrows the other's vocabulary. `file_format` is
+    DERIVED from the extension by `metadata.file_format()` and never
+    hand-written — hand-written formats drift into the semantic name, which is
+    how the old vocabulary ended up with roles like `qc_tsv`, `counts_h5` and
+    `prepared_bigwig` that answered both questions in one string.
+  - Values are strings *on purpose*: a plain object would give every step a
+    different STRUCT and DuckDB's union would go ragged. `command` keeps the
+    full argv.
   - Outputs are declared early but hashed at exit, so a failed run still records
-    what it meant to produce with `exists: false`.
+    what it meant to produce with `file_exists: false`.
   - md5 is on by default, streamed in 8 MiB chunks; `METADATA_CHECKSUMS=0`
     turns it off and the record says `md5_skipped: "disabled"` rather than going
     silently null.
@@ -277,6 +301,17 @@ say which of the two kinds of verification a change actually got.
     signal; the trap only survives SIGTERM.
   - Emission never fails a step, and `script_url` is misleading when `git.dirty`
     is true — filter on it. Query recipes are in `queries.sql`.
+- **00.1 can drop peaks by their own signal** (`peak_min_signal_quantile`, off
+  by default). The threshold is a quantile of the experiment's own genome-wide
+  windows, so it is depth-independent; blacklist regions are excluded from the
+  background sample but peaks are not, because it is the experiment's
+  distribution rather than a background model. It matters out of proportion to
+  the peaks it removes: chrombpnet anchors every bias threshold in the 03.0
+  sweep to `quantile(peak_counts, 0.01)`, and on d0 the weakest 1% of peaks sat
+  at the 40.6th percentile of genome windows, so dropping 1.81% of them moved
+  that anchor from 4 to 17. Needs 00.0's bigwig. Outputs go to
+  `preprocessing/peaks/` with a `peaks.json` sidecar recording what each filter
+  stage cost, and a plot in `plots/peaks_qc/`.
 - **QC runs on the artifacts, not the inputs.** `02.0` reads the prepared
   bigwig, the filtered narrowPeak and the negatives, so every number describes
   what ChromBPNet will actually see after all filtering. It is advisory and
@@ -353,12 +388,13 @@ say which of the two kinds of verification a change actually got.
   with the fix in the message, so this surfaces immediately rather than several
   minutes into a GPU job — but **each of those three files needs the line deleted.**
 
-- **Absolute `opushkar` paths remain in four places**: the three conda envs and
-  `ref_db_meme` in `lib/bash/common.sh`, `CORE_PATH` in `04.2.qc_combined_boxplot.sh`
-  (now `${CORE_PATH:-...}`, so it can be overridden at submit time), `core_path` in
-  `src/qc_datasets.py`, and `out_path` in `00.0.prepare_signal.sh`. They are no
-  longer duplicated — `09.0.cross_dataset_compendium.sh` used to re-declare four of them
-  "mirroring config.sh" and now sources `common.sh`.
+- **Absolute `opushkar` paths remain in three places**: the three conda env
+  defaults in `lib/bash/common.sh` (each overridable: `CHROMBPNET_ENV`,
+  `FINEMO_ENV`, `MOTIF_COMPENDIUM_ENV`), `core_path` in `src/qc_datasets.py`,
+  and the `runs` view's glob in `queries.sql` (point it at your own metadata;
+  the molab notebook rewrites it when it loads the views). They are no longer
+  duplicated — `09.0.cross_dataset_compendium.sh` used to re-declare several of
+  them "mirroring config.sh" and now sources `common.sh`.
 
 - **The endothelial dataset is named two ways and laid out differently.**
   `qc_datasets.py` calls it `igvf17_endothelial`; `README.md`, `qc_full_model.py` and
@@ -389,6 +425,63 @@ say which of the two kinds of verification a change actually got.
   the same cuda/cudnn modules with no constraint. If a GPU step fails oddly on
   `owners`, that's the first thing to check.
 
+- **`03.2` is the GPU half and `03.3` the CPU half of the selected-bias QC.**
+  `pipelines.bias_model_qc()` runs predictions, DeepLIFT interpretation, then
+  TF-MoDISco and its reports in one call. Only the first two need a GPU;
+  TF-MoDISco is CPU-only and is the long pole, so running them together left a
+  GPU idle for hours. `src/run_bias_qc.py --stage gpu` is 03.2. Its
+  `--stage {modisco,all}` (chrombpnet's TF-MoDISco 2.0.7) is no longer called
+  by any step; 03.3 runs `src/motif_qc.py` instead -- see the next item.
+  Same reasoning as 08.0 below.
+
+- **The full model gets the same split: 04.0 trains, 04.4/04.5 interpret.**
+  `chrombpnet pipeline`, after training, predictions and marginal footprinting,
+  runs DeepLIFT on a 30K peak subsample and TF-MoDISco on the profile scores
+  inside the same GPU job. `chrombpnet_train.py --stop-before-interpretation`
+  (always passed by 04.0) replaces chrombpnet's interpretation entry point with
+  a stop, so everything before it is chrombpnet's unmodified code and nothing
+  after it runs; `src/run_full_model_qc.py --stage gpu` then runs the
+  interpretation exactly as pipeline would have, as 04.4 (DeepLIFT, profile
+  head -- the pipeline's counts run is commented out upstream), and 04.5 finds
+  the motifs with `src/motif_qc.py`. The 30K subsample is
+  `utils.regions.subsample_regions`, chrombpnet's own rule (seed 1234), shared
+  with the bias QC. Nothing downstream waits on 04.4/04.5: they are per-fold
+  QC, while 05 gives analysis-grade scores on all peaks and 08 motifs on the
+  fold average -- which can hide a bad fold, which is what 04.5 is for.
+
+- **Per-fold motif QC (03.3, 04.5) is `src/motif_qc.py`, not chrombpnet's
+  modisco: TF-MoDISco 2.5.2 at `-n 5000` on BOTH heads, in its own `motifs`
+  env.** The three changes, each for a measured reason (d0, fold 0, bias
+  `_065`, 2026-09-23):
+  - *Small budget.* Runtime is dominated by clustering, which grows with the
+    seqlet count: 63 min at chrombpnet's `-n 50000` (profile head) against
+    6 min at 5000 (counts head). This is QC; analysis-grade motifs come from
+    08.0 at the full budget on the fold average. `motif_qc_max_seqlets` in
+    config.yaml raises it.
+  - *Both heads.* chrombpnet scores and clusters the profile head only. On d0
+    the profile head was Tn5 (90% of seqlets in `TN5_*`-matching patterns),
+    while the counts head -- the one behind the bias model's r of 0.56 on
+    peaks vs 0.40 on non-peaks -- was GC-rich (positive) and AT-rich
+    (negative) composition, invisible from profile alone. So 03.2 and 04.4
+    score both heads (04.4 departs from the pipeline to do it).
+  - *2.5.2 is not faster by itself:* `core`/`affinitymat`/`cluster`/
+    `extract_seqlets` are byte-identical to the chrombpnet env's 2.0.7. It
+    needs Python >= 3.9 (memelite), hence the separate env. Its
+    `modisco report` writes `report.html`, so chrombpnet's `*_profile.pdf`
+    and pipeline-mode HTML report (which read `motifs.html`) are gone.
+  - The report matches against chrombpnet's own `motifs.meme.txt`
+    (`chrombpnet_motifs_meme`, fetched pinned to v1.0.1 by
+    `download-references`), because MotifCompendium has no Tn5 or DNase bias
+    motifs. tomtom-lite still assigns broad GC and Alu-repeat patterns to
+    `TN5_*` at tiny p-values; read the logos, not the labels.
+  - Per-seqlet annotation (tangermeme recursive seqlets + tomtom-lite, as
+    cherimoya does) was tried and dropped: 1% of seqlets matched Tn5 on a
+    model whose patterns were 90% Tn5.
+  - The script pins numba/OpenMP threads to `--threads` (the step passes
+    `SLURM_CPUS_PER_TASK`) before anything imports numba, which otherwise
+    sizes its pool to the host's cores. chrombpnet's scores h5 is
+    filter-compressed: reading it needs `import hdf5plugin`.
+
 - **`08.0.run_modisco.sh` is CPU-only on `engreitz` with `--qos=high_p`, on purpose.**
   tfmodisco-lite doesn't use a GPU, and the default QOS caps walltime at 2 days for
   this account regardless of the partition ceiling; `high_p` (7-day MaxWall) is what
@@ -409,9 +502,12 @@ say which of the two kinds of verification a change actually got.
 
 - **Idempotency markers are per-step and sometimes not the obvious file.** `04.0`
   requires *both* `models/chrombpnet_nobias.h5` and
-  `evaluation/chrombpnet_nobias_profile.pdf` before skipping, because the second is the
-  last file the evaluation stage writes — a preempted job leaves the model but no
-  report, and the script `rm -rf`s the directory and retrains. That `rm -rf` on a
+  `auxiliary/chrombpnet_nobias_footprints.h5` before skipping, because the second is
+  the last file pipeline writes before the interpretation 04.0 stops at (after the
+  predictions and max-bias-response 04.1/04.3 read) — a preempted job leaves the
+  model but not that, and the script `rm -rf`s the directory and retrains. (It
+  used to key off `evaluation/chrombpnet_nobias_profile.pdf`, the TF-MoDISco report,
+  back when 04.0 ran interpretation itself; that is 04.5's output now.) That `rm -rf` on a
   seemingly-complete model is intentional. Other steps key off `hits.bed.gz` (10),
   `motif_report.tsv` (11), `interpretation.counts_scores.{h5,bw}` (05) or
   `*_negatives.bed` (02).

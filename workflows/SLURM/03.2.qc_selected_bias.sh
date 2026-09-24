@@ -84,7 +84,12 @@ require_input "${model_file}" 03.0.train_bias_model.sh
 require_input "${genome_fa}" "cli.py download-references"
 require_input "${fold_json}"
 require_input "${chrom_sizes}" "cli.py download-references"
-metadata_outputs+=( "bias_qc_dir=${out_dir}/evaluation" )
+metadata_outputs+=( "bias_qc=${out_dir}/evaluation" )
+# The files, not only their directory: 03.3 consumes the two score files, and a
+# record that names only evaluation/ cannot say whether they were written.
+metadata_outputs+=( "bias_metrics=${out_dir}/evaluation/${file_prefix}_bias_metrics.json" )
+metadata_outputs+=( "contributions=${out_dir}/auxiliary/interpret_subsample/${file_prefix}_bias.counts_scores.h5" )
+metadata_outputs+=( "contributions=${out_dir}/auxiliary/interpret_subsample/${file_prefix}_bias.profile_scores.h5" )
 preflight_check
 
 load_gpu_modules
@@ -104,16 +109,25 @@ fi
 
 # No `set -e` in this step, and this is the last real command, so without the
 # guard a DeepLIFT/TF-MoDISco failure prints "Done." and exits 0.
+# --stage gpu: predictions + DeepLIFT only. TF-MoDISco is CPU-only and is the
+# long pole, so it runs in 03.3 on a CPU partition rather than holding this
+# allocation's GPU idle for hours. Same reasoning as 08.0.
+METADATA_RSS_FILE="${out_dir}/.peak_rss_gb_032"   # see 03.0: the step's real footprint
+export METADATA_RSS_FILE
 python "${src_dir}/run_bias_qc.py" \
+    --stage gpu \
     --bias-model "${model_file}" \
     --output-dir "${out_dir}" \
     --file-prefix "${file_prefix}" \
     --genome "${genome_fa}" \
     --chrom-sizes "${chrom_sizes}" \
     --fold-json "${fold_json}"
-if [[ $? -ne 0 || ! -d "${out_dir}/evaluation" ]]; then
-    echo "ERROR: run_bias_qc.py failed for fold ${fold}; ${out_dir}/evaluation was not written." >&2
+_rc=$?
+[[ -s "${METADATA_RSS_FILE}" ]] && metadata_metrics+=( "peak_rss_gb=$(<"${METADATA_RSS_FILE}")" )
+_scores="${out_dir}/auxiliary/interpret_subsample/${file_prefix}_bias.profile_scores.h5"
+if [[ ${_rc} -ne 0 || ! -f "${_scores}" ]]; then
+    echo "ERROR: run_bias_qc.py --stage gpu failed for fold ${fold}; ${_scores} was not written." >&2
     exit 1
 fi
 
-echo "[$(date)] [fold ${fold}] Done."
+echo "[$(date)] [fold ${fold}] Done. Next: 03.3.modisco_selected_bias.sh (CPU)."

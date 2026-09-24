@@ -53,6 +53,8 @@
 #   export DATASET_DIR=/path/to/igvf_tf_collab/<dataset>
 #   sbatch 03.0.train_bias_model.sh              # all folds x factors
 #   sbatch --array=0 03.0.train_bias_model.sh    # fold 0, first bias factor only (quick test)
+#   BIAS_BATCH_SIZE=128 sbatch --export=ALL --array=2 03.0.train_bias_model.sh
+#                                                # one factor at batch 128 -> bias_model<sfx>_bs128/
 #
 # After all jobs complete, run 03.1.select_bias.sh, then 03.2.qc_selected_bias.sh,
 # then 04.0.train_full_model.sh.
@@ -83,6 +85,9 @@ export REPO_ROOT
 # shellcheck source=lib/bash/config.sh
 source "${REPO_ROOT}/lib/bash/config.sh" || exit 1
 
+# Which factors to sweep: 02.0's scan when it exists, else the config.
+load_bias_sweep
+
 n_factors=${#bias_factors[@]}
 fold_idx=$(( SLURM_ARRAY_TASK_ID / n_factors ))
 factor_idx=$(( SLURM_ARRAY_TASK_ID % n_factors ))
@@ -93,6 +98,19 @@ bf="${bias_factors[$factor_idx]}"
 suffix="${bias_suffixes_sweep[$factor_idx]}"
 [[ -z "${fold}" || -z "${bf}" ]] && { echo "Invalid array index ${SLURM_ARRAY_TASK_ID}, exiting."; exit 0; }
 
+# Even when the factors came from the config, refuse one the scan has already
+# shown cannot work. The failure is otherwise an IndexError deep inside the
+# one-hot encoder, minutes into a GPU allocation.
+if [[ -s "${bias_scan_file}" ]]; then
+    _v=$(awk -F'\t' -v f="${bf}" '$1==f {print $7}' "${bias_scan_file}")
+    if [[ "${_v}" == fail* ]]; then
+        echo "ERROR: bias_threshold_factor ${bf} cannot train on this dataset." >&2
+        echo "  ${bias_scan_file} says: ${_v}" >&2
+        echo "  Pick a factor marked ok there, or re-run 02.0 if the data changed." >&2
+        exit 1
+    fi
+fi
+
 
 
 metadata_start "03.0.train_bias_model"
@@ -101,15 +119,29 @@ metadata_start "03.0.train_bias_model"
 
 set_signal_args
 signal_file="${signal_path}"
-peaks_file="${data_path}/${bias_dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
+peaks_file="${peaks_dir}/${bias_dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
 negatives_file="${data_path}/${bias_dataset}/output_${peak_type}_fold_${fold}_negatives.bed"
 fold_json="${folds_dir}/fold_${fold}.json"
 file_prefix="${bias_dataset}_${peak_type}_fold_${fold}"
-out_dir="${results_path}/bias_models/bias_model${suffix}/${bias_dataset}_${peak_type}_fold_${fold}"
+# Batch size: chrombpnet's default (64) unless the config sets bias_batch_size
+# or the environment sets BIAS_BATCH_SIZE (the environment wins, so a one-off
+# test needs no config edit). A different batch size trains a different model,
+# so it gets its own directory -- `_bs<N>` after the factor suffix -- and can
+# never overwrite, or be skipped as, the default-size model. 03.1 selects among
+# the default-size directories only; the `_bs<N>` runs are for comparison.
+batch_size="${BIAS_BATCH_SIZE:-${bias_batch_size:-}}"
+batch_args=()
+batch_tag=""
+if [[ -n "${batch_size}" ]]; then
+    [[ "${batch_size}" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: batch size must be a positive integer, got '${batch_size}'" >&2; exit 1; }
+    batch_args=( -bs "${batch_size}" )
+    batch_tag="_bs${batch_size}"
+fi
+out_dir="${results_path}/bias_models/bias_model${suffix}${batch_tag}/${bias_dataset}_${peak_type}_fold_${fold}"
 model_file="${out_dir}/models/${file_prefix}_bias.h5"
 
 
-metadata_inputs+=( "signal=${signal_file}" "peaks=${peaks_file}" "negatives=${negatives_file}" "fold_json=${fold_json}" )
+metadata_inputs+=( "${signal_type}=${signal_file}" "peaks=${peaks_file}" "negatives=${negatives_file}" "fold_json=${fold_json}" )
 require_input "${signal_file}" 00.0.prepare_signal.sh
 require_input "${peaks_file}" 00.1.preprocess_peaks.sh
 require_input "${negatives_file}" 01.0.preprocess_nonpeaks.sh
@@ -127,7 +159,7 @@ metadata_outputs+=( "bias_model=${model_file}" )
 # model but fails to score it looks complete in the metadata.
 metrics_json="${out_dir}/evaluation/${file_prefix}_bias_metrics.json"
 metadata_outputs+=( "bias_metrics=${metrics_json}" )
-metadata_params+=( "fold=${fold}" "bias_factor=${bf}" "bias_suffix=${suffix}" )
+metadata_params+=( "fold=${fold}" "bias_factor=${bf}" "bias_suffix=${suffix}" "batch_size=${batch_size:-64}" )
 echo "[$(date)] [fold ${fold} bias=${bf}] Training bias model"
 echo "  output dir : ${out_dir}"
 
@@ -158,6 +190,12 @@ done
 rm -rf "${out_dir}"
 mkdir -p "${out_dir}"
 
+# Peak RSS has to be measured inside the process that allocates the training
+# arrays; the metadata trap runs in a sibling and would otherwise record its
+# own ~26 MB as this step's footprint. See docs/resource-measurements.md.
+METADATA_RSS_FILE="${out_dir}/.peak_rss_gb"
+export METADATA_RSS_FILE
+
 python "${src_dir}/chrombpnet_train.py" \
     --prepared-bigwig "${data_path}/signal" \
     ${prepared_args[@]+"${prepared_args[@]}"} -- \
@@ -171,8 +209,13 @@ python "${src_dir}/chrombpnet_train.py" \
     -fl "${fold_json}" \
     -b "${bf}" \
     -o "${out_dir}" \
-    -fp "${file_prefix}"
-if [[ $? -ne 0 || ! -f "${model_file}" ]]; then
+    -fp "${file_prefix}" \
+    ${batch_args[@]+"${batch_args[@]}"}
+_train_status=$?
+if [[ -s "${METADATA_RSS_FILE}" ]]; then
+    metadata_metrics+=( "peak_rss_gb=$(<"${METADATA_RSS_FILE}")" )
+fi
+if [[ ${_train_status} -ne 0 || ! -f "${model_file}" ]]; then
     echo "ERROR: chrombpnet bias train failed for fold ${fold} bias=${bf} (bias threshold factor may be too low/high for this fold - see stdout above)." >&2
     exit 1
 fi

@@ -77,7 +77,7 @@ source "${REPO_ROOT}/lib/bash/config.sh" || exit 1
 set -euo pipefail
 
 dataset="${datasets[0]}"
-peaks_np="${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
+peaks_np="${peaks_dir}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
 out_dir="${data_path}/${dataset}"
 
 metadata_start "01.0.preprocess_nonpeaks"
@@ -99,8 +99,8 @@ require_input "${chrom_sizes}" "cli.py download-references"
 require_input "${blacklist}"   "cli.py download-references"
 for fold in "${folds[@]}"; do
     require_input "${folds_dir}/fold_${fold}.json" ""
-    metadata_inputs+=( "fold_${fold}_json=${folds_dir}/fold_${fold}.json" )
-    metadata_outputs+=( "negatives_fold_${fold}=${out_dir}/output_${peak_type}_fold_${fold}_negatives.bed" )
+    metadata_inputs+=( "fold=${folds_dir}/fold_${fold}.json" )
+    metadata_outputs+=( "negatives=${out_dir}/output_${peak_type}_fold_${fold}_negatives.bed" )
 done
 preflight_check
 
@@ -153,5 +153,5 @@ for fold in "${folds[@]}"; do
     echo "[$(date)] fold_${fold}: $(wc -l < "${negatives_file}") negatives -> ${negatives_file}"
 done
 
-echo "[$(date)] Done. Next: 02.0.qc_signal_peaks.sh compares the signal at these"
+echo "[$(date)] Done. Next: 02.0.qc_training_data.sh compares the signal at these"
 echo "           background regions against the signal at the peaks."

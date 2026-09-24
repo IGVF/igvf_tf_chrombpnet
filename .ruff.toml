@@ -1,3 +1,15 @@
+# Python 3.8, deliberately, and it is NOT the version pixi lints with.
+#
+# `lib/python/utils` is imported by BOTH environments: the pixi/preprocess side
+# runs 3.13, but src/chrombpnet_train.py imports utils.log and utils.metadata
+# INSIDE the chrombpnet container, which is python 3.8.10 (chrombpnet 1.0.1
+# pins tensorflow 2.8). Without this, ruff infers its target from the
+# interpreter it happens to run under and rewrites 3.8-safe code into 3.11+
+# idioms -- UP017 turned `timezone.utc` into `datetime.UTC`, which passed lint
+# and every test (both run on 3.13) and then broke every GPU step with
+# "ImportError: cannot import name 'UTC' from 'datetime'".
+target-version = "py38"
+
 # Lint/format config for lib/python and src.
 #
 # Kept in .ruff.toml rather than pyproject.toml: this repo is a SLURM pipeline,

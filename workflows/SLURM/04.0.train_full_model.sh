@@ -30,6 +30,12 @@
 #
 # Output directory: ${full_model_dir_selected} (set in config.sh)
 #
+# Runs `chrombpnet pipeline` up to, not including, interpretation: training,
+# predictions and marginal footprinting -- what 04.1 and 04.3 read. DeepLIFT
+# and TF-MoDISco, which pipeline would otherwise run inside this GPU job with
+# the GPU idle through TF-MoDISco, are 04.4 (GPU) and 04.5 (CPU), the same
+# split 03.2/03.3 make for the bias model.
+#
 # Usage:
 #   export DATASET_DIR=/path/to/igvf_tf_collab/<dataset>
 #   sbatch 04.0.train_full_model.sh            # all folds (array 0-4)
@@ -93,7 +99,7 @@ require_input "${genome_fa}"   "cli.py download-references"
 require_input "${chrom_sizes}" "cli.py download-references"
 require_input "${folds_dir}/fold_${fold}.json" ""
 for _ds in "${datasets[@]}"; do
-    require_input "${data_path}/${_ds}_${peak_type}_peaks_no_blacklist.narrowPeak" 00.1.preprocess_peaks.sh
+    require_input "${peaks_dir}/${_ds}_${peak_type}_peaks_no_blacklist.narrowPeak" 00.1.preprocess_peaks.sh
     require_input "${data_path}/${_ds}/output_${peak_type}_fold_${fold}_negatives.bed" 01.0.preprocess_nonpeaks.sh
 done
 unset _ds
@@ -102,6 +108,21 @@ preflight_check
 load_gpu_modules
 activate_env "${CONDA_ENV}"
 metadata_params+=( "fold=${fold}" "bias_suffix=${suffix}" )
+
+# Epoch cap. chrombpnet trains up to 50 epochs and early stopping decides; at
+# ~11 min an epoch on molab that is 3-9 hours, which a pipeline TEST does not
+# need. full_model_epochs (config) or FULL_MODEL_EPOCHS (environment, which
+# wins) passes -e. The model lands in the SAME directory -- 04.1 and 04.3 look
+# for it there, and exercising them is the point of a capped run -- so the
+# cap is recorded as max_epochs, and a real training afterwards needs a
+# forced rerun (run_step.sh --force).
+max_epochs="${FULL_MODEL_EPOCHS:-${full_model_epochs:-}}"
+epoch_args=()
+if [[ -n "${max_epochs}" ]]; then
+    [[ "${max_epochs}" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: epoch cap must be a positive integer, got '${max_epochs}'" >&2; exit 1; }
+    epoch_args=( -e "${max_epochs}" )
+fi
+metadata_params+=( "max_epochs=${max_epochs:-50}" )
 
 
 gpu_env
@@ -113,10 +134,20 @@ echo "  output dir : ${full_model_dir_selected}"
 for dataset in "${datasets[@]}"; do
     out_dir="${full_model_dir_selected}/${dataset}_${peak_type}_fold_${fold}"
     model_file="${out_dir}/models/chrombpnet_nobias.h5"
-    # Last file written by the pipeline's evaluation stage; absence means
-    # training finished (model_file exists) but evaluation was cut short,
-    # e.g. by preemption.
-    eval_marker="${out_dir}/evaluation/chrombpnet_nobias_profile.pdf"
+    # This step stops `chrombpnet pipeline` just before interpretation
+    # (--stop-before-interpretation below; 04.4/04.5 do DeepLIFT and
+    # TF-MoDISco off this GPU job). The last thing pipeline does before that
+    # point is move the footprints file into auxiliary/, AFTER the predictions
+    # and max-bias-response 04.1/04.3 read -- so its presence means everything
+    # this step owes them was written. A preempted job leaves the model but
+    # not this, and is retrained.
+    eval_marker="${out_dir}/auxiliary/chrombpnet_nobias_footprints.h5"
+    metadata_outputs+=( "model=${model_file}" )
+    metadata_outputs+=( "model=${out_dir}/models/chrombpnet.h5" )
+    metadata_outputs+=( "metrics=${out_dir}/evaluation/chrombpnet_metrics.json" )
+    metadata_outputs+=( "predictions=${out_dir}/evaluation/chrombpnet_predictions.h5" )
+    metadata_outputs+=( "footprints=${out_dir}/evaluation/chrombpnet_nobias_max_bias_response.txt" )
+    metadata_outputs+=( "footprints=${eval_marker}" )
 
     if [[ -f "${model_file}" && -f "${eval_marker}" ]]; then
         echo "  [${dataset} fold ${fold}] Already done, skipping."
@@ -124,17 +155,20 @@ for dataset in "${datasets[@]}"; do
     fi
 
     set_signal_args
-    peaks_file="${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
+    peaks_file="${peaks_dir}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
     negatives_file="${data_path}/${dataset}/output_${peak_type}_fold_${fold}_negatives.bed"
     fold_json="${folds_dir}/fold_${fold}.json"
 
     rm -rf "${out_dir}"
     mkdir -p "${out_dir}"
+    METADATA_RSS_FILE="${out_dir}/.peak_rss_gb"   # see 03.0: the training process's real footprint
+    export METADATA_RSS_FILE
 
-    echo "[$(date)] [${dataset} fold ${fold}] Training full model (bias ${suffix})..."
+    echo "[$(date)] [${dataset} fold ${fold}] Training full model (bias ${suffix}, max epochs ${max_epochs:-50})..."
 
     python "${src_dir}/chrombpnet_train.py" \
         --prepared-bigwig "${data_path}/signal" \
+        --stop-before-interpretation \
         ${prepared_args[@]+"${prepared_args[@]}"} -- \
         pipeline \
         "${signal_args[@]}" \
@@ -145,14 +179,17 @@ for dataset in "${datasets[@]}"; do
         -n "${negatives_file}" \
         -fl "${fold_json}" \
         -b "${bias_model}" \
-        -o "${out_dir}"
+        -o "${out_dir}" \
+        ${epoch_args[@]+"${epoch_args[@]}"}
     # No `set -e` here. Guard on BOTH markers, the same pair the skip-check at
     # the top of this block uses: the model alone is written partway through,
     # and the profile PDF is the last file the evaluation stage emits. Without
     # this a failed run prints "Done." and exits 0, and the next rerun sees a
     # model with no eval, rm -rf's it and retrains from scratch -- silently
     # burning a second GPU allocation to rediscover the same failure.
-    if [[ $? -ne 0 || ! -f "${model_file}" || ! -f "${eval_marker}" ]]; then
+    _train_status=$?
+    [[ -s "${METADATA_RSS_FILE}" ]] && metadata_metrics+=( "peak_rss_gb=$(<"${METADATA_RSS_FILE}")" )
+    if [[ ${_train_status} -ne 0 || ! -f "${model_file}" || ! -f "${eval_marker}" ]]; then
         echo "ERROR: chrombpnet pipeline failed for ${dataset} fold ${fold} (bias ${suffix})." >&2
         echo "       expected ${model_file} and ${eval_marker}" >&2
         exit 1

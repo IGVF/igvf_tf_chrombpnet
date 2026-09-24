@@ -11,6 +11,10 @@
 # 00.1.preprocess_peaks.sh
 # Purpose: Remove blacklisted regions from peak files and reformat to
 #          narrowPeak for chrombpnet (summit = midpoint of peak).
+#          With peak_summit_window set, `regions` is instead a peak caller's
+#          10-column narrowPeak, and every row becomes a window of that width
+#          centred on its OWN summit (one per summit; optional q filter via
+#          peak_max_qvalue) -- the summit is then the midpoint again.
 #
 # The bedtools+awk pipeline this used to run inline now lives in
 # src/preprocess_peaks.py (pyranges1), so there is no bedtools dependency and
@@ -51,13 +55,13 @@ mkdir -p "${data_path}"
 peak_chrom_sizes="${chrom_sizes_main:-${chrom_sizes}}"
 
 metadata_start "00.1.preprocess_peaks"
-metadata_inputs+=( "regions=${regions}" )
+metadata_inputs+=( "peaks=${regions}" )
 metadata_inputs+=( "blacklist=${blacklist}" )
 metadata_inputs+=( "chrom_sizes=${peak_chrom_sizes}" )
 metadata_params+=( "peak_type=${peak_type}" "input_window=${chrombpnet_input_window}" )
+metadata_params+=( "peak_summit_window=${peak_summit_window:-}" "peak_max_qvalue=${peak_max_qvalue:-}" )
 for dataset in "${datasets[@]}"; do
-    metadata_outputs+=( "narrowpeak_${dataset}=${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak" )
-    metadata_outputs+=( "bed_${dataset}=${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.bed" )
+    metadata_outputs+=( "peaks=${peaks_dir}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak" )
 done
 
 require_input "${regions}" ""
@@ -72,11 +76,36 @@ for dataset in "${datasets[@]}"; do
     # --blacklist also accepts the ENCODE accession (${blacklist_accession}),
     # which fetches it directly; the local copy is the default because compute
     # nodes may have no outbound network.
+    # The signal floor is optional and OFF unless peak_min_signal_quantile is
+    # set. It needs 00.0's bigwig, which is why 00.0 runs first: a peak whose
+    # signal is below what ordinary genome windows reach is not a peak, and it
+    # does damage out of all proportion to its own row -- chrombpnet anchors
+    # every bias threshold to quantile(peak_counts, 0.01).
+    floor_args=()
+    if [[ -n "${peak_min_signal_quantile:-}" ]]; then
+        prepared_bw="${data_path}/signal/data_unstranded.bw"
+        require_input "${prepared_bw}" 00.0.prepare_signal.sh
+        preflight_check
+        floor_args+=( --signal "${prepared_bw}" )
+        floor_args+=( --min-signal-quantile "${peak_min_signal_quantile}" )
+        floor_args+=( --compare-window "${qc_compare_window}" )
+    fi
+
+    # Optional: read `regions` as a caller's narrowPeak and re-centre each row
+    # on its own summit (peak_summit_window), keeping q <= peak_max_qvalue.
+    summit_args=()
+    if [[ -n "${peak_summit_window:-}" ]]; then
+        summit_args+=( --summit-window "${peak_summit_window}" )
+        [[ -n "${peak_max_qvalue:-}" ]] && summit_args+=( --max-qvalue "${peak_max_qvalue}" )
+    fi
+
     python "${src_dir}/cli.py" preprocess-peaks \
         --peaks        "${regions}" \
+        ${summit_args[@]+"${summit_args[@]}"} \
         --blacklist    "${blacklist}" \
         --chrom-sizes  "${peak_chrom_sizes}" \
         --input-window "${chrombpnet_input_window}" \
+        ${floor_args[@]+"${floor_args[@]}"} \
         --out-dir      "${data_path}" \
         --prefix       "${dataset}_${peak_type}"
 done

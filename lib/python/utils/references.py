@@ -100,6 +100,20 @@ MOTIF_DB_URL = (
     "pipeline/data/MotifCompendium-Database-Human.meme.txt"
 )
 
+#: chrombpnet's own motif database -- the one its TF-MoDISco report matches
+#: against. Unlike MotifCompendium it carries the assay-bias motifs (TN5_1..8,
+#: DNASE_*) next to the TF ones, which is what lets the per-fold motif QC
+#: (03.3/04.5, src/motif_qc.py) say how many seqlets are Tn5 at all:
+#: annotated against MotifCompendium, a bias model's Tn5 seqlets are forced
+#: onto their nearest TF motif. Pinned to the release tag and md5 of the
+#: chrombpnet the pipeline runs (1.0.1); the tag's file is byte-identical to
+#: the container's chrombpnet/data/motifs.meme.txt (checked 2026-09-23).
+CHROMBPNET_MOTIFS_URL = (
+    "https://raw.githubusercontent.com/kundajelab/chrombpnet/v1.0.1/"
+    "chrombpnet/data/motifs.meme.txt"
+)
+CHROMBPNET_MOTIFS_MD5 = "30d5f17c169eb2ea0588c7546acfbf4d"
+
 
 def main_chromosomes(folds_dir=None) -> list[str]:
     """The chromosomes the pipeline actually trains on.
@@ -176,6 +190,9 @@ def layout(reference_root=None) -> dict:
         "blacklist_slop": str(blacklist_dir / "blacklist_slop.bed.gz"),
         "ref_db_meme": str(motif_dir / "MotifCompendium-Database-Human.meme.txt"),
         "ref_db_meme_url": MOTIF_DB_URL,
+        "chrombpnet_motifs_meme": str(motif_dir / "chrombpnet-1.0.1.motifs.meme.txt"),
+        "chrombpnet_motifs_url": CHROMBPNET_MOTIFS_URL,
+        "chrombpnet_motifs_md5": CHROMBPNET_MOTIFS_MD5,
         "gencode_release": GENCODE_RELEASE,
         "gencode_accession": GENCODE_ACCESSION,
         "gencode_md5": GENCODE_MD5,
@@ -409,6 +426,17 @@ def fetch_all(reference_root=None, log=print) -> dict:
     else:
         log("  downloading MotifCompendium reference DB")
         download(ref["ref_db_meme_url"], meme, log=log)
+    cbp = Path(ref["chrombpnet_motifs_meme"])
+    if cbp.is_file() and cbp.stat().st_size:
+        log("  chrombpnet motif DB present")
+    else:
+        log("  downloading chrombpnet's motif DB (Tn5/DNase bias + TF motifs)")
+        download(ref["chrombpnet_motifs_url"], cbp, log=log)
+    if _md5(cbp) != ref["chrombpnet_motifs_md5"]:
+        raise RuntimeError(
+            f"chrombpnet motif DB md5 {_md5(cbp)} does not match the pinned "
+            f"{ref['chrombpnet_motifs_md5']} ({cbp})"
+        )
 
     # 5. TSS list for QC, derived from the GENCODE annotation
     tss = Path(ref["tss_bed"])

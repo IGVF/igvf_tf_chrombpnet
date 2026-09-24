@@ -91,8 +91,8 @@ source "${REPO_ROOT}/lib/bash/config.sh" || exit 1
 prepared_dir="${data_path}/signal"
 
 metadata_start "00.0.prepare_signal"
-metadata_inputs+=( "signal=${signal_path}" "genome=${genome_fa}" "chrom_sizes=${chrom_sizes}" )
-metadata_outputs+=( "prepared_bigwig=${prepared_dir}/data_unstranded.bw" )
+metadata_inputs+=( "${signal_type}=${signal_path}" "genome=${genome_fa}" "chrom_sizes=${chrom_sizes}" )
+metadata_outputs+=( "signal=${prepared_dir}/data_unstranded.bw" )
 metadata_params+=( "signal_type=${signal_type}" "assay=${assay}" )
 # The pileup drops cut sites on contigs absent from the chrom.sizes it is
 # given, so the MAIN-chromosome one makes the filter implicit. Fall back to
@@ -144,7 +144,7 @@ fi
 filtered_args=()
 if [[ "${filter_main_chroms:-true}" == "true" ]]; then
     filtered_args+=( --write-filtered "${prepared_dir}/${dataset_name}_main_chrs.tsv.gz" )
-    metadata_outputs+=( "filtered_reads=${prepared_dir}/${dataset_name}_main_chrs.tsv.gz" )
+    metadata_outputs+=( "${signal_type}=${prepared_dir}/${dataset_name}_main_chrs.tsv.gz" )
 fi
 
 if [[ "${signal_type}" == "bigwig" ]]; then

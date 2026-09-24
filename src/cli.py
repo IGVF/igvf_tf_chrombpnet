@@ -25,14 +25,20 @@ from pathlib import Path
 # conda envs, under pixi, and under a bare python).
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib" / "python"))
 
+import json as _json  # noqa: E402
+
 import click  # noqa: E402
+import numpy as np  # noqa: E402
 
 from utils import config as cfg  # noqa: E402
 from utils import (  # noqa: E402
     intervals,
     log,
     metadata,
+    palettes,
     pileup,
+    plotting,
+    qc,
     references,
     shift,
 )
@@ -87,7 +93,25 @@ def cli():
 
 @cli.command("preprocess-peaks")
 @click.option(
-    "--peaks", required=True, type=click.Path(exists=True, dir_okay=False), help="Input peak BED."
+    "--peaks",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Input peak BED (summit = midpoint), or with --summit-window a 10-column narrowPeak.",
+)
+@click.option(
+    "--summit-window",
+    type=int,
+    default=None,
+    help="Read --peaks as a narrowPeak and re-centre every row on its OWN summit: "
+    "[summit - w/2, summit + w/2). One window per row, so multi-summit regions give "
+    "several. Off by default (plain BED, midpoint summit).",
+)
+@click.option(
+    "--max-qvalue",
+    type=float,
+    default=None,
+    help="With --summit-window: keep rows with q <= this (column 9 read as -log10 q, "
+    "as MACS2 writes it). Off by default.",
 )
 @click.option(
     "--blacklist",
@@ -110,6 +134,38 @@ def cli():
     "overlaps a blacklist region.",
 )
 @click.option(
+    "--signal",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Prepared bigwig from 00.0. Required for --min-signal-quantile.",
+)
+@click.option(
+    "--min-signal-quantile",
+    type=float,
+    default=None,
+    help="Drop peaks whose signal falls below this quantile of the experiment's "
+    "own genome-wide windows. Depth-independent, because both sides are the "
+    "same signal. Off by default.",
+)
+@click.option(
+    "--compare-window",
+    type=int,
+    default=1000,
+    show_default=True,
+    help="Window for the background quantile and the peak signal compared "
+    "against it. SAME NAME AND SAME CONFIG VALUE (qc_compare_window) as 02.0's, "
+    "on purpose: both measure 'peak signal', and two independently settable "
+    "knobs would let them disagree. Defaults to chrombpnet's outputlen, which "
+    "is the window the bias threshold is computed over.",
+)
+@click.option(
+    "--background-sample",
+    type=int,
+    default=50_000,
+    show_default=True,
+    help="Genome windows sampled to estimate the background quantile.",
+)
+@click.option(
     "--out-dir", required=True, type=click.Path(file_okay=False), help="Directory for both outputs."
 )
 @click.option("--prefix", required=True, help="Output basename stem, e.g. igvf3_cardiomyocyte_all.")
@@ -122,7 +178,21 @@ def cli():
 @verbose_opt
 @quiet_opt
 def preprocess_peaks(
-    peaks, blacklist, chrom_sizes, input_window, out_dir, prefix, metadata_dir, verbose, quiet
+    peaks,
+    summit_window,
+    max_qvalue,
+    blacklist,
+    chrom_sizes,
+    input_window,
+    signal,
+    min_signal_quantile,
+    compare_window,
+    background_sample,
+    out_dir,
+    prefix,
+    metadata_dir,
+    verbose,
+    quiet,
 ):
     """Blacklist-filter peaks and write chrombpnet's narrowPeak.
 
@@ -146,8 +216,30 @@ def preprocess_peaks(
         if Path(blacklist).exists():
             md.add_input("blacklist", blacklist)
 
-        peaks_pr = intervals.read_bed(peaks)
-        logger.info(f"{len(peaks_pr)} peaks in from {peaks}")
+        summit_dropped = {"qvalue": 0, "before_chrom_start": 0}
+        if summit_window is None:
+            if max_qvalue is not None:
+                raise click.UsageError("--max-qvalue needs --summit-window")
+            peaks_pr = intervals.read_bed(peaks)
+            n_in = len(peaks_pr)
+            logger.info(f"{n_in} peaks in from {peaks}")
+        else:
+            try:
+                peaks_pr = intervals.read_narrowpeak(peaks)
+                n_in = len(peaks_pr)
+                peaks_pr, summit_dropped = intervals.summit_windows(
+                    peaks_pr, summit_window, max_qvalue
+                )
+            except ValueError as exc:
+                raise click.ClickException(str(exc)) from exc
+            md.add_param("summit_window", summit_window)
+            md.add_param("max_qvalue", max_qvalue)
+            logger.info(
+                f"{n_in} narrowPeak rows in from {peaks}; {summit_dropped['qvalue']} above "
+                f"q={max_qvalue}, {summit_dropped['before_chrom_start']} too close to a "
+                f"chromosome start; {len(peaks_pr)} {summit_window}bp summit windows"
+            )
+            md.add_metric("peaks_above_max_qvalue", summit_dropped["qvalue"])
         logger.info(f"blacklist: {references.describe_source(blacklist)}")
         try:
             bl = intervals.read_bed3(blacklist)
@@ -170,6 +262,9 @@ def preprocess_peaks(
             )
             bl = bl[known]
 
+        bl_raw_intervals = list(
+            zip(bl["Chromosome"], bl["Start"], bl["End"])
+        )  # un-slopped, for the background sampler
         bl = intervals.slop(bl, slop_bp, chromsizes)
         logger.info(f"blacklist extended +/-{slop_bp}bp (half the {input_window}bp window)")
 
@@ -179,12 +274,14 @@ def preprocess_peaks(
         peaks_pr, off_contig = intervals.restrict_to_chromosomes(peaks_pr, chromsizes)
         if off_contig:
             logger.warning("%d peak(s) dropped: on contigs absent from %s", off_contig, chrom_sizes)
-        md.add_param("peaks_off_contig", off_contig)
+        md.add_metric("peaks_off_contig", off_contig)
 
+        n_after_contig = len(peaks_pr)
         kept = intervals.remove_blacklisted(peaks_pr, bl)
-        md.add_param("peaks_in", len(peaks_pr))
-        md.add_param("peaks_kept", len(kept))
-        md.add_param("peaks_dropped", len(peaks_pr) - len(kept))
+        n_after_blacklist = len(kept)
+        md.add_metric("peaks_in", len(peaks_pr))
+        md.add_metric("peaks_kept", len(kept))
+        md.add_metric("peaks_dropped", len(peaks_pr) - len(kept))
         logger.info(
             f"{len(peaks_pr) - len(kept)} peak(s) hit the slopped blacklist, {len(kept)} kept"
         )
@@ -198,7 +295,7 @@ def preprocess_peaks(
                 overhanging,
                 input_window,
             )
-        md.add_param("peaks_window_overhang", overhanging)
+        md.add_metric("peaks_window_overhang", overhanging)
 
         if len(kept) == 0:
             raise click.ClickException(
@@ -206,15 +303,178 @@ def preprocess_peaks(
                 "blacklist use the same chromosome naming (chr1 vs 1)."
             )
 
-        bed_out = out_dir / f"{prefix}_peaks_no_blacklist.bed"
-        kept[["Chromosome", "Start", "End"]].to_csv(bed_out, sep="\t", header=False, index=False)
-        np_out = out_dir / f"{prefix}_peaks_no_blacklist.narrowPeak"
-        intervals.to_narrowpeak(kept).to_csv(np_out, sep="\t", header=False, index=False)
+        # ── signal floor ─────────────────────────────────────────────────
+        # A "peak" whose signal is below the level ordinary genome windows
+        # reach is not a peak. It matters far beyond its own row: chrombpnet
+        # anchors EVERY bias threshold to quantile(peak_counts, 0.01), so a
+        # handful of background-level peaks drag the whole sweep down. On d0
+        # the weakest 1% of peaks sat at the 40.6th percentile of genome
+        # windows -- weaker than most of the genome -- and dropping 1.8% of
+        # peaks moved q01 from 4 to 17.
+        n_before_floor = len(kept)
+        dropped_pr = None
+        floor_diag = {}
+        signal_floor = None
+        peak_signal = None
+        if min_signal_quantile is not None:
+            if not signal:
+                raise click.ClickException("--min-signal-quantile needs --signal")
+            if not 0.0 <= min_signal_quantile < 1.0:
+                raise click.BadParameter("must be in [0, 1)", param_hint="--min-signal-quantile")
+            md.add_input("signal", signal)
+            md.add_param("min_signal_quantile", min_signal_quantile)
+            md.add_param("compare_window", compare_window)
 
-        md.add_output("bed", bed_out)
-        md.add_output("narrowpeak", np_out)
-        logger.info(f"-> {bed_out}")
+            signal_floor, floor_diag, bg = qc.background_signal_quantile(
+                signal,
+                min_signal_quantile,
+                compare_window,
+                blacklist_intervals=bl_raw_intervals,
+                n_sample=background_sample,
+            )
+            logger.info(
+                "background q%g over %dbp = %.1f insertions (%d windows sampled)",
+                min_signal_quantile * 100,
+                compare_window,
+                signal_floor,
+                floor_diag["background_n_sampled"],
+            )
+            peak_signal = qc.window_totals(
+                signal,
+                intervals.to_narrowpeak(kept).values.tolist(),
+                window=compare_window,
+                max_regions=10_000_000,
+            )
+            keep_mask = np.asarray(peak_signal >= signal_floor)
+            dropped_pr = kept[~keep_mask]
+            kept = kept[keep_mask]
+            logger.info(
+                "%d peak(s) dropped below the floor, %d kept",
+                n_before_floor - len(kept),
+                len(kept),
+            )
+            md.add_metric("peaks_below_signal_floor", n_before_floor - len(kept))
+            md.add_metric("signal_floor", signal_floor)
+            for k, v in floor_diag.items():
+                md.add_metric(k, v)
+            if len(kept) == 0:
+                raise click.ClickException(
+                    f"every peak fell below the signal floor ({signal_floor}). "
+                    "Lower --min-signal-quantile, or check that --signal is this "
+                    "dataset's bigwig."
+                )
+
+        # Only the narrowPeak is written. A plain 3-column BED used to be
+        # written beside it, but nothing ever read it -- every downstream step
+        # takes the narrowPeak -- and narrowPeak IS a BED6+4, so `cut -f1-3`
+        # reproduces the BED exactly. On d0 that was 3.7 MB duplicated per
+        # dataset, and one more artifact to explain.
+        # peaks/ of its own, beside signal/. The two are the step-00 products
+        # and each gets a directory and a sidecar, so a later step can read
+        # what it is being given without re-deriving it.
+        peaks_dir = out_dir / "peaks"
+        peaks_dir.mkdir(parents=True, exist_ok=True)
+        np_out = peaks_dir / f"{prefix}_peaks_no_blacklist.narrowPeak"
+        intervals.to_narrowpeak(kept).to_csv(np_out, sep="\t", header=False, index=False)
+        md.add_output("peaks", np_out)
         logger.info(f"-> {np_out}")
+
+        # Sidecar: every filter this peak set went through, and what each one
+        # cost. Without it the only record of "why are there 153,347 peaks and
+        # not 156,236" is in a log that nothing keeps.
+        sidecar = {
+            "peaks_source": str(Path(peaks).resolve()),
+            "input_window": input_window,
+            "blacklist_source": references.describe_source(blacklist),
+            "blacklist_slop_bp": slop_bp,
+            "summit_window": summit_window,
+            "filters": [
+                {"filter": "input", "kept": n_in},
+                {"filter": "qvalue", "dropped": summit_dropped["qvalue"], "max_qvalue": max_qvalue},
+                {"filter": "before_chrom_start", "dropped": summit_dropped["before_chrom_start"]},
+                {"filter": "off_contig", "dropped": off_contig},
+                {"filter": "blacklist_slopped", "dropped": n_after_contig - n_after_blacklist},
+                {"filter": "window_overhang", "dropped": overhanging},
+                {
+                    "filter": "signal_floor",
+                    "dropped": n_before_floor - len(kept),
+                    "quantile": min_signal_quantile,
+                    "threshold": signal_floor,
+                    "window": compare_window if min_signal_quantile is not None else None,
+                },
+            ],
+            "peaks_final": len(kept),
+            **floor_diag,
+        }
+        # The dropped peaks are kept as an artifact, not just a count. They do
+        # not vanish from the analysis: dropping a peak removes it from the
+        # exclusion list 01.0 builds, so the region becomes ELIGIBLE to be
+        # sampled as GC-matched background. Some of it comes back as a
+        # negative and the bias model then trains on regions we just judged
+        # too weak to be peaks. 02.0 measures how much; it needs this file to
+        # do so.
+        if dropped_pr is not None and len(dropped_pr):
+            dropped_bed = peaks_dir / f"{prefix}_peaks_dropped.bed"
+            dropped_pr[["Chromosome", "Start", "End"]].to_csv(
+                dropped_bed, sep="\t", header=False, index=False
+            )
+            md.add_output("peaks", dropped_bed)
+            logger.info(f"-> {dropped_bed} ({len(dropped_pr)} dropped)")
+
+        sidecar_path = peaks_dir / "peaks.json"
+        sidecar_path.write_text(_json.dumps(sidecar, indent=2) + "\n")
+        md.add_output("peaks", sidecar_path)
+        logger.info(f"-> {sidecar_path}")
+
+        # QC plot, in plots/ with the other figures rather than beside the data.
+        if peak_signal is not None:
+            import matplotlib.pyplot as plt
+
+            plots_dir = out_dir.parent / "plots" / "peaks_qc"
+            plots_dir.mkdir(parents=True, exist_ok=True)
+            plotting.apply_style(font_size=10)
+            _sc = palettes.BIAS_SCAN_COLORS
+            fig, ax = plt.subplots(figsize=(5, 3.2))
+            # Clip to the peak q90: the peak tail runs to ~800 and squashes
+            # the part that matters -- the background mass, the floor, and
+            # where the two distributions separate -- into the first 5% of
+            # the axis.
+            hi = float(np.quantile(peak_signal, 0.90))
+            hi = max(hi, signal_floor * 4)
+            bins = np.linspace(0, hi, 70)
+            ax.hist(
+                bg,
+                bins=bins,
+                density=True,
+                alpha=0.55,
+                color=_sc["nonpeaks"],
+                label="genome windows (sampled)",
+            )
+            ax.hist(
+                peak_signal, bins=bins, density=True, alpha=0.55, color=_sc["peaks"], label="peaks"
+            )
+            ax.axvline(
+                signal_floor,
+                color=_sc["fail"],
+                lw=1.6,
+                label=f"floor = background q{min_signal_quantile * 100:g} ({signal_floor:.0f})",
+            )
+            ax.set_xlim(0, hi)
+            ax.set_xlabel(
+                f"insertions per {compare_window}bp window  "
+                f"(upper {100 * float((peak_signal > hi).mean()):.0f}% of peaks clipped)"
+            )
+            ax.set_ylabel("density")
+            ax.set_title(
+                f"{prefix}: {n_before_floor - len(kept)} of {n_before_floor} peaks "
+                f"below background q{min_signal_quantile * 100:g}",
+                fontsize=8.5,
+            )
+            ax.legend(frameon=False, fontsize=7)
+            fig.tight_layout()
+            plotting.save_fig(fig, plots_dir / f"{prefix}_peak_signal_floor")
+            plt.close(fig)
+            md.add_output("qc", plots_dir / f"{prefix}_peak_signal_floor.pdf")
 
 
 # ── filter-fragments ──────────────────────────────────────────────────────────
@@ -274,8 +534,8 @@ def filter_fragments(input_path, output_path, chroms, index, metadata_dir, verbo
                 kept += len(out)
                 fout.write(b"".join(out))  # BGZFile has no writelines()
 
-        md.add_param("fragments_in", total)
-        md.add_param("fragments_kept", kept)
+        md.add_metric("fragments_in", total)
+        md.add_metric("fragments_kept", kept)
         md.add_output("fragments", output_path)
 
         if kept == 0:
@@ -287,7 +547,7 @@ def filter_fragments(input_path, output_path, chroms, index, metadata_dir, verbo
 
         if index:
             tbi = compression.tabix_index(output_path, preset="bed")
-            md.add_output("tabix_index", tbi)
+            md.add_output("fragments", tbi)
             logger.info(f"-> {tbi}")
 
 
@@ -379,7 +639,10 @@ def prepare_bigwig(
     meta_dir = metadata_dir or (out / "metadata")
 
     with metadata.record("prepare_bigwig", out_dir=meta_dir) as md:
-        md.add_input("signal", signal_path)
+        # The parameter_name is the data type itself -- fragments, bam or
+        # tagalign -- not a generic "reads". signal_type is validated to be
+        # one of those three, and it is what the file actually holds.
+        md.add_input(signal_type, signal_path)
         if genome:
             md.add_input("genome", genome)
         md.add_param("signal_type", signal_type)
@@ -428,9 +691,10 @@ def prepare_bigwig(
             cuts, skipped, kept = pileup.collect_cuts(
                 signal_path, chromsizes, plus_delta, minus_delta, write_filtered=write_filtered
             )
-        md.add_param("reads_kept", kept)
+        md.add_metric("reads_kept", kept)
         if write_filtered:
-            md.add_output("filtered_reads", write_filtered)
+            # Filtering does not change what the data IS.
+            md.add_output(signal_type, write_filtered)
             logger.info("filtered reads -> %s", write_filtered)
         if skipped:
             logger.warning(
@@ -461,8 +725,8 @@ def prepare_bigwig(
             "minus_shift": int(minus_shift),
         }
         (out / "prepared_bigwig.json").write_text(_json.dumps(sidecar, indent=2) + "\n")
-        md.add_output("bigwig", bw)
-        md.add_output("sidecar", out / "prepared_bigwig.json")
+        md.add_output("signal", bw)
+        md.add_output("signal", out / "prepared_bigwig.json")
         logger.info("-> %s  (pass --prepared-bigwig %s to the training steps)", bw, out)
 
 
@@ -471,6 +735,7 @@ def prepare_bigwig(
 
 @cli.command("download-references")
 @click.option("--dataset", default=None, help="Dataset name under config/.")
+@click.option("--path", default=None, type=click.Path(), help="Explicit config.yaml.")
 @click.option(
     "--reference-root",
     default=None,
@@ -480,7 +745,7 @@ def prepare_bigwig(
 @click.option("--metadata-dir", default=None, type=click.Path(file_okay=False))
 @verbose_opt
 @quiet_opt
-def download_references(dataset, reference_root, metadata_dir, verbose, quiet):
+def download_references(dataset, path, reference_root, metadata_dir, verbose, quiet):
     """Fetch the shared genome, chrom.sizes, blacklist and motif DB.
 
     Run once per cluster. Idempotent: files already present are left alone, and
@@ -492,10 +757,8 @@ def download_references(dataset, reference_root, metadata_dir, verbose, quiet):
     from, so the two cannot disagree.
     """
     _setup_logging(verbose, quiet)
-    if reference_root is None and dataset:
-        reference_root = cfg.load(REPO_ROOT / "config" / dataset / "config.yaml").get(
-            "reference_root"
-        )
+    if reference_root is None and (dataset or path):
+        reference_root = cfg.load(_config_path(dataset, path)).get("reference_root")
     ref = references.layout(reference_root)
     meta_dir = metadata_dir or (Path(ref["REFERENCE_ROOT"]) / "metadata")
 
@@ -513,9 +776,10 @@ def download_references(dataset, reference_root, metadata_dir, verbose, quiet):
             "chrom_sizes_main",
             "blacklist",
             "ref_db_meme",
+            "chrombpnet_motifs_meme",
         ):
             md.add_output(role, ref[role])
-        md.add_output("chrom_sizes_main_sidecar", ref["chrom_sizes_main"] + ".json")
+        md.add_output("chrom_sizes", ref["chrom_sizes_main"] + ".json")
         md.add_param("main_chromosomes", ",".join(references.main_chromosomes()))
 
 
@@ -614,7 +878,7 @@ def qc_signal(
     meta_dir = metadata_dir or (out.parent / "metadata")
 
     with metadata.record("qc_signal", dataset=prefix, out_dir=meta_dir) as md:
-        md.add_input("bigwig", bigwig)
+        md.add_input("signal", bigwig)
         md.add_input("peaks", peaks)
         if negatives:
             md.add_input("negatives", negatives)
@@ -626,7 +890,11 @@ def qc_signal(
 
         metrics = {"dataset": prefix}
         metrics |= qc.signal_summary(bigwig)
-        metrics |= qc.peak_width_summary(peak_rows)
+        # signal_summary first: it supplies genome_bases, which turns the peak
+        # coverage into a fraction.
+        metrics |= qc.peak_width_summary(
+            peak_rows, input_window=input_window, genome_bases=metrics.get("genome_bases")
+        )
         metrics |= qc.peak_signal_distribution(bigwig, peak_rows)
 
         # Fraction of all insertions that land in peaks -- the FRiP of the
@@ -660,6 +928,54 @@ def qc_signal(
                 bigwig, neg_rows, flank=input_window // 2
             )
             metrics["n_nonpeaks_profiled"] = neg_used
+
+            # Did what 00.1 discarded come back as background?
+            # Derive it from the peaks FILENAME, not from --prefix: 00.1 is
+            # called with prefix "<dataset>_<peak_type>" and 02.0 with
+            # "<dataset>", so composing the name here silently missed the file
+            # and reported nothing.
+            _dropped_bed = Path(
+                str(peaks).replace("_peaks_no_blacklist.narrowPeak", "_peaks_dropped.bed")
+            )
+            metrics |= qc.dropped_peaks_resampled(_dropped_bed, neg_rows, compare_window)
+            if metrics.get("n_dropped_peaks_resampled"):
+                logger.info(
+                    "%d of %d peaks dropped by the signal floor were re-sampled as "
+                    "background (%d negatives, %.3f%% of the background)",
+                    metrics["n_dropped_peaks_resampled"],
+                    metrics["n_peaks_dropped_by_floor"],
+                    metrics["n_negatives_in_dropped_peaks"],
+                    100 * metrics["frac_negatives_in_dropped_peaks"],
+                )
+
+            # Which bias_threshold_factor values 03.0 can actually train on.
+            # Everything needed is already loaded here, and the answer costs
+            # CPU minutes instead of one failed GPU job per bad factor.
+            bias_metrics, bias_rows, _bias_pk, _bias_ng = qc.bias_threshold_viability(
+                bigwig, peak_rows, neg_rows, outputlen=compare_window
+            )
+            metrics |= bias_metrics
+            if bias_rows:
+                _bias_tsv = out / f"{prefix}_bias_threshold_scan.tsv"
+                pd.DataFrame(bias_rows).to_csv(_bias_tsv, sep="\t", index=False)
+                md.add_output("qc", _bias_tsv)
+                logger.info(
+                    "bias_threshold_factor: %d viable, %d distinct training sets",
+                    bias_metrics.get("n_bias_factors_viable", 0),
+                    bias_metrics.get("n_bias_factors_distinct", 0),
+                )
+                logger.info(
+                    "  distinct factors worth sweeping: %s",
+                    bias_metrics.get("bias_factors_distinct"),
+                )
+                if bias_metrics.get("bias_factor_recommended") is not None:
+                    logger.info(
+                        "  RECOMMENDED: %s (%s) -- the largest factor whose background "
+                        "stays at or below q01=%g, the weakest 1%% of peaks",
+                        bias_metrics["bias_factor_recommended"],
+                        bias_metrics["bias_factor_recommended_suffix"],
+                        bias_metrics["peak_signal_q01"],
+                    )
         else:
             logger.warning("no --negatives given; skipping the peak vs background QC")
 
@@ -716,10 +1032,22 @@ def qc_signal(
         tsv_out = out / f"{prefix}_signal_qc.tsv"
         flat = {k: v for k, v in metrics.items() if not isinstance(v, list | dict)}
         pd.DataFrame([flat]).to_csv(tsv_out, sep="\t", index=False)
-        md.add_output("qc_json", json_out)
-        md.add_output("qc_tsv", tsv_out)
+        md.add_output("qc", json_out)
+        md.add_output("qc", tsv_out)
+        # Most of what qc-signal writes is MEASURED, but not all of it: the
+        # flat dict also carries the window the comparison used (a setting)
+        # and the dataset name (already a top-level field on every record).
+        # Classifying the whole dict as metrics put a setting and an identifier
+        # in the measurement bag.
+        QC_SETTINGS = {"compare_window"}
+        QC_NOT_A_PARAMETER = {"dataset"}
         for k, v in flat.items():
-            md.add_param(k, v)
+            if k in QC_NOT_A_PARAMETER:
+                continue
+            if k in QC_SETTINGS:
+                md.add_param(k, v)
+            else:
+                md.add_metric(k, v)
 
         # ── plots ─────────────────────────────────────────────────────────
         import matplotlib.pyplot as plt
@@ -777,6 +1105,79 @@ def qc_signal(
             plotting.save_fig(fig, out / f"{prefix}_peaks_vs_background")
             plt.close(fig)
             md.add_output("peaks_vs_background", out / f"{prefix}_peaks_vs_background.pdf")
+
+        # ── how the bias threshold reshapes the background ────────────────
+        if bias_rows:
+            _sc = palettes.BIAS_SCAN_COLORS
+            fig, (axl, axr) = plt.subplots(1, 2, figsize=(8.4, 3.2))
+
+            # LEFT: WHY the staircase exists. Non-peak counts are integers,
+            # so the bars sit at 0, 1, 2 ... and a cutoff landing anywhere in
+            # the gap between two bars keeps exactly the same set. Only the
+            # cutoffs that actually change the training set are drawn -- one
+            # per distinct set -- because drawing all forty is a picket fence.
+            _hi = 10
+            _bins = np.arange(0, _hi + 1)
+            _frac = np.array([(np.asarray(_bias_ng) == b).mean() for b in _bins])
+            axl.bar(_bins, _frac, width=0.8, color=_sc["nonpeaks"], label="non-peak regions")
+
+            _seen, _marks = set(), []
+            for _r in bias_rows:
+                if _r["n_nonpeaks"] and _r["n_nonpeaks"] not in _seen:
+                    _seen.add(_r["n_nonpeaks"])
+                    _marks.append(_r)
+            for _r in _marks:
+                if _r["counts_threshold"] > _hi:
+                    continue
+                axl.axvline(_r["counts_threshold"], color=_sc["ok"], lw=1.1, ls="--")
+                axl.text(
+                    _r["counts_threshold"],
+                    max(_frac) * 1.02,
+                    f"{_r['factor']:g}",
+                    fontsize=6.5,
+                    rotation=90,
+                    color=_sc["ok"],
+                    va="bottom",
+                    ha="center",
+                )
+            # Every cutoff is q01 * factor, so this is the anchor the whole
+            # sweep is scaled from.
+            axl.axvline(
+                bias_metrics["peak_signal_q01"],
+                color=_sc["peaks"],
+                lw=1.6,
+                label=f"peak q01 = {bias_metrics['peak_signal_q01']:g}  (x factor)",
+            )
+
+            axl.set_xticks(_bins)
+            axl.set_xlabel(f"insertions per non-peak ({compare_window}bp window)")
+            axl.set_ylabel("fraction of non-peaks")
+            axl.set_title("counts are integers, so cutoffs land in the gaps", fontsize=8.5)
+            axl.set_ylim(0, max(_frac) * 1.22)
+            axl.legend(frameon=False, fontsize=6.5, loc="upper right")
+
+            # RIGHT: the landscape itself -- how many non-peaks survive.
+            _f = [r["factor"] for r in bias_rows]
+            _n = [r["n_nonpeaks"] for r in bias_rows]
+            _c = [
+                _sc["fail"]
+                if r["n_nonpeaks"] == 0
+                else _sc["risky"]
+                if r["n_nonpeaks"] < 1000
+                else _sc["ok"]
+                for r in bias_rows
+            ]
+            axr.step(_f, _n, where="post", color=_sc["cutoff"], lw=0.8, zorder=1)
+            axr.scatter(_f, _n, c=_c, s=18, zorder=2)
+            axr.set_xlabel("bias_threshold_factor")
+            axr.set_ylabel("non-peaks left to train on")
+            axr.set_title("staircase, not a ramp", fontsize=9)
+            for _x in (0.5, 0.8):
+                axr.axvline(_x, color=OKABE_ITO["black"], lw=0.5, ls=":", alpha=0.6)
+            fig.tight_layout()
+            plotting.save_fig(fig, out / f"{prefix}_bias_threshold_scan")
+            plt.close(fig)
+            md.add_output("qc", out / f"{prefix}_bias_threshold_scan.pdf")
 
         if tss_metrics.get("profile"):
             fig, ax = plt.subplots(figsize=(4, 3))

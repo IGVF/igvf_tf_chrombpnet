@@ -59,8 +59,8 @@ activate_env "${CONDA_ENV}"
 
 metadata_start "05.0.get_contrib_scores"
 for _ds in "${datasets[@]}"; do
-    metadata_inputs+=( "model_${_ds}=${full_model_dir}/${_ds}_${peak_type}_fold_${fold}/models/chrombpnet_nobias.h5" )
-    metadata_outputs+=( "contribs_${_ds}=${full_model_dir}/${_ds}_${peak_type}_fold_${fold}/interpretation/interpretation.counts_scores.h5" )
+    metadata_inputs+=( "model=${full_model_dir}/${_ds}_${peak_type}_fold_${fold}/models/chrombpnet_nobias.h5" )
+    metadata_outputs+=( "contributions=${full_model_dir}/${_ds}_${peak_type}_fold_${fold}/interpretation/interpretation.counts_scores.h5" )
 done
 unset _ds
 metadata_params+=( "fold=${fold}" )
@@ -79,7 +79,7 @@ for dataset in "${datasets[@]}"; do
     fi
 
     interp_dir="${full_model_dir}/${dataset}_${peak_type}_fold_${fold}/interpretation"
-    peaks_file="${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
+    peaks_file="${peaks_dir}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
     done_file_h5="${interp_dir}/interpretation.counts_scores.h5"
     done_file_bw="${interp_dir}/interpretation.counts_scores.bw"
 

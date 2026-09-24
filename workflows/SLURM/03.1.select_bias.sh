@@ -1,18 +1,19 @@
 #!/bin/bash
 # 03.1.select_bias.sh
 # Select the best Tn5 bias model per fold from the sweep trained in 03.0.
-# Config-driven: reads the dataset name, results path and bias sweep from
-# dataset_config.sh (via config.sh). Set DATASET_DIR before running.
+# Config-driven: reads the dataset name, results path and bias sweep from the
+# dataset's config.yaml (via lib/bash/config.sh). Select it with DATASET=<name>
+# or DATASET_CONFIG=/path/to/config.yaml.
 #
 # Usage:
-#   export DATASET_DIR=/path/to/dataset
+#   export DATASET=<name>        # or DATASET_CONFIG=/path/to/config.yaml
 #   bash 03.1.select_bias.sh
 #
 # Produces QC plots + tables under ${results_path}/plots/bias_model_selection/.
 # Afterward, copy the per-fold winners from selected_bias_per_fold.tsv into
-# fold_bias_suffix in dataset_config.sh, then run 04.0.
+# fold_bias_suffix in the dataset config.yaml, then run 04.0.
 #
-# If fold_bias_suffix is already populated in dataset_config.sh (e.g. for
+# If fold_bias_suffix is already populated in the dataset config (e.g. for
 # re-running plots), the selections are overlaid on the plots via --fold-bias.
 
 # --- bootstrap: locate the repo root (identical block in every workflow step) --
@@ -43,15 +44,20 @@ source "${REPO_ROOT}/lib/bash/config.sh" || exit 1
 activate_env "${CONDA_ENV}"
 
 metadata_start "03.1.select_bias"
-metadata_inputs+=( "bias_models=${results_path}/bias_models" )
+metadata_inputs+=( "bias_model=${results_path}/bias_models" )
 metadata_outputs+=( "selection=${results_path}/plots/bias_model_selection/${bias_dataset}/selected_bias_per_fold.tsv" )
 metadata_outputs+=( "metrics=${results_path}/plots/bias_model_selection/${bias_dataset}/all_bias_metrics.tsv" )
 
 
 set -euo pipefail
 
-# Bias labels to evaluate, derived from the sweep in dataset_config
-# (bias_suffixes_sweep entries like "_05" -> "05").
+# Which sweep to evaluate. MUST be the same list 03.0 trained, which is why
+# both steps call load_bias_sweep rather than each deriving its own: when only
+# 03.0 read 02.0's scan, 03.1 kept reading the config, and it "selected" a
+# winner from whichever single model happened to overlap the two lists.
+load_bias_sweep
+
+# Bias labels, from the suffixes ("_05" -> "05").
 biases=()
 for s in "${bias_suffixes_sweep[@]}"; do
     biases+=( "${s#_}" )
@@ -61,6 +67,7 @@ done
 # this line in its old position the step aborted here every time, before it ran
 # anything. It also recorded an empty value for a param it is meant to capture.
 metadata_params+=( "biases=${biases[*]}" )
+metadata_params+=( "bias_factors=${bias_factors[*]}" )
 
 out_dir="${results_path}/plots/bias_model_selection/${bias_dataset}"
 
@@ -70,7 +77,7 @@ echo "  biases      : ${biases[*]}"
 echo "  folds       : ${folds[*]}"
 echo "  out_dir     : ${out_dir}"
 
-# Build --fold-bias args from fold_bias_suffix if already set in dataset_config.sh.
+# Build --fold-bias args from fold_bias_suffix if already set in the dataset config.
 # Produces e.g.: "0:_08 1:_06 2:_08 3:_08 4:_07"
 fold_bias_args=()
 if declare -p fold_bias_suffix &>/dev/null 2>&1; then
@@ -95,8 +102,9 @@ python "${src_dir}/select_bias_model.py" \
     --dataset "${bias_dataset}" \
     --peak-type "${peak_type}" \
     --biases "${biases[@]}" \
+    --bias-factors "${bias_factors[@]}" \
     --folds "${folds[@]}" \
     --out-dir "${out_dir}" \
     ${extra_args[@]+"${extra_args[@]}"}
 
-echo "[$(date)] Done. Review ${out_dir}/ then set fold_bias_suffix in dataset_config.sh."
+echo "[$(date)] Done. Review ${out_dir}/ then set fold_bias_suffix in the dataset config.yaml (the block to paste is in bias_selection_explanation.txt)."

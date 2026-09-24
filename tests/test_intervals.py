@@ -266,3 +266,78 @@ def test_peak_filters_work_on_a_real_bed(tmp_path):
 
     fitted, over = intervals.drop_windows_off_chromosome(kept, cs, 2114)
     assert over == 0 and len(fitted) == 2
+
+
+# ── narrowPeak re-centred on its own summit ───────────────────────────────────
+
+
+def _macs2(tmp_path, *rows):
+    """Write narrowPeak rows (chrom, start, end, qvalue, summit_offset)."""
+    path = tmp_path / "peaks.narrowPeak"
+    path.write_text(
+        "".join(
+            f"{c}\t{s}\t{e}\tp{i}\t25\t.\t2.4\t3.0\t{q}\t{off}\n"
+            for i, (c, s, e, q, off) in enumerate(rows)
+        )
+    )
+    return path
+
+
+def test_summit_window_is_summit_minus_half_to_plus_half(tmp_path):
+    # summit at 1000 + 250 = 1250 -> [750, 1750): bases 750..1749 = summit-500..summit+499
+    peaks = intervals.read_narrowpeak(_macs2(tmp_path, ("chr1", 1000, 2000, 5.0, 250)))
+    win, dropped = intervals.summit_windows(peaks, 1000)
+    assert (win["Start"].iloc[0], win["End"].iloc[0]) == (750, 1750)
+    assert dropped == {"qvalue": 0, "before_chrom_start": 0}
+
+
+def test_summit_is_the_midpoint_after_recentring(tmp_path):
+    peaks = intervals.read_narrowpeak(_macs2(tmp_path, ("chr1", 1000, 2000, 5.0, 731)))
+    win, _ = intervals.summit_windows(peaks, 1000)
+    np_df = intervals.to_narrowpeak(win)
+    assert np_df["Start"].iloc[0] + np_df["summit"].iloc[0] == 1000 + 731
+    assert list(intervals.summit_offsets(win)) == [500]
+
+
+def test_every_summit_of_a_region_gets_its_own_window(tmp_path):
+    peaks = intervals.read_narrowpeak(
+        _macs2(tmp_path, ("chr1", 1000, 3000, 5.0, 200), ("chr1", 1000, 3000, 5.0, 1800))
+    )
+    win, _ = intervals.summit_windows(peaks, 1000)
+    assert sorted(win["Start"]) == [700, 2300]
+
+
+def test_qvalue_filter_reads_minus_log10(tmp_path):
+    # q <= 0.01 means -log10 q >= 2; 2.0 is kept (inclusive), 1.99 is not.
+    peaks = intervals.read_narrowpeak(
+        _macs2(tmp_path, ("chr1", 5000, 6000, 2.0, 500), ("chr1", 8000, 9000, 1.99, 500))
+    )
+    win, dropped = intervals.summit_windows(peaks, 1000, max_qvalue=0.01)
+    assert list(win["Start"]) == [5000]
+    assert dropped["qvalue"] == 1
+
+
+def test_window_before_chromosome_start_is_dropped(tmp_path):
+    peaks = intervals.read_narrowpeak(_macs2(tmp_path, ("chr1", 0, 400, 5.0, 100)))
+    win, dropped = intervals.summit_windows(peaks, 1000)
+    assert len(win) == 0 and dropped["before_chrom_start"] == 1
+
+
+def test_caller_columns_survive_into_the_narrowpeak(tmp_path):
+    peaks = intervals.read_narrowpeak(_macs2(tmp_path, ("chr1", 1000, 2000, 7.5, 500)))
+    win, _ = intervals.summit_windows(peaks, 1000)
+    row = intervals.to_narrowpeak(win).iloc[0]
+    assert (row["signal"], row["pvalue"], row["qvalue"]) == (2.4, 3.0, 7.5)
+
+
+def test_missing_qvalues_cannot_be_filtered(tmp_path):
+    peaks = intervals.read_narrowpeak(_macs2(tmp_path, ("chr1", 1000, 2000, -1, 500)))
+    with pytest.raises(ValueError, match="no q-values"):
+        intervals.summit_windows(peaks, 1000, max_qvalue=0.01)
+
+
+def test_read_narrowpeak_rejects_a_bed3(tmp_path):
+    path = tmp_path / "r.bed"
+    path.write_text("chr1\t100\t200\n")
+    with pytest.raises(ValueError, match="10-column"):
+        intervals.read_narrowpeak(path)

@@ -102,12 +102,58 @@ folds: ["0", "1", "2", "3", "4"]
 # nonpeak_stride: 1000      # -st  genome-wide GC bin stride
 # qc_compare_window: 1000   # fixed window for the peak-vs-background comparison
 
+# Drop peaks whose signal falls below this quantile of the experiment's OWN
+# genome-wide windows (00.1). Off by default. Depth-independent: both sides are
+# the same signal, so a deeper library lifts the peaks and the background
+# together.
+#
+# It matters far beyond the peaks it removes. chrombpnet anchors EVERY bias
+# threshold in the 03.0 sweep to quantile(peak_counts, 0.01), so a handful of
+# background-level peaks drag the whole sweep down. On the d0 test dataset the
+# weakest 1% of peaks sat at the 40.6th percentile of genome windows -- weaker
+# than most of the genome -- and dropping 1.8% of peaks moved q01 from 4 to 17.
+#
+# 0.75 drops ~1.8% on d0; 0.50 is the conservative choice at ~1.0%; 0.95 is too
+# aggressive at ~23%. Needs 00.0's bigwig, so 00.0 must run first.
+# peak_min_signal_quantile: 0.75
+
+# Start from a peak caller's narrowPeak instead of a region BED (00.1): set
+# `regions` to the 10-column narrowPeak and every row becomes a window of this
+# width centred on its OWN summit (column 10), one per summit -- MACS2
+# --call-summits writes several rows for a multi-summit region, and each gets a
+# window. 1000 = bases summit-500 .. summit+499. Optionally keep q <= a
+# threshold (column 9, -log10 q as MACS2 writes it). Both off by default:
+# without them `regions` is a plain BED whose summit is its midpoint.
+# peak_summit_window: 1000
+# peak_max_qvalue: 0.01
+
 # Bias sweep (03.0). Positional: bias_factors[i] pairs with bias_suffixes_sweep[i].
 # The array is len(bias_sweep_folds) x len(bias_factors) GPU jobs; uncomment
 # bias_sweep_folds to pilot on fewer folds first. `cli.py config validate`
 # prints the --array range.
 bias_factors: ["0.5", "0.6", "0.7", "0.8"]
 bias_suffixes_sweep: ["_05", "_06", "_07", "_08"]
+
+# Batch size for `chrombpnet bias train` (03.0). Unset = chrombpnet's default,
+# 64. A different size trains a different model, so it goes to its own
+# directory (bias_model<suffix>_bs<N>/) and 03.1 does not select among those.
+# BIAS_BATCH_SIZE in the environment overrides this for a one-off test.
+# bias_batch_size: 128
+
+# Cap the full-model training (04.0) for a pipeline TEST. Unset = chrombpnet's
+# default of 50 epochs with early stopping, which takes hours. A capped model
+# is written where the real one would be (04.1/04.3 read it there), and the
+# run records max_epochs; retrain with --force for a real model.
+# FULL_MODEL_EPOCHS in the environment overrides this.
+# full_model_epochs: 2
+
+# Motif QC (03.3 bias model, 04.5 full model; src/motif_qc.py; both heads).
+# The central window, in bp, TF-MoDISco runs over (default 400, its own
+# default; chrombpnet's pipeline used 500), and seqlets per metacluster
+# (default 5000 -- about 6 min per head, where chrombpnet's 50000 took an hour
+# on d0). MOTIF_QC_WINDOW / MOTIF_QC_MAX_SEQLETS override them.
+# motif_qc_window: 400
+# motif_qc_max_seqlets: 5000
 # bias_sweep_folds: ["0"]
 
 # Filled in by hand after 03.1 writes selected_bias_per_fold.tsv.

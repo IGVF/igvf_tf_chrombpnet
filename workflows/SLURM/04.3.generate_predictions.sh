@@ -73,14 +73,14 @@ metadata_start "04.3.generate_predictions"
 
 gpu_env
 
-peaks_file="${data_path}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
+peaks_file="${peaks_dir}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
 
 metadata_inputs+=( "peaks=${peaks_file}" "genome=${genome_fa}" )
 require_input "${peaks_file}"  00.1.preprocess_peaks.sh
 require_input "${genome_fa}"   "cli.py download-references"
 require_input "${chrom_sizes}" "cli.py download-references"
 preflight_check
-metadata_outputs+=( "predictions_dir=${out_dir}" )
+metadata_outputs+=( "predictions=${out_dir}" )
 metadata_params+=( "dataset=${dataset}" )
 out_dir="${predictions_dir}/${dataset}_${peak_type}"
 mkdir -p "${out_dir}"
