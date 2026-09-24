@@ -43,8 +43,8 @@
 #         this repo's .pixi/envs/, ${MOLAB_DATA_DIR}, ${REFERENCE_ROOT}
 # Usage:  bash workflows/molab/setup_molab.sh
 #         bash workflows/molab/setup_molab.sh --skip-references
-# Exit:   0 ready (a missing GPU is a warning only); 1 something failed to
-#         install, or the chrombpnet tool check failed.
+# Exit:   0 ready (a missing GPU is a warning only); non-zero when something
+#         failed: an install, a download, or the chrombpnet tool check.
 # Prerequisites: root (for apt), outbound HTTPS, and GCP_BUCKET + GCP_SA_JSON
 #   (the service-account key as inline JSON) in the .env env.sh sources.
 
