@@ -61,11 +61,13 @@ motif_compendium_env="${MOTIF_COMPENDIUM_ENV:-pixi:${REPO_ROOT}/pixi.toml#motif-
 # "no conda, the tools are already on PATH". `-` keeps the empty value.
 CONDA_INIT="${CONDA_INIT-/home/groups/engreitz/Software/anaconda3/etc/profile.d/conda.sh}"
 
-# Default root for dataset data/results; config/site.sh usually repoints this
-# at a shared collaboration tree.
 # Where dataset data/ and results/ live. Defaults to the checkout, which is
-# fine for one dataset but not for a shared collaboration tree.
-data_root="${DATASET_ROOT:-${REPO_ROOT}}"
+# fine for one dataset but not for a shared collaboration tree. DATASET_ROOT
+# itself gets the default too, not just data_root: the tracked configs
+# interpolate "${DATASET_ROOT}/<dataset>/...", which with it unset expanded to
+# "/<dataset>/...".
+DATASET_ROOT="${DATASET_ROOT:-${REPO_ROOT}}"
+data_root="${DATASET_ROOT}"
 
 # ── Bootstrap interpreter ─────────────────────────────────────────────────────
 # bootstrap_python — echo a python >= 3.9 usable BEFORE any conda env exists.
@@ -100,7 +102,10 @@ bootstrap_python() {
               "${REPO_ROOT}/.pixi/envs/default/bin/python"; do
         [[ -n "${_c}" ]] || continue
         command -v "${_c}" >/dev/null 2>&1 || continue
-        "${_c}" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' 2>/dev/null || continue
+        # < 3.14 too: running a utils/ file as a script puts utils/ first on
+        # sys.path, where utils/compression.py shadows 3.14's new stdlib
+        # `compression` package.
+        "${_c}" -c 'import sys; sys.exit(0 if (3, 9) <= sys.version_info[:2] < (3, 14) else 1)' 2>/dev/null || continue
         echo "${_c}"
         return 0
     done
@@ -192,9 +197,9 @@ load_bias_sweep() {
 
 # activate_env <env> — enter a software environment for the rest of the step.
 # <env> is `pixi:<manifest>#<environment>` (every default above) or a conda
-# prefix. Deliberately does NOT set -euo pipefail: neither conda's activation
-# scripts nor pixi's are written against `set -u`, which is why the scripts
-# that do use it set it after this call rather than at the top of the file.
+# prefix. Deliberately does NOT set -euo pipefail. Activation scripts are not
+# written against `set -u`, so the pixi branch lifts it around the eval; 00.1
+# and 01.0 set it before this call, 03.1 after.
 activate_env() {
     local env_path="${1:?activate_env: missing env path}"
     if [[ "${env_path}" == pixi:* ]]; then
@@ -281,7 +286,13 @@ activate_pixi_env() {
         echo "ERROR: pixi could not activate ${environment} from ${manifest}" >&2
         exit 1
     fi
+    # Conda packages' activate.d scripts (glib, cuda, ...) are not written
+    # against `set -u`; lift it for the eval in steps that set it (00.1, 01.0).
+    local had_nounset=0
+    [[ $- == *u* ]] && had_nounset=1
+    set +u
     eval "${hook}"
+    (( had_nounset )) && set -u
     echo "[$(date)] activate_env: pixi ${environment} (${manifest})"
     # The chrombpnet checkout is a separate repo: say so when it is not at the
     # commit the pipeline was tested against. A warning, not a stop, so a newer
