@@ -16,11 +16,12 @@
 #            igvf11_h7_hesc, igvf_endothelial (d3 iPSC-EC)
 #
 # This script does NOT require DATASET_DIR; it operates at the collaboration
-# root and hardcodes the four per-dataset MoDISco H5 paths. Those resolve under
-# ${data_root} (DATASET_ROOT, default REPO_ROOT), the root a dataset config's
-# output_dir sits under (config/igvf3_cardiomyocyte/config.yaml:
-# ${DATASET_ROOT}/igvf3_cardiomyocyte/results). The compendium itself is
-# still written under REPO_ROOT, where 10.0 reads it.
+# root over four named datasets. Each one's MoDISco H5 is where 08.0 wrote it
+# according to that dataset's config/<ds>/config.yaml (${averaged_dir}/<ds>/
+# modisco/), so a fresh results tree is followed; a dataset without a config
+# falls back to a hardcoded legacy path under ${data_root} (DATASET_ROOT,
+# default REPO_ROOT). The compendium itself is still written under REPO_ROOT,
+# where 10.0 reads it.
 #
 # CPU only, in ${motif_compendium_env} (this repo's motif-compendium pixi
 # environment, MotifCompendium v1.0.19). Clustering is cpm_leiden at
@@ -28,6 +29,8 @@
 # v1.0.19's default appends a k-centroids pass that ignores the threshold.
 #
 # Input:  Per-dataset fold-averaged MoDISco H5s (step 08 for each dataset),
+#           ${averaged_dir}/<dataset>/modisco/modisco_counts_results.h5 from each
+#           dataset's config, else the legacy
 #           ${data_root}/<dataset>/results/contrib_scores/.../modisco_counts_results.h5
 #         ${ref_db_meme} (from `cli.py download-references`)
 # Output (inside ${REPO_ROOT}/results/compendium/modisco_compiled/):
@@ -84,10 +87,26 @@ mkdir -p "${out_dir}" "${log_dir}"
 # cpm_leiden followed by k_centroids, which reassigns motifs without looking at
 # the similarity threshold; cpm_leiden alone is what v1.0.16 ran.
 
-# Per-dataset MoDISco H5 paths, under the dataset data root. igvf_endothelial's
-# lacks the <dataset>/ level the other three have. Leave it unless the cluster
-# layout says otherwise: a wrong path only [WARN]s and drops the dataset (see
-# CLAUDE.md, "The endothelial dataset is named two ways").
+# Where 08.0 wrote each dataset's counts MoDISco H5: ${averaged_dir}/<ds>/modisco/
+# as that dataset's own config.sh derives it, so a results tree moved to a new
+# output_dir (chrombpnet 2.x results go in a fresh one) is the one read -- the
+# legacy paths below would silently pick up the old tree's files instead. Runs
+# config.sh in a child bash, selected by DATASET, the way every step does.
+modisco_h5_from_config() {
+    local ds="$1"
+    [[ -f "${REPO_ROOT}/config/${ds}/config.yaml" ]] || return 1
+    # shellcheck disable=SC2016  # expanded by the child bash, after config.sh
+    DATASET="${ds}" DATASET_CONFIG="" bash -c \
+        'source "$1/lib/bash/config.sh" >/dev/null 2>&1 || exit 1
+         printf "%s\n" "${averaged_dir}/$2/modisco/modisco_counts_results.h5"' \
+        _ "${REPO_ROOT}" "${ds}"
+}
+
+# Fallback for a dataset with no config/<ds>/config.yaml: the legacy layout
+# under the dataset data root. igvf_endothelial's lacks the <dataset>/ level the
+# other three have. Leave it unless the cluster layout says otherwise: a wrong
+# path only [WARN]s and drops the dataset (see CLAUDE.md, "The endothelial
+# dataset is named two ways").
 declare -A h5_map=(
     [igvf3_cardiomyocyte]="${data_root}/igvf3_cardiomyocyte/results/contrib_scores/igvf3_cardiomyocyte/modisco/modisco_counts_results.h5"
     [igvf6_definitive_endoderm]="${data_root}/igvf6_definitive_endoderm/results/contrib_scores/igvf6_definitive_endoderm/modisco/modisco_counts_results.h5"
@@ -100,7 +119,7 @@ config_tsv="${out_dir}/modisco_config.tsv"
 echo "# dataset    modisco_h5" > "${config_tsv}"
 
 for dataset in igvf3_cardiomyocyte igvf6_definitive_endoderm igvf11_h7_hesc igvf_endothelial; do
-    h5="${h5_map[$dataset]}"
+    h5="$(modisco_h5_from_config "${dataset}")" || h5="${h5_map[$dataset]}"
     if [[ -f "${h5}" ]]; then
         echo -e "${dataset}\t${h5}" >> "${config_tsv}"
         echo "  [OK]   ${dataset}: ${h5}"
@@ -142,9 +161,12 @@ python "${src_dir}/motif_compendium.py" \
     --threshold "${motif_compendium_threshold}" \
     --algorithm "${motif_compendium_algorithm}" \
     --cpus      "${SLURM_CPUS_PER_TASK:-16}"
-
-if [[ ! -f "${out_dir}/modisco_compiled.h5" ]]; then
-    echo "ERROR: modisco_compiled.h5 not produced. Check the log above." >&2
+rc=$?
+# The exit status, not only the file: this step is rerun as more datasets reach
+# 08.0, so an older modisco_compiled.h5 is usually already there and would let a
+# failed rebuild exit 0.
+if [[ ${rc} -ne 0 || ! -f "${out_dir}/modisco_compiled.h5" ]]; then
+    echo "ERROR: motif_compendium.py failed (exit ${rc}); see the log above." >&2
     exit 1
 fi
 
