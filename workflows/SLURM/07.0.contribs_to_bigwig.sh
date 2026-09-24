@@ -9,21 +9,29 @@
 #SBATCH --error=%x_%j.log
 
 # 07.0.contribs_to_bigwig.sh
-# Purpose: Convert the fold-averaged contribution score H5 (from step 06)
-#          into a bigwig for each dataset. One SLURM array job per dataset.
+# Purpose: Convert the fold-averaged contribution score H5s (from step 06)
+#          into bigwigs, one per head, for each dataset. One SLURM array job
+#          per dataset. src/contribs_to_bigwig.py uses chrombpnet's own
+#          bigwig_helper, so it runs in the chrombpnet 2.x environment.
 #
-# score_types below mirrors step 06: only "profile" is (re-)generated here
-# since a counts bigwig already exists; add "counts" back to regenerate it.
+# score_types: both heads, mirroring 06.0. contribs_to_bigwig.py skips a head
+#   whose bigwig already exists, so a rerun only fills in what is missing.
 #
-# Input:  {averaged_dir}/{dataset}/{dataset}_average_shaps.{score_type}.h5  (step 06 output)
-#         {full_model_dir}/{dataset}_all_fold_0/interpretation/
-#             interpretation.interpreted_regions.bed          (any fold)
-# Output: {averaged_dir}/{dataset}/{dataset}_average_shaps.{score_type}.bw
+# Regions: interpretation.interpreted_regions.bed from fold ${folds[0]} (the
+#   same fold 10.0 reads), not the narrowPeak -- 05.0's contribs_bw drops peaks
+#   whose window runs off a chromosome end, so only its regions file matches
+#   the H5 row for row. Every fold scores the same peaks against the same
+#   genome, so every fold drops the same ones.
+#
+# Input:  ${averaged_dir}/{dataset}/{dataset}_average_shaps.{counts,profile}.h5  (06.0)
+#         ${full_model_dir}/{dataset}_{peak_type}_fold_${folds[0]}/interpretation/
+#             interpretation.interpreted_regions.bed                          (05.0)
+# Output: ${averaged_dir}/{dataset}/{dataset}_average_shaps.{counts,profile}.bw
 #
 # Usage:
-#   export DATASET_DIR=/path/to/igvf_tf_collab/<dataset>
-#   sbatch 07.0.contribs_to_bigwig.sh            # all datasets (array 0-4)
-#   sbatch --array=0 07.0.contribs_to_bigwig.sh  # d0 only
+#   export DATASET=<name>        # or DATASET_CONFIG=/path/to/config.yaml
+#   sbatch 07.0.contribs_to_bigwig.sh              # dataset 0 (the default --array=0)
+#   sbatch --array=1 07.0.contribs_to_bigwig.sh    # dataset 1 of ${datasets[@]}
 #
 # Prerequisites: 06.0.average_contrib_scores.sh must have completed.
 
@@ -56,37 +64,30 @@ source "${REPO_ROOT}/lib/bash/config.sh" || exit 1
 dataset="${datasets[${SLURM_ARRAY_TASK_ID}]}"
 [[ -z "${dataset}" ]] && { echo "No dataset at array index ${SLURM_ARRAY_TASK_ID}, exiting."; exit 0; }
 
-score_types=("profile")  # counts bigwig already exists; add "counts" here to redo/extend
+score_types=("counts" "profile")  # see the header
 
 
 metadata_start "07.0.contribs_to_bigwig"
+metadata_params+=( "dataset=${dataset}" )
 
+# The first configured fold's interpreted regions -- see the header.
+regions_file="${full_model_dir}/${dataset}_${peak_type}_fold_${folds[0]}/interpretation/interpretation.interpreted_regions.bed"
 
-# Use fold 0's interpreted regions — identical across folds (same peaks input)
-regions_file="${full_model_dir}/${dataset}_${peak_type}_fold_0/interpretation/interpretation.interpreted_regions.bed"
-
-
-metadata_inputs+=( "peaks=${regions_file}" )
+metadata_inputs+=( "peaks=${regions_file}" "chrom_sizes=${chrom_sizes}" )
 require_input "${regions_file}" 05.0.get_contrib_scores.sh
-metadata_outputs+=( "contributions=${averaged_dir}/${dataset}/${dataset}_average_shaps.counts.bw" )
+require_input "${chrom_sizes}" "cli.py download-references"
+for score_type in "${score_types[@]}"; do
+    metadata_inputs+=( "contributions=${averaged_dir}/${dataset}/${dataset}_average_shaps.${score_type}.h5" )
+    metadata_outputs+=( "contributions=${averaged_dir}/${dataset}/${dataset}_average_shaps.${score_type}.bw" )
+    require_input "${averaged_dir}/${dataset}/${dataset}_average_shaps.${score_type}.h5" 06.0.average_contrib_scores.sh
+done
 preflight_check
 
 activate_env "${chrombpnet_env}"
-metadata_params+=( "dataset=${dataset}" )
-if [[ ! -f "${regions_file}" ]]; then
-    echo "[${dataset}] Regions BED not found: ${regions_file}" >&2
-    exit 1
-fi
 
 for score_type in "${score_types[@]}"; do
     h5_file="${averaged_dir}/${dataset}/${dataset}_average_shaps.${score_type}.h5"
     out_bw="${averaged_dir}/${dataset}/${dataset}_average_shaps.${score_type}.bw"
-
-    if [[ ! -f "${h5_file}" ]]; then
-        echo "[${dataset} ${score_type}] Averaged H5 not found: ${h5_file}" >&2
-        echo "  Run 06.0.average_contrib_scores.sh first." >&2
-        exit 1
-    fi
 
     echo "[$(date)] [${dataset} ${score_type}] Writing averaged contribution score bigwig..."
 
@@ -95,6 +96,12 @@ for score_type in "${score_types[@]}"; do
         --regions "${regions_file}" \
         --chrom-sizes "${chrom_sizes}" \
         --output-bw "${out_bw}"
+    _rc=$?
+    # No `set -e` in this step: guard the call and its output explicitly.
+    if [[ ${_rc} -ne 0 || ! -f "${out_bw}" ]]; then
+        echo "ERROR: contribs_to_bigwig.py failed for ${dataset} ${score_type} (exit ${_rc}); ${out_bw} was not written." >&2
+        exit 1
+    fi
 
     echo "[$(date)] [${dataset} ${score_type}] Done: ${out_bw}"
 done

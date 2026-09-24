@@ -1,28 +1,30 @@
 #!/usr/bin/env python3
 """
-08.contribs_to_bigwig.py
-Convert the fold-averaged contribution score H5 produced by
-07.average_contrib_scores.py into a bigwig file.
+contribs_to_bigwig.py
+Convert one head's fold-averaged contribution score H5, produced by
+average_contrib_scores.py (06.0), into a bigwig file (07.0, once per head).
 
 The averaged H5 stores projected_shap/seq with shape (N, 4, seqlen).
 Summing over the 4-base axis yields the per-position contribution score
 for the actual nucleotide at that position (identical to what
-chrombpnet's importance_hdf5_to_bigwig.py does on a per-fold H5).
+chrombpnet's importance_hdf5_to_bigwig.py does on a per-fold H5). The
+region and bigwig handling is chrombpnet's own bigwig_helper, so this runs
+in the chrombpnet environment. An existing output is left alone.
 
 Input:
-  {averaged_dir}/{dataset}/{dataset}_average_shaps.counts.h5
-  interpretation.interpreted_regions.bed  (from any single fold;
+  {averaged_dir}/{dataset}/{dataset}_average_shaps.{counts,profile}.h5
+  interpretation.interpreted_regions.bed  (05.0, from any single fold;
       rows must match the averaged H5 - all folds use the same peaks)
 
 Output:
-  {averaged_dir}/{dataset}/{dataset}_average_shaps.counts.bw
+  {averaged_dir}/{dataset}/{dataset}_average_shaps.{counts,profile}.bw
 
 Usage:
-  python 08.contribs_to_bigwig.py \\
-      --h5          results/contrib_scores/d0/d0_average_shaps.counts.h5 \\
-      --regions     results/full_models/d0_all_fold_0/interpretation/interpretation.interpreted_regions.bed \\
-      --chrom-sizes results/preprocessing/hg38.chrom.sizes \\
-      --output-bw   results/contrib_scores/d0/d0_average_shaps.counts.bw
+  python contribs_to_bigwig.py \\
+      --h5          results/contrib_scores/igvf3_cardiomyocyte/igvf3_cardiomyocyte_average_shaps.counts.h5 \\
+      --regions     results/full_models/igvf3_cardiomyocyte_all_fold_0/interpretation/interpretation.interpreted_regions.bed \\
+      --chrom-sizes hg38.chrom.sizes \\
+      --output-bw   results/contrib_scores/igvf3_cardiomyocyte/igvf3_cardiomyocyte_average_shaps.counts.bw
 """
 
 import argparse
@@ -46,7 +48,7 @@ logger = log.get_logger(__name__)
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--h5", required=True, help="Path to average_shaps.counts.h5")
+    p.add_argument("--h5", required=True, help="Path to average_shaps.{counts,profile}.h5 (06.0)")
     p.add_argument(
         "--regions",
         required=True,

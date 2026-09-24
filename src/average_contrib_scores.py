@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
 average_contrib_scores.py
-Average DeepLIFT contribution scores across all 5 cross-validation folds for
-a given dataset. Produces a single "average_shaps.{score_type}.h5" per dataset
-with reduced fold-specific noise, for use in motif discovery (step 09) and
-pattern merging (step 11). Handles both the "counts" and "profile"
-contribution score heads via --score-type; the two H5 types share the same
-key structure.
+Average DeepSHAP contribution scores across the cross-validation folds for a
+given dataset (06.0). Produces a single "average_shaps.{score_type}.h5" per
+dataset with reduced fold-specific noise, for 07.0's bigwigs, motif discovery
+in 08.0 and Fi-NeMo hit calling in 10.0 (which reads counts). Handles both the
+"counts" and "profile" contribution score heads via --score-type; the two H5
+types share the same key structure. Folds with no scores file are skipped
+with a warning; an existing output is left alone.
 
 Why average:
   Each fold's model was trained on a different 80% of peaks, so its
@@ -14,7 +15,7 @@ Why average:
   cancels this noise while preserving the signal that is consistently
   important across all models.
 
-Input per fold:
+Input per fold (05.0, `chrombpnet contribs_bw`):
   {full_model_dir}/{dataset}_{peak_type}_fold_{fold}/interpretation/
       interpretation.{score_type}_scores.h5
 
@@ -23,8 +24,12 @@ Input per fold:
       shap/seq            - hypothetical contribution scores
       projected_shap/seq  - projected contribution scores (used by MoDISco)
 
+  chrombpnet 1.x (deepdish) and 2.x (h5py) both write these float16 and
+  Blosc-compressed, which is why hdf5plugin is imported before reading.
+
 Output:
-  {averaged_dir}/{dataset}/{dataset}_average_shaps.{score_type}.h5  (same key structure)
+  {averaged_dir}/{dataset}/{dataset}_average_shaps.{score_type}.h5
+      same keys, float16, gzip-compressed (readable without hdf5plugin)
 
 Usage:
   python average_contrib_scores.py \\
@@ -57,7 +62,7 @@ logger = log.get_logger(__name__)
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--dataset", required=True, help="dataset label, e.g. d0")
+    p.add_argument("--dataset", required=True, help="dataset label, e.g. igvf3_cardiomyocyte")
     p.add_argument(
         "--folds",
         required=True,
@@ -68,7 +73,7 @@ def parse_args():
     p.add_argument(
         "--full-model-dir",
         required=True,
-        help="Path to chrombpnet_full_model_selected",
+        help="Directory holding the {dataset}_{peak-type}_fold_{fold}/ model dirs (${full_model_dir})",
     )
     p.add_argument("--peak-type", default="all")
     p.add_argument(

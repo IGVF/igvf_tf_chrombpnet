@@ -21,8 +21,11 @@
 #   and biologically meaningful. This is the standard approach in the
 #   Greenleaf lab ChromBPNet pipeline.
 #
-# score_types below: only "profile" is (re-)run here since counts modisco
-# results already exist; add "counts" back to redo/extend.
+# score_types: both heads, one after the other. 09.0 builds the compendium
+#   from the counts results only (modisco_counts_results.h5); the profile
+#   results are for reading. (Counts used to be left out here because it had
+#   already been run in the 1.x results tree; a chrombpnet 2.x results tree
+#   starts empty.)
 #
 # Partition/GPU/QOS: modisco motifs (tfmodisco-lite) is CPU-only, so this
 # runs on the engreitz partition (no GPU request) with --qos=high_p. The
@@ -31,14 +34,15 @@
 # (7-day MaxWall, granted to the engreitz account) is required to actually
 # get more than 2 days, which some datasets need.
 #
-# Input:  results/contrib_scores/{dataset}/{dataset}_average_shaps.{score_type}.h5  (step 06/07)
+# Input:  ${averaged_dir}/{dataset}/{dataset}_average_shaps.{counts,profile}.h5  (06.0)
 # Output: ${averaged_dir}/{dataset}/modisco/
-#             modisco_{score_type}_results.h5
-#             {score_type}_report/
+#             modisco_{counts,profile}_results.h5
+#             {counts,profile}_report/
 #
 # Usage:
-#   export DATASET_DIR=/path/to/igvf_tf_collab/<dataset>
-#   sbatch 08.0.run_modisco.sh            # dataset 0
+#   export DATASET=<name>        # or DATASET_CONFIG=/path/to/config.yaml
+#   sbatch 08.0.run_modisco.sh              # dataset 0 (the default --array=0)
+#   sbatch --array=1 08.0.run_modisco.sh    # dataset 1 of ${datasets[@]}
 #
 # Prerequisites: 06.0.average_contrib_scores.sh must have completed.
 
@@ -71,7 +75,18 @@ source "${REPO_ROOT}/lib/bash/config.sh" || exit 1
 dataset="${datasets[${SLURM_ARRAY_TASK_ID}]}"
 [[ -z "${dataset}" ]] && { echo "No dataset at array index ${SLURM_ARRAY_TASK_ID}, exiting."; exit 0; }
 
-score_types=("profile")  # counts modisco already done; add "counts" here to redo/extend
+score_types=("counts" "profile")  # see the header
+
+metadata_start "08.0.run_modisco"
+metadata_params+=( "dataset=${dataset}" )
+for score_type in "${score_types[@]}"; do
+    metadata_inputs+=( "contributions=${averaged_dir}/${dataset}/${dataset}_average_shaps.${score_type}.h5" )
+    metadata_outputs+=( "motifs=${averaged_dir}/${dataset}/modisco/modisco_${score_type}_results.h5" )
+    require_input "${averaged_dir}/${dataset}/${dataset}_average_shaps.${score_type}.h5" 06.0.average_contrib_scores.sh
+done
+metadata_inputs+=( "motif_db=${ref_db_meme}" )
+require_input "${ref_db_meme}" "cli.py download-references"
+preflight_check
 
 mkdir -p "${log_dir}"
 for score_type in "${score_types[@]}"; do
@@ -79,12 +94,6 @@ for score_type in "${score_types[@]}"; do
 done
 
 activate_env "${chrombpnet_env}"
-
-metadata_start "08.0.run_modisco"
-metadata_inputs+=( "contributions=${averaged_dir}/${dataset}" )
-metadata_outputs+=( "motifs=${averaged_dir}/${dataset}/modisco/modisco_counts_results.h5" )
-metadata_params+=( "dataset=${dataset}" )
-
 
 for score_type in "${score_types[@]}"; do
     echo "[$(date)] Dataset ${dataset}: running MoDISco on averaged ${score_type} scores..."

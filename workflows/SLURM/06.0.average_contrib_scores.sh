@@ -17,21 +17,25 @@
 #      its contribution scores carry fold-specific noise. Averaging reduces
 #      this noise and gives a more robust signal for motif discovery.
 #      This follows the Greenleaf lab approach (their step 05-average_deepshaps).
+#      05.0 also gives each fold its own DeepSHAP reference seed, so the
+#      average smooths over reference noise too.
 #
-# score_types below controls which contribution head(s) get (re-)averaged.
-#   Counts was already run previously; it is left out here so reruns of
-#   this script do not touch counts.h5. average_contrib_scores.py also
-#   skips a score-type if its output already exists, so re-adding "counts"
-#   to score_types later is safe and will not recompute it.
+# score_types: both heads. 09.0 and 10.0 consume the counts average only;
+#   profile feeds 07.0's profile bigwig and 08.0's profile TF-MoDISco. (Counts
+#   used to be left out here because it had already been averaged in the 1.x
+#   results tree; a chrombpnet 2.x results tree starts empty.)
+#   average_contrib_scores.py skips a head whose output already exists, so a
+#   rerun only fills in what is missing; delete an output to recompute it.
+#   It averages whichever folds have scores and warns about the rest.
 #
-# Input:  ${full_model_dir}/{dataset}_{peak_type}_fold_{0..4}/interpretation/
-#             interpretation.{score_type}_scores.h5  (step 05 output)
-# Output: ${averaged_dir}/{dataset}/{dataset}_average_shaps.{score_type}.h5
+# Input:  ${full_model_dir}/{dataset}_{peak_type}_fold_{fold}/interpretation/
+#             interpretation.{counts,profile}_scores.h5  (05.0), for each fold in ${folds[@]}
+# Output: ${averaged_dir}/{dataset}/{dataset}_average_shaps.{counts,profile}.h5
 #
 # Usage:
-#   export DATASET_DIR=/path/to/igvf_tf_collab/<dataset>
-#   sbatch 06.0.average_contrib_scores.sh            # all datasets (array 0-4)
-#   sbatch --array=0 06.0.average_contrib_scores.sh  # dataset 0 only
+#   export DATASET=<name>        # or DATASET_CONFIG=/path/to/config.yaml
+#   sbatch 06.0.average_contrib_scores.sh              # dataset 0 (the default --array=0)
+#   sbatch --array=1 06.0.average_contrib_scores.sh    # dataset 1 of ${datasets[@]}
 #
 # Prerequisites: 05.0.get_contrib_scores.sh must have completed for all folds.
 # =============================================================================
@@ -65,20 +69,27 @@ source "${REPO_ROOT}/lib/bash/config.sh" || exit 1
 dataset="${datasets[${SLURM_ARRAY_TASK_ID}]}"
 [[ -z "${dataset}" ]] && { echo "No dataset at array index ${SLURM_ARRAY_TASK_ID}, exiting."; exit 0; }
 
-score_types=("profile")  # counts already done; add "counts" here to redo/extend
+score_types=("counts" "profile")  # see the header
 
 out_dir="${averaged_dir}/${dataset}"
 mkdir -p "${out_dir}" "${log_dir}"
 
+metadata_start "06.0.average_contrib_scores"
+metadata_params+=( "dataset=${dataset}" "folds=${folds[*]}" )
+# Declared up front (hashed at exit), so a failed run still records what it
+# meant to write. A fold with no scores is recorded with file_exists false.
+for score_type in "${score_types[@]}"; do
+    for _fold in "${folds[@]}"; do
+        metadata_inputs+=( "contributions=${full_model_dir_selected}/${dataset}_${peak_type}_fold_${_fold}/interpretation/interpretation.${score_type}_scores.h5" )
+    done
+    metadata_outputs+=( "contributions=${out_dir}/${dataset}_average_shaps.${score_type}.h5" )
+done
+unset _fold
+
 activate_env "${chrombpnet_env}"
 
-metadata_start "06.0.average_contrib_scores"
-metadata_inputs+=( "model=${full_model_dir_selected}" )
-metadata_outputs+=( "contributions=${averaged_dir}/${dataset}/${dataset}_average_shaps.counts.h5" )
-metadata_params+=( "dataset=${dataset}" )
-
-
 for score_type in "${score_types[@]}"; do
+    out_h5="${out_dir}/${dataset}_average_shaps.${score_type}.h5"
     echo "[$(date)] [${dataset} ${score_type}] Averaging contribution scores..."
     python "${src_dir}/average_contrib_scores.py" \
         --dataset "${dataset}" \
@@ -87,6 +98,12 @@ for score_type in "${score_types[@]}"; do
         --peak-type "${peak_type}" \
         --score-type "${score_type}" \
         --out-dir "${out_dir}"
+    _rc=$?
+    # No `set -e` in this step: guard the call and its output explicitly.
+    if [[ ${_rc} -ne 0 || ! -f "${out_h5}" ]]; then
+        echo "ERROR: average_contrib_scores.py failed for ${dataset} ${score_type} (exit ${_rc}); ${out_h5} was not written." >&2
+        exit 1
+    fi
 done
 
 echo "Done"
