@@ -3,10 +3,10 @@
 #SBATCH --mem=64G
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
-# Same GPU limits as 03.0/04.0: cuda/11.5 cannot drive Ada (8.9) or Hopper
-# (9.0), and 7.0/7.5 are excluded for speed. See 03.0 for the measurements.
-# This step previously carried NO constraint while loading the same cuda
-# module, so it could land on an H100 and fail obscurely.
+# GPU: JAX brings its own CUDA 13 wheels (no cuda module is loaded), so what
+# gates a node is its NVIDIA driver (>= 580), not the card generation.
+# GPU_CC 8.0 (A100) and 8.6 (A40, RTX_3090) are the ones the pipeline has
+# run on so far; widen the constraint at submit time to try others.
 #SBATCH --constraint="GPU_CC:8.0|GPU_CC:8.6"
 #SBATCH --time=4:00:00
 #SBATCH --partition=gpu,owners
@@ -15,14 +15,22 @@
 #SBATCH --error=%x_%j.log
 
 # 04.3.generate_predictions.sh
-# Purpose: Generate genome-wide accessibility prediction bigwigs for one dataset,
-#          averaged across all available trained folds.
-#          One SLURM array job per dataset.  Both bias-corrected and uncorrected
-#          predictions are generated.
+# Purpose: Predicted accessibility bigwigs over the dataset's peaks, averaged
+#          across all available trained folds (src/predict_and_avg.py).
+#          One SLURM array job per dataset.  Both bias-corrected
+#          (chrombpnet_nobias.h5) and uncorrected (chrombpnet.h5) predictions
+#          are generated.
 #
 # If only one fold is trained, the "average" is just that single model.
-# The script collects whichever folds are present in full_model_dir.
+# The script collects whichever folds are present in full_model_dir, scanning
+# folds 0-4 whatever the config's folds list says.
 #
+# Inference runs on Keras 3 / JAX with no device switch, so the step calls
+# require_gpu jax after activate_env: without it a node whose JAX cannot see
+# the GPU would predict on the CPU for the whole time limit.
+#
+# Input:  ${peaks_dir}/<dataset>_<peak_type>_peaks_no_blacklist.narrowPeak (00.1)
+#         ${full_model_dir}/<dataset>_<peak_type>_fold_<fold>/models/ (04.0)
 # Outputs (inside <predictions_dir>/<dataset>_<peak_type>/):
 #   <dataset>_avg_chrombpnet_nobias.bw
 #   <dataset>_avg_chrombpnet_nobias_preds_w_logcounts.bed
@@ -30,10 +38,10 @@
 #   <dataset>_avg_chrombpnet_uncorrected_preds_w_logcounts.bed
 #
 # Usage:
-#   sbatch 04.3.generate_predictions.sh            # dataset 0
-#   sbatch 04.3.generate_predictions.sh            # (override with --array=0 if needed)
+#   export DATASET=<name>        # or DATASET_CONFIG=/path/to/config.yaml
+#   sbatch 04.3.generate_predictions.sh            # array 0: the config's one dataset
 #
-# Prerequisites: 04.0.train_full_model.sh must have completed.
+# Prerequisites: 00.1.preprocess_peaks.sh and 04.0.train_full_model.sh.
 
 # --- bootstrap: locate the repo root (identical block in every workflow step) --
 # sbatch copies the submitted script to a node-local spool dir, so BASH_SOURCE
@@ -64,23 +72,23 @@ source "${REPO_ROOT}/lib/bash/config.sh" || exit 1
 dataset="${datasets[${SLURM_ARRAY_TASK_ID}]}"
 [[ -z "${dataset}" ]] && { echo "No dataset at array index ${SLURM_ARRAY_TASK_ID}, exiting."; exit 0; }
 
-activate_env "${chrombpnet_env}"
-
 metadata_start "04.3.generate_predictions"
 
-
-gpu_env
-
 peaks_file="${peaks_dir}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
+out_dir="${predictions_dir}/${dataset}_${peak_type}"
 
 metadata_inputs+=( "peaks=${peaks_file}" "genome=${genome_fa}" )
+metadata_outputs+=( "predictions=${out_dir}" )
+metadata_params+=( "dataset=${dataset}" )
 require_input "${peaks_file}"  00.1.preprocess_peaks.sh
 require_input "${genome_fa}"   "cli.py download-references"
 require_input "${chrom_sizes}" "cli.py download-references"
 preflight_check
-metadata_outputs+=( "predictions=${out_dir}" )
-metadata_params+=( "dataset=${dataset}" )
-out_dir="${predictions_dir}/${dataset}_${peak_type}"
+
+activate_env "${chrombpnet_env}"
+gpu_env
+require_gpu jax
+
 mkdir -p "${out_dir}"
 
 # Collect all available fold model files for this dataset
@@ -117,14 +125,14 @@ for mode in "bias_corrected" "uncorrected"; do
         continue
     fi
 
-    model_flags=""
+    model_flags=()
     for m in "${models[@]}"; do
-        model_flags="${model_flags} --chrombpnet-model ${m}"
+        model_flags+=( --chrombpnet-model "${m}" )
     done
 
     echo "[$(date)] [${dataset} ${mode}] Running predictions (${#models[@]} model(s))..."
 
-    python3 "${src_dir}/predict_and_avg.py" \
+    python "${src_dir}/predict_and_avg.py" \
         --regions       "${peaks_file}" \
         --genome        "${genome_fa}" \
         --chrom-sizes   "${chrom_sizes}" \
@@ -132,7 +140,7 @@ for mode in "bias_corrected" "uncorrected"; do
         --output-key    "${out_key}" \
         --output-bed    True \
         --batch-size    64 \
-        ${model_flags}
+        "${model_flags[@]}"
     # No `set -e`, and this runs inside a `for mode` loop, so an unguarded
     # failure both prints "Done." and lets the NEXT mode start as though this
     # one had produced its bigwig. ${done_file} is the same marker the

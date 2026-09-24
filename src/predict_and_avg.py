@@ -8,9 +8,30 @@ Called by 04.3.generate_predictions.sh.
 Adapted from the Greenleaf HDMA pipeline (08-predict_and_avg.py), with
 support for a variable number of folds (not hard-coded to 5).
 
+Models load through chrombpnet's load_model_wrapper, which reads both 1.x
+(TF-Keras) and 2.x (Keras 3) .h5 files; inference runs on Keras 3 / JAX, and
+04.3 checks for a GPU first (require_gpu jax) because nothing here would stop
+it running on the CPU.
+
+--debug-chr filters the regions BEFORE anything is derived from them, as
+chrombpnet's own predict_to_bigwig does: the sequences, the regions_used mask
+and the output windows all come from the same filtered table. (Output windows
+used to be re-read from the full --regions file, so a debug run paired a
+chromosome's mask with the whole genome's rows and failed with an IndexError.)
+
+Input:
+  --chrombpnet-model  one or more model .h5 files (1.x or 2.x), one per fold
+  --regions           10-column narrowPeak (summit = start + column 10)
 Outputs (given --output-prefix PREFIX and --output-key KEY):
   PREFIX_chrombpnet_KEY.bw                    – predicted profile bigwig
+  PREFIX_chrombpnet_KEY_preds.bed             – the regions predicted on
   PREFIX_chrombpnet_KEY_preds_w_logcounts.bed – per-peak predicted log counts
+
+Usage:
+  python predict_and_avg.py -cm fold_0/models/chrombpnet_nobias.h5 \\
+      -cm fold_1/models/chrombpnet_nobias.h5 -r peaks.narrowPeak \\
+      -g hg38.fa -c hg38.chrom.sizes --output-prefix out/d0_avg \\
+      --output-key nobias --output-bed True
 """
 
 import argparse
@@ -21,14 +42,12 @@ from pathlib import Path
 # conda envs, under pixi, and under a bare python).
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib" / "python"))
 
+# chrombpnet first: importing it selects the Keras JAX backend before keras loads.
 import chrombpnet.evaluation.make_bigwigs.bigwig_helper as bigwig_helper
-import chrombpnet.training.utils.losses as losses
 import numpy as np
 import pandas as pd
 import pyfaidx
-import tensorflow as tf
-from tensorflow.keras.models import load_model
-from tensorflow.keras.utils import get_custom_objects
+from chrombpnet.helpers.hyperparameters.param_utils import load_model_wrapper
 
 from utils import log  # noqa: E402
 from utils.regions import NARROWPEAK_SCHEMA
@@ -101,15 +120,6 @@ def softmax(x):
     return e / np.sum(e, axis=1, keepdims=True)
 
 
-def load_model_wrapper(path):
-    custom_objects = {"multinomial_nll": losses.multinomial_nll, "tf": tf}
-    get_custom_objects().update(custom_objects)
-    model = load_model(path, compile=False)
-    logger.info(f"Loaded model: {path}")
-    model.summary()
-    return model
-
-
 def main():
     args = parse_args()
     log.setup_from_args(args)
@@ -119,7 +129,8 @@ def main():
     # ------------------------------------------------------------------
     models, inputlens, outputlens = [], [], []
     for path in args.chrombpnet_model:
-        m = load_model_wrapper(path)
+        m = load_model_wrapper(model_h5=path)
+        logger.info(f"Loaded model: {path}")
         models.append(m)
         inputlens.append(int(m.input_shape[1]))
         outputlens.append(int(m.output_shape[0][1]))
@@ -136,13 +147,17 @@ def main():
     # ------------------------------------------------------------------
     regions_df = pd.read_csv(args.regions, sep="\t", names=NARROWPEAK_SCHEMA)
     if args.debug_chr:
-        regions_df = regions_df[regions_df["chr"].isin(args.debug_chr)]
+        regions_df = regions_df[regions_df["chr"].isin(args.debug_chr)].reset_index(drop=True)
+        if regions_df.empty:
+            raise ValueError(f"no regions of {args.regions} on --debug-chr {args.debug_chr}")
 
     with pyfaidx.Fasta(args.genome) as g:
         seqs, regions_used = bigwig_helper.get_seq(regions_df, g, inputlen)
 
     gs = bigwig_helper.read_chrom_sizes(args.chrom_sizes)
-    regions = bigwig_helper.get_regions(args.regions, outputlen, regions_used)
+    # The filtered table, not args.regions: get_regions would re-read the whole
+    # file, and regions_used is a mask over regions_df's rows.
+    regions = bigwig_helper.get_regions(regions_df, outputlen, regions_used)
 
     # Write the set of regions actually used
     regions_df[regions_used].to_csv(
@@ -159,7 +174,7 @@ def main():
     sum_logcounts = None
 
     for model in models:
-        pred_logits, pred_logcts = model.predict([seqs], batch_size=args.batch_size, verbose=True)
+        pred_logits, pred_logcts = model.predict(seqs, batch_size=args.batch_size, verbose=True)
         pred_logits = np.squeeze(pred_logits)
 
         if sum_logits is None:

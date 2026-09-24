@@ -3,8 +3,10 @@
 #SBATCH --mem=64G
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
-# Same GPU limits as 03.0/04.0: cuda/11.5 cannot drive Ada (8.9) or Hopper
-# (9.0), and 7.0/7.5 are excluded for speed. See 03.0/04.0.
+# GPU: JAX brings its own CUDA 13 wheels (no cuda module is loaded), so what
+# gates a node is its NVIDIA driver (>= 580), not the card generation.
+# GPU_CC 8.0 (A100) and 8.6 (A40, RTX_3090) are the ones the pipeline has
+# run on so far; widen the constraint at submit time to try others.
 #SBATCH --constraint="GPU_CC:8.0|GPU_CC:8.6"
 #SBATCH --time=1-0
 #SBATCH --partition=gpu,owners
@@ -18,6 +20,8 @@
 #   1234 -- what `chrombpnet pipeline` would have run next inside 04.0, except
 #   that both heads are scored: pipeline scores profile only, and the counts
 #   head is where a model absorbs composition (see src/run_full_model_qc.py).
+#   Interpretation runs with --device gpu and the step calls require_gpu jax:
+#   JAX would otherwise fall back to the CPU and run for the whole time limit.
 #
 # Why its own step: pipeline ran this and then TF-MoDISco inside the training
 # job, and TF-MoDISco is CPU-only and the long pole, so the GPU sat idle for
@@ -83,6 +87,7 @@ preflight_check
 
 activate_env "${chrombpnet_env}"
 gpu_env
+require_gpu jax
 
 for dataset in "${datasets[@]}"; do
     out_dir="${full_model_dir}/${dataset}_${peak_type}_fold_${fold}"
