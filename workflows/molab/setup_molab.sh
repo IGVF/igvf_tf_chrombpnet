@@ -203,9 +203,9 @@ fi
 
 if [[ "${cloned}" == "0" ]]; then
     log "fetching ${CHROMBPNET_REPO}"
-    # --tags: the pinned commit is also tagged on the fork (<branch>-<date>, e.g.
-    # stable-modern-gpu-support-20260929), which keeps it reachable if its branch
-    # is rewritten later.
+    # --tags: pinned commits may also be tagged on the fork (e.g. the earlier
+    # pipeline-hooks-20260924), which keeps them reachable if their branch is
+    # rewritten; the current pin is the head of the fork's default branch.
     git -C "${CHROMBPNET_REPO}" fetch --quiet --tags origin \
         || log "WARNING: git fetch failed; carrying on if ${CHROMBPNET_REV:0:7} is already here"
 fi
