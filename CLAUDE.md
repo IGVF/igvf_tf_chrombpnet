@@ -258,9 +258,10 @@ exactly one place, its `activate_env` line, as `pixi:<manifest>#<environment>`:
 | `default` / `qc` | no step: lint, tests, local plotting | `pixi.toml` |
 
 **chrombpnet stays out of this repo's `pixi.toml` on purpose.** It is installed
-from a pinned checkout of the NNFC-GMD fork (branch `pipeline-hooks`: PR
-kundajelab/chrombpnet#284 plus `-bw` on the training commands, `pipeline
---skip-interpretation` and the lookup-table one-hot encoder), from that repo's own
+from a pinned checkout of the NNFC-GMD fork (branch `stable-modern-gpu-support`,
+its default branch: PR kundajelab/chrombpnet#284 plus `-bw` on the training
+commands, `pipeline --skip-interpretation`, the lookup-table one-hot encoder and a
+leaner, faster training loader with identical batches), from that repo's own
 lock file — the one the Keras 3 / JAX port was validated against — rather than
 re-solved here. `activate_env` warns when the checkout is not at `CHROMBPNET_REV`;
 it does not stop, so a newer chrombpnet can be tried on purpose, and the run
@@ -544,7 +545,7 @@ say which of the two kinds of verification a change actually got.
   `chrombpnet pipeline`, after training, predictions and marginal footprinting,
   runs DeepLIFT on a 30K peak subsample and TF-MoDISco on the profile scores
   inside the same GPU job. 04.0 passes chrombpnet's own `--skip-interpretation`
-  (from the pinned `pipeline-hooks` commit), which stops after the marginal
+  (in the pinned chrombpnet commit), which stops after the marginal
   footprints and writes the train-mode report. `src/chrombpnet_train.py` patches
   nothing any more: it runs chrombpnet in-process to record the training
   process's peak RSS, after checking that the `prepared_bigwig.json` 00.0 wrote

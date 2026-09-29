@@ -46,11 +46,14 @@ fi
 # Any of these can instead be a plain conda prefix, which activate_env enters
 # with `conda activate` through CONDA_INIT.
 CHROMBPNET_REPO="${CHROMBPNET_REPO:-}"
-# The commit of NNFC-GMD/chrombpnet the pipeline is tested against: branch
-# pipeline-hooks, i.e. PR kundajelab/chrombpnet#284 plus -bw on the training
-# commands, `pipeline --skip-interpretation` and the lookup-table one-hot
-# encoder. activate_env warns when the checkout is elsewhere.
-CHROMBPNET_REV="${CHROMBPNET_REV:-7dfb285f88330d4384244264527424dd4d01b63f}"
+# The commit of NNFC-GMD/chrombpnet the pipeline runs: branch
+# stable-modern-gpu-support (the fork's default branch), i.e. PR
+# kundajelab/chrombpnet#284 plus -bw on the training commands, `pipeline
+# --skip-interpretation`, the lookup-table one-hot encoder, and a leaner, faster
+# training loader (identical batches) with asynchronous batch callbacks, validated
+# on ENCODE K562. Same pyproject.toml / pixi.lock as the previous pin (7dfb285,
+# pipeline-hooks). activate_env warns when the checkout is elsewhere.
+CHROMBPNET_REV="${CHROMBPNET_REV:-c913b65991a2792372f4dca0c32fb7cf70d04e1a}"
 CHROMBPNET_PIXI_ENV="${CHROMBPNET_PIXI_ENV:-cuda13}"
 chrombpnet_env="${CHROMBPNET_ENV:-pixi:${CHROMBPNET_REPO}/pyproject.toml#${CHROMBPNET_PIXI_ENV}}"
 preprocess_env="${PREPROCESS_ENV:-pixi:${REPO_ROOT}/pixi.toml#preprocess}"
