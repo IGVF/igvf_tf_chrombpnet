@@ -12,12 +12,26 @@ Two deliberate changes from upstream:
    functions. Detection needs sequence around the cut sites by its nature, but
    the pileup does not: give ``plus_shift``/``minus_shift`` in the config and
    neither a FASTA nor pyfaidx is touched at all.
-3. **``detect_shift`` is not the entry point.** It returns
-   ``(4 - detected, -5 - detected)``, i.e. deltas targeting scPrinter's +4/-5
-   convention. ChromBPNet targets **+4/-4** for ATAC (and 0/+1 for DNASE), so
-   using that return value directly would be one base off on the minus strand.
-   Use :func:`detect_shift_raw`, which returns the shift actually present in
-   the reads, and :func:`shift_deltas` to apply chrombpnet's target.
+3. **What the detector measures, and what it returns.** ``circular_detect``
+   finds the offset ``d`` at which the sample's cut-site base composition best
+   matches the reference matrices below, and those matrices are in scPrinter's
+   own frame: fragments already shifted +4/-5, as 10x/CellRanger write them.
+   So the shift PRESENT in the reads is ``(4 - d_plus, -5 - d_minus)`` --
+   exactly what upstream ``detect_shift`` returns -- and ``d`` itself is not a
+   shift at all. :func:`detect_shift_raw` returns the shift present (same
+   numbers as ``detect_shift``, under the name the callers use), and
+   :func:`shift_deltas` turns it into chrombpnet's +4/-4 (ATAC) or 0/+1
+   (DNASE) correction.
+
+   An earlier version of this module read ``detect_shift``'s return value as
+   deltas and returned the bare ``d`` as "the shift present". On 10x
+   fragments that reported (0, 0) -- with a near-perfect fit -- where
+   chrombpnet's own detector (``auto_shift_detect.compute_shift``, whose
+   reference is unshifted BAM reads) reports +4/-5 for the same file, and
+   ``shift_deltas`` then applied +4/-4 instead of 0/+1: every insertion four
+   bases off. Checked on a 10x multiome fragments file (cellranger-arc 2.0.2),
+   525,245 fragments sampled genome-wide: scPrinter ``d`` = (0, 0) at MSE
+   1e-4; chrombpnet +4/-5 at two seeds.
 """
 
 # Author: Ruochi Zhang
@@ -367,12 +381,28 @@ def detect_shift(frags, genome):
     )
 
 
+def shift_present(detected_plus: int, detected_minus: int) -> tuple[int, int]:
+    """The shift present in the reads, from ``circular_detect``'s offsets.
+
+    The reference bias matrices are in the +4/-5 frame, so an offset of 0
+    means +4/-5 already applied (10x fragments) and an offset of (+4, -5)
+    means raw, unshifted reads -- see the module docstring.
+    """
+    return 4 - int(detected_plus), -5 - int(detected_minus)
+
+
 def detect_shift_raw(frags, genome):
     """The Tn5 shift actually present in the reads, as (plus, minus).
 
-    ``detect_shift`` above returns scPrinter-convention deltas (+4/-5). This
-    returns the raw detected shift so the caller can target whichever
-    convention it needs -- chrombpnet's is +4/-4 for ATAC.
+    The same numbers as upstream ``detect_shift``: the reference matrices sit
+    in the +4/-5 frame, so the shift present is ``(4 - d, -5 - d)`` for the
+    detected offsets ``d`` (``shift_present``). Feed it to ``shift_deltas``
+    for chrombpnet's correction.
+
+    For a file over 2 GB this samples only the first million lines, which in
+    a coordinate-sorted fragments file is the start of chr1; there the fit can
+    fail (scPrinter warns above MSE 0.002). Sample genome-wide first if so --
+    workflows/dcai/detect_shifts.py does.
     """
     if os.path.getsize(frags) / (1024**3) < 2:
         df = pd.read_csv(frags, sep="\t", header=None, comment="#").sample(10000)
@@ -384,21 +414,24 @@ def detect_shift_raw(frags, genome):
         single_end = True
 
     forward_bias, reverse_bias = get_nucleotide_freq(df, genome, paired=not single_end)
-    return (
-        int(circular_detect(ref_forward_bias, forward_bias)),
-        int(circular_detect(ref_reverse_bias, reverse_bias)),
+    return shift_present(
+        circular_detect(ref_forward_bias, forward_bias),
+        circular_detect(ref_reverse_bias, reverse_bias),
     )
 
 
 def shift_deltas(detected_plus: int, detected_minus: int, assay: str = "ATAC"):
-    """Deltas that move reads onto chrombpnet's convention.
+    """Deltas that move reads carrying a given shift onto chrombpnet's convention.
 
-    Matches chrombpnet 1.0.1 reads_to_bigwig.main exactly::
+    ``detected_plus/minus`` is the shift PRESENT in the reads (``detect_shift_raw``,
+    or the config's plus_shift/minus_shift). Matches chrombpnet 1.0.1
+    reads_to_bigwig.main exactly::
 
         ATAC : (4 - plus, -4 - minus)
         DNASE: (-plus,     1 - minus)
 
-    Note this is +4/-4, NOT the +4/-5 that scPrinter's detect_shift targets.
+    The target is +4/-4, not the +4/-5 most fragment files carry: 10x fragments
+    (+4/-5 present) get (0, +1).
     """
     if assay == "ATAC":
         return 4 - detected_plus, -4 - detected_minus
