@@ -59,6 +59,8 @@ report() {
     fi
 }
 
+[[ "${call_peaks:-false}" == "true" ]] && \
+report 00.0.call_peaks                "${regions}" "$(dirname "${regions}")/call_peaks.json"
 report 00.0.prepare_signal            "${data_path}/signal/data_unstranded.bw"
 report 00.1.preprocess_peaks          "${peaks_dir}/${d}_${peak_type}_peaks_no_blacklist.narrowPeak"
 report 01.0.preprocess_nonpeaks      "${data_path}/${d}/output_${peak_type}_fold_${fold0}_negatives.bed"

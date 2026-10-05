@@ -18,7 +18,9 @@ existing step. Cross-dataset steps source `lib/bash/common.sh` instead.
 
 `nextflow/` is a placeholder: the same steps are to be ported there, with `SLURM/`
 remaining the reference implementation until they are. `molab/` runs the same
-`SLURM/` step files on a molab box, without SLURM; see its README.
+`SLURM/` step files on a molab box, without SLURM; `dcai/` runs them for many
+datasets at once inside one whole-node allocation on the DCAI cluster. See
+their READMEs.
 
 Every step enters its own pixi environment through `activate_env`
 (`lib/bash/common.sh`): chrombpnet 2.x from a pinned chrombpnet checkout, and
@@ -33,7 +35,8 @@ The step table in `../CLAUDE.md` is the authoritative list, with each step's arr
 index.
 
 ```
-Preprocess data                                   00.0 -> 00.1 -> 01.0 -> 02.0 (QC)
+Call peaks (optional) || prepare signal; QC     00.0 call_peaks || 00.0 prepare_signal
+                                                  -> 00.1 -> 01.0 -> 02.0 (QC)
 Train bias models, select, QC the selection       03.0 -> 03.1 -> 03.2 -> 03.3
 Train full model with selected bias, QC           04.0 -> 04.1 (04.2 across datasets)
 Predictions; per-fold interpretation QC           04.3; 04.4 -> 04.5

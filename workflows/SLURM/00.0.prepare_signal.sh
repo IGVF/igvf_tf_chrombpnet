@@ -22,7 +22,9 @@
 #      single pass over the file
 #   2. write the bigwig the training steps reuse
 #
-# It imports no chrombpnet: the pileup is numpy + pybigtools.
+# It imports no chrombpnet: the pileup is numpy + pybigtools, or, with
+# `bigwig_engine: figwig` in the config, `figwig bam2bw -f -u` (fragments only;
+# same per-base values, BGZF read on SLURM_CPUS_PER_TASK cores).
 #
 # The genome FASTA is needed ONLY to auto-detect the Tn5 shift, which reads the
 # sequence around each cut site and compares it to reference Tn5 bias matrices
@@ -145,8 +147,14 @@ fi
 # skip writing it. Only fragments/tagAlign have rows to keep: prepare-bigwig
 # refuses the flag for a BAM, and a bigwig is not converted at all, so asking
 # for it there used to stop a BAM dataset at this step for a file nobody reads.
+#
+# bigwig_engine: figwig counts the same cuts with `figwig bam2bw -f -u`, reading
+# a BGZF fragments file on several cores; it writes no filtered rows, so the
+# flag is never passed with it.
+bigwig_engine="${bigwig_engine:-numpy}"
+metadata_params+=( "bigwig_engine=${bigwig_engine}" )
 filtered_args=()
-if [[ "${filter_main_chroms:-true}" == "true" && ( "${signal_type}" == "fragments" || "${signal_type}" == "tagalign" ) ]]; then
+if [[ "${bigwig_engine}" == "numpy" && "${filter_main_chroms:-true}" == "true" && ( "${signal_type}" == "fragments" || "${signal_type}" == "tagalign" ) ]]; then
     filtered_args+=( --write-filtered "${prepared_dir}/${dataset_name}_main_chrs.tsv.gz" )
     metadata_outputs+=( "${signal_type}=${prepared_dir}/${dataset_name}_main_chrs.tsv.gz" )
 fi
@@ -205,6 +213,8 @@ python "${src_dir}/cli.py" prepare-bigwig \
     --signal-type  "${signal_type}" \
     --assay        "${assay}" \
     --chrom-sizes  "${pileup_chrom_sizes}" \
+    --engine       "${bigwig_engine}" \
+    --threads      "${SLURM_CPUS_PER_TASK:-4}" \
     --out-dir      "${prepared_dir}" \
     --metadata-dir "${metadata_dir}"
 if [[ $? -ne 0 || ! -f "${prepared_dir}/data_unstranded.bw" ]]; then

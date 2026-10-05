@@ -38,12 +38,17 @@ dataset directories exist on the cluster only.
 - `workflows/SLURM/` — one `sbatch` script per step. See the step table below.
 - `workflows/molab/` — a launcher that runs the same step files on a molab box (one
   GPU, no SLURM). Its README covers setup; it is not a second implementation.
+- `workflows/dcai/` — the same idea for the DCAI cluster, where a job is a whole
+  node (216 cores, ~2 TB, 8x H100) billed by node-time: `run_box.sh` runs the
+  step files for many datasets at once inside one exclusive allocation, after
+  pinning each file's Tn5 shift (`detect_shifts.py`) and writing its config
+  (`make_configs.py`). Its README covers setup and sizing.
 - `workflows/nextflow/` — empty placeholder for the Nextflow port. `SLURM/` stays the
   reference implementation until it isn't.
 - `src/` — the atomic Python scripts the steps call, one concern each. Nothing in
   `src/` imports anything from another file in `src/`; shared code goes to `lib/`.
 - `lib/bash/common.sh` — settings and helpers with no `DATASET_DIR`: the environment
-  specs (`chrombpnet_env`, `preprocess_env`, `finemo_env`, `motif_compendium_env`)
+  specs (`chrombpnet_env`, `preprocess_env`, `peaks_env`, `finemo_env`, `motif_compendium_env`)
   and the chrombpnet pin, algorithm thresholds, and the helpers — `bootstrap_python`,
   `load_bias_sweep`, `activate_env` (with its pixi branch `activate_pixi_env`),
   `gpu_env`, `require_gpu`, `metadata_start`/`metadata_emit`, `set_signal_args`,
@@ -61,11 +66,12 @@ dataset directories exist on the cluster only.
 - `lib/python/utils/` — the importable helper package: `intervals` (pyranges1 ops
   replacing bedtools), `references` (reference paths, pins and fetching),
   `compression` (bgzip/tabix), `config` (the YAML loader), `folds` (reads
-  `folds/*.json`), `log`, `metadata` (run records), `palettes`, `pileup`
-  (fragments -> cut-site bigwig), `plotting`, `qc`, `regions`.
+  `folds/*.json`), `log`, `metadata` (run records), `palettes`, `peakcall`
+  (the igvf_pseudobulking_pipeline peak recipe on MACS3), `pileup`
+  (fragments -> cut-site bigwig, numpy or figwig), `plotting`, `qc`, `regions`.
   Two import rules, both load-bearing: nothing here may import `chrombpnet`,
   `keras`/`jax`, `torch`, `finemo` or `MotifCompendium`, and **only `intervals` may
-  import `pyranges1`** (only the `preprocess` and `qc` envs install it, while
+  import `pyranges1`** (only the `preprocess`, `peaks` and `qc` envs install it, while
   `log`, `metadata` and friends are imported from every environment, the
   chrombpnet, finemo and motif-compendium ones included). The package is called
   `utils` and sits at the front of `sys.path`, so it would shadow any third-party
@@ -79,8 +85,9 @@ dataset directories exist on the cluster only.
   `${REFERENCE_ROOT}` (the shared lab `Data/` folder by default). The genome, the
   GTF and the motif DBs are md5-checked; the blacklist is not.
 - `lib/python/utils/shift.py` — vendored from scPrinter (Ruochi Zhang). `00.0`
-  (`cli.py prepare-bigwig`) uses it to detect the Tn5 shift when the config sets
-  none, and to compute the delta to chrombpnet's +4/-4 (ATAC) or 0/+1 (DNASE).
+  (`cli.py prepare-bigwig`, `cli.py call-peaks`) uses it to detect the Tn5 shift
+  when the config sets none, and to compute the delta to chrombpnet's +4/-4
+  (ATAC) or 0/+1 (DNASE). See the Gotcha on its reference frame.
 
 ### Configuration
 **One YAML file per dataset — `config/<dataset>/config.yaml` — is the whole
@@ -155,6 +162,7 @@ Dataset-specific things (signal path, reference overrides, `bias_factors`,
 
 | Script | Array index | Per-dataset (needs `DATASET` / `DATASET_CONFIG`) |
 |---|---|---|
+| `00.0.call_peaks.sh` | — | yes (runs only with `call_peaks: true`) |
 | `00.0.prepare_signal.sh` | — | yes |
 | `00.1.preprocess_peaks.sh` | — | yes |
 | `01.0.preprocess_nonpeaks.sh` | — | yes |
@@ -181,8 +189,8 @@ Dataset-specific things (signal path, reference overrides, `bias_factors`,
 
 All step scripts live in `workflows/SLURM/`. The Python they call lives in `src/`
 and is referenced as `${src_dir}/<name>.py`, never by a relative path:
-`cli.py` (00.0 `prepare-bigwig`, 00.1 `preprocess-peaks`, 02.0 `qc-signal`, and
-`download-references`), `predict_bias_metrics.py` (03.0),
+`cli.py` (00.0 `prepare-bigwig` and `call-peaks`, 00.1 `preprocess-peaks`, 02.0
+`qc-signal`, and `download-references`), `predict_bias_metrics.py` (03.0),
 `select_bias_model.py` (03.1), `run_bias_qc.py` (03.2), `motif_qc.py` (03.3, 04.5), `chrombpnet_train.py`
 (03.0, 04.0), `qc_full_model.py` (04.1 and 04.2-combined), `predict_and_avg.py` (04.3),
 `run_full_model_qc.py` (04.4), `average_contrib_scores.py` (06),
@@ -251,7 +259,8 @@ exactly one place, its `activate_env` line, as `pixi:<manifest>#<environment>`:
 | Environment | Steps | Comes from |
 |---|---|---|
 | chrombpnet 2.x, `cuda13` (`chrombpnet_env`) | 01.0, 03.0–04.5, 05.0–08.0 — training, interpretation, predictions, TF-MoDISco (modisco 2.5.2), the QC plots of 03.1/04.1/04.2 | the chrombpnet checkout's `pyproject.toml` + `pixi.lock`, at `CHROMBPNET_REV` |
-| `preprocess` (`preprocess_env`) | 00.0, 00.1, 02.0, `qc_datasets.sh`, `cli.py download-references` | `pixi.toml` |
+| `preprocess` (`preprocess_env`) | 00.0.prepare_signal, 00.1, 02.0, `qc_datasets.sh`, `cli.py download-references` | `pixi.toml` |
+| `peaks` (`peaks_env`) | 00.0.call_peaks — preprocess plus MACS3 built from PR #756 (`jmschrei/MACS@fa52988`), bgzip, mawk; linux-64 only | `pixi.toml` |
 | `finemo` (`finemo_env`) | 10.0, 11.0 — Fi-NeMo 0.41 on torch 2.14 (CUDA 13.0 wheel) | `pixi.toml` |
 | `finemo-cu126` | none by default; for 10.0 (and 11.0) on drivers below 580 or GPU_CC 7.0 (`FINEMO_ENV`, see 10.0's header) | `pixi.toml` |
 | `motif-compendium` (`motif_compendium_env`) | 09.0, `deprecated/motif_compendium.sh` — MotifCompendium v1.0.19, CPU only | `pixi.toml` |
@@ -266,7 +275,7 @@ lock file — the one the Keras 3 / JAX port was validated against — rather th
 re-solved here. `activate_env` warns when the checkout is not at `CHROMBPNET_REV`;
 it does not stop, so a newer chrombpnet can be tried on purpose, and the run
 record carries `chrombpnet_commit`. `CHROMBPNET_PIXI_ENV=cuda12` is the fallback
-for drivers below 580. `finemo`, `finemo-cu126` and `motif-compendium` each have
+for drivers below 580. `peaks`, `finemo`, `finemo-cu126` and `motif-compendium` each have
 their own solve group (`default`, `qc` and `preprocess` share `main`), so Fi-NeMo's
 torch and MotifCompendium's stack cannot move each other's pins. Any `*_ENV` may still be a plain conda prefix, which `activate_env`
 enters through `CONDA_INIT`.
@@ -530,6 +539,46 @@ say which of the two kinds of verification a change actually got.
   `require_gpu jax`, which stops a job whose JAX sees no GPU but does not check the
   class. If a GPU step fails oddly on `owners`, check the driver first —
   `require_gpu`'s error says so.
+
+- **`utils/shift.py`'s detector measures an offset from the +4/-5 frame, not a shift.**
+  scPrinter's reference bias matrices are built from fragments already shifted
+  +4/-5 (10x/CellRanger), so `circular_detect`'s offset `d` is 0 for 10x files and
+  the shift present is `(4 - d, -5 - d)` — upstream `detect_shift`'s return value.
+  `detect_shift_raw` used to return the bare `d` as "the shift present", so a
+  config without `plus_shift`/`minus_shift` on 10x fragments got (0, 0) and a
+  +4/-4 correction instead of 0/+1: every insertion four bases off. Checked on a
+  cellranger-arc file sampled genome-wide: `d` = (0, 0) at MSE 1e-4, chrombpnet's
+  own `auto_shift_detect` +4/-5 at two seeds, and the same fragments with the
+  shift undone read `d` = (+4, -5). `shift_present` now does the conversion and
+  `tests/test_peakcall.py` pins it. A second trap: `detect_shift_raw` samples the
+  first million lines of a file over 2 GB — the start of chr1 in a sorted
+  fragments file, where the fit fails (MSE > 0.002 on 38 of 39 AMSC files).
+  `workflows/dcai/detect_shifts.py` thins the whole file instead and cross-checks
+  chrombpnet's detector; pin its answer in the config.
+
+- **`00.0.call_peaks` gives MACS 1-bp `-f BED` insertions, as the pseudobulking
+  pipeline does — not `-f FRAG`.** It reproduces kundajelab/igvf_pseudobulking_pipeline
+  v2.0.1 (pseudoreplicates, three `callpeak -p 0.01 --shift -75 --extsize 150
+  --nomodel --keep-dup all --call-summits`, top 300k by column 8, repT reproduced in
+  rep1 and rep2 at `-f 0.5 -F 0.5 -e`, blacklist) on MACS3 PR #756. FRAG is the PR's
+  fast parser, but paired-end mode zeroes `--shift`, replaces `--extsize` with the
+  mean fragment length and builds the local lambda around fragment ENDS, so it is
+  a different call; even 150-bp insertion windows as FRAG records (`macs_input:
+  frag`) moved columns 7-9 by 0.1-1% and added a peak on synthetic data. The BED
+  route still gets the PR's C pileup, scoring and per-chromosome fork pools.
+  Departures from v2.0.1, all in `call_peaks.json`: insertions from the configured
+  shift (+4/-4, the bigwig's positions) rather than +4/-5 applied to already-shifted
+  fragments, a deterministic split, and no `-B --SPMR`. (Before v2.0.1 its top-N,
+  `sort --reverse -k 8gr,8gr | tail`, kept the WEAKEST rows; ties here follow the
+  fixed `sort -k 8g,8g | tail` exactly.)
+
+- **`bigwig_engine: figwig` is the same bigwig, read faster.** `figwig bam2bw -f -u
+  -ps dp -ns dm` counts `start + dp` and `end + dm - 1`, i.e. `pileup.cut_positions`;
+  it reads a BGZF fragments file on several cores where the numpy path parses with
+  pandas on one. The files differ in bytes (single-base entries vs merged runs) and
+  decode to identical values (`tests/test_pileup.py`, and `workflows/dcai/checks.sh`
+  on a full library). Fragments only, and it writes no filtered rows, so configs
+  using it set `filter_main_chroms: false`.
 
 - **`03.2` is the GPU half and `03.3` the CPU half of the selected-bias QC.**
   `pipelines.bias_model_qc()` runs predictions, DeepLIFT interpretation, then

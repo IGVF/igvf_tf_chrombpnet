@@ -13,6 +13,14 @@ dataset_name: example_dataset
 # narrowPeak chrombpnet wants (-p).
 regions: "/path/to/peaks.bed"
 
+# Call `regions` from signal_path instead of supplying it: 00.0.call_peaks runs
+# the igvf_pseudobulking_pipeline recipe (pseudoreplicates, MACS3 PR #756,
+# reproducible top-300k, blacklist) and WRITES the narrowPeak at `regions`.
+# Pair it with peak_summit_window below. macs_input: bed is the pipeline's own
+# call; frag reads faster but is not the same call (see utils/peakcall.py).
+# call_peaks: true
+# macs_input: bed
+
 # ATAC or DNASE (-d).
 assay: ATAC
 
@@ -42,6 +50,11 @@ assay: ATAC
 # This file is never copied or modified. Point it at your data where it already
 # lives; 00.0 writes only derived files, under output_dir.
 signal_path: "/path/to/reads.fragments.tsv.gz"
+
+# Who counts the cut sites in 00.0 (default numpy). figwig gives identical
+# per-base values, reading a BGZF fragments file on several cores; fragments
+# only, and it writes no filtered rows, so set filter_main_chroms: false with it.
+# bigwig_engine: figwig
 
 # Filter reads to chr1-22,X,Y,M before converting. Needed whenever the reads
 # carry scaffolds, because bedtools genomecov fails on contigs missing from

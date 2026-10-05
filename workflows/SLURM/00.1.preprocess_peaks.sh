@@ -64,7 +64,11 @@ for dataset in "${datasets[@]}"; do
     metadata_outputs+=( "peaks=${peaks_dir}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak" )
 done
 
-require_input "${regions}" ""
+# With call_peaks: true, 00.0.call_peaks.sh writes `regions`; otherwise it is
+# an external input.
+regions_producer=""
+[[ "${call_peaks:-false}" == "true" ]] && regions_producer="00.0.call_peaks.sh"
+require_input "${regions}" "${regions_producer}"
 require_input "${blacklist}" "cli.py download-references"
 require_input "${peak_chrom_sizes}" "cli.py download-references"
 preflight_check

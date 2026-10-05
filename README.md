@@ -31,6 +31,7 @@ config/
 workflows/
   SLURM/                sbatch scripts, one per pipeline step (00–11) + status.sh
   molab/                launcher for running the same steps on a molab box (no SLURM)
+  dcai/                 whole-node launcher for the DCAI cluster (many datasets per job)
   nextflow/             placeholder for the Nextflow port
 src/                    cli.py (Click command group) + the remaining argparse tools
 lib/

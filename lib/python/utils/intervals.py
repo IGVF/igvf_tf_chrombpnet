@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pandas as pd
 import pyranges1 as pr
 
@@ -140,6 +141,53 @@ def remove_blacklisted(peaks: pr.PyRanges, blacklist: pr.PyRanges) -> pr.PyRange
     intervals do not overlap and are kept, matching bedtools.
     """
     return peaks.overlap(blacklist, invert=True)
+
+
+def overlaps_either_fraction(a, b, fraction: float | None) -> np.ndarray:
+    """Which rows of ``a`` some row of ``b`` overlaps, as a boolean mask over ``a``.
+
+    Replaces ``bedtools intersect -u -a A -b B -f F -F F -e``: a row of A is
+    reported (once) when any B row overlaps it by at least F of A's length OR
+    at least F of B's length -- ``-e`` is the "or". ``fraction=None`` is plain
+    ``-u``, at least 1 bp, so ``~mask`` is ``intersect -v``; book-ended
+    intervals do not overlap in either case. ``a`` and ``b`` are anything with
+    Chromosome/Start/End columns (a DataFrame or a PyRanges); the mask follows
+    ``a``'s row order, whatever its index.
+    """
+    left = pr.PyRanges(
+        pd.DataFrame(
+            {
+                "Chromosome": np.asarray(a["Chromosome"], dtype=str),
+                "Start": np.asarray(a["Start"], dtype=np.int64),
+                "End": np.asarray(a["End"], dtype=np.int64),
+                "_row": np.arange(len(a)),
+            }
+        )
+    )
+    right = pr.PyRanges(
+        pd.DataFrame(
+            {
+                "Chromosome": np.asarray(b["Chromosome"], dtype=str),
+                "Start": np.asarray(b["Start"], dtype=np.int64),
+                "End": np.asarray(b["End"], dtype=np.int64),
+            }
+        )
+    )
+    mask = np.zeros(len(a), dtype=bool)
+    if len(left) == 0 or len(right) == 0:
+        return mask
+    hits = left.join_overlaps(right, suffix="_b")
+    if len(hits) == 0:
+        return mask
+    rows = hits["_row"].to_numpy()
+    if fraction is not None:
+        start, end = hits["Start"].to_numpy(), hits["End"].to_numpy()
+        start_b, end_b = hits["Start_b"].to_numpy(), hits["End_b"].to_numpy()
+        overlap = np.minimum(end, end_b) - np.maximum(start, start_b)
+        ok = (overlap >= fraction * (end - start)) | (overlap >= fraction * (end_b - start_b))
+        rows = rows[ok]
+    mask[rows] = True
+    return mask
 
 
 def slop(ranges: pr.PyRanges, bp: int, chromsizes: dict[str, int]) -> pr.PyRanges:

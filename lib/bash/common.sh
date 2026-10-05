@@ -40,8 +40,8 @@ fi
 #   (CONDA_OVERRIDE_CUDA lets a login node without a GPU install it; cuda13
 #   needs NVIDIA driver >= 580 at run time, `cuda12` is the fallback.)
 #
-#   preprocess, finemo, finemo-cu126 and motif-compendium are this repo's own
-#   pixi.toml environments: `pixi install -e <name>` from the checkout.
+#   preprocess, peaks, finemo, finemo-cu126 and motif-compendium are this repo's
+#   own pixi.toml environments: `pixi install -e <name>` from the checkout.
 #
 # Any of these can instead be a plain conda prefix, which activate_env enters
 # with `conda activate` through CONDA_INIT.
@@ -57,6 +57,8 @@ CHROMBPNET_REV="${CHROMBPNET_REV:-c913b65991a2792372f4dca0c32fb7cf70d04e1a}"
 CHROMBPNET_PIXI_ENV="${CHROMBPNET_PIXI_ENV:-cuda13}"
 chrombpnet_env="${CHROMBPNET_ENV:-pixi:${CHROMBPNET_REPO}/pyproject.toml#${CHROMBPNET_PIXI_ENV}}"
 preprocess_env="${PREPROCESS_ENV:-pixi:${REPO_ROOT}/pixi.toml#preprocess}"
+# preprocess + MACS3 from PR #756, built from source (00.0.call_peaks only).
+peaks_env="${PEAKS_ENV:-pixi:${REPO_ROOT}/pixi.toml#peaks}"
 finemo_env="${FINEMO_ENV:-pixi:${REPO_ROOT}/pixi.toml#finemo}"
 motif_compendium_env="${MOTIF_COMPENDIUM_ENV:-pixi:${REPO_ROOT}/pixi.toml#motif-compendium}"
 # Only for an environment given as a conda prefix. `:-` would resolve an

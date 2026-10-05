@@ -50,6 +50,8 @@ back to locating the repo themselves.
 | `CHROMBPNET_PIXI_ENV` | `cuda13` | environment in the checkout's `pyproject.toml`; `cuda12` for NVIDIA drivers below 580 |
 | `CHROMBPNET_ENV` | `pixi:${CHROMBPNET_REPO}/pyproject.toml#${CHROMBPNET_PIXI_ENV}` | chrombpnet env (01.0, 03.0–08.0) |
 | `PREPROCESS_ENV` | `pixi:<checkout>/pixi.toml#preprocess` | preprocess env (00.0, 00.1, 02.0, `qc_datasets.sh`) |
+| `PEAKS_ENV` | `pixi:<checkout>/pixi.toml#peaks` | peaks env (00.0.call_peaks: MACS3 PR #756) |
+| `PEAKS_TMPDIR` | `$TMPDIR`, else `/tmp` | scratch for 00.0.call_peaks' pseudoreplicate files (tens of GB per dataset) |
 | `FINEMO_ENV` | `pixi:<checkout>/pixi.toml#finemo` | finemo env (10.0, 11.0); `#finemo-cu126` for drivers below 580 |
 | `MOTIF_COMPENDIUM_ENV` | `pixi:<checkout>/pixi.toml#motif-compendium` | motif-compendium env (09.0) |
 | `CONDA_INIT` | the Engreitz Sherlock install | `conda.sh` to source — only for a `*_ENV` given as a plain conda prefix |

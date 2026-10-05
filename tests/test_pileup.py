@@ -412,3 +412,44 @@ def test_layout_exposes_a_main_chrom_sizes():
     lay = references.layout("/tmp/refs")
     assert lay["chrom_sizes_main"].endswith(".main.tsv")
     assert lay["chrom_sizes_main"] != lay["chrom_sizes"]
+
+
+# ── figwig engine == numpy engine, every base ─────────────────────────────────
+
+
+@pytest.mark.parametrize("dp,dm", [(0, 1), (4, -4), (0, 0)])
+def test_figwig_engine_matches_numpy_engine(tmp_path, dp, dm):
+    """`figwig bam2bw -f -u` must decode to the same per-base counts as pileup.py.
+
+    The files differ in bytes (figwig writes single-base entries, pybigtools
+    merged runs), so values are compared, never checksums.
+    """
+    pytest.importorskip("figwig", reason="needs figwig (pixi 'qc'/'preprocess' env)")
+    pyBigWig = pytest.importorskip("pyBigWig")
+    from utils import compression
+
+    rng = np.random.default_rng(7)
+    chrom_sizes = {"chr1": 50_000, "chr2": 30_000}
+    rows = []
+    for chrom, length in chrom_sizes.items():
+        starts = rng.integers(10, length - 700, 3000)
+        rows += [(chrom, int(s), int(s + rng.integers(20, 600))) for s in starts]
+    rows += [("chrUn_x", 5, 50)]  # a contig absent from chrom.sizes: dropped by both
+    rows.sort()
+    frags = tmp_path / "f.tsv.gz"
+    with compression.open_write(frags) as fh:
+        fh.write(b"# header line\n")
+        fh.write("".join(f"{c}\t{s}\t{e}\tBC\t1\n" for c, s, e in rows).encode())
+    sizes = tmp_path / "chrom.sizes"
+    sizes.write_text("".join(f"{c}\t{n}\n" for c, n in chrom_sizes.items()))
+
+    cuts, _, _ = pileup.collect_cuts(frags, chrom_sizes, dp, dm)
+    numpy_bw = pileup.write_bigwig(tmp_path / "numpy.bw", chrom_sizes, cuts)
+    figwig_bw = pileup.figwig_bigwig(frags, sizes, tmp_path / "figwig.bw", dp, dm, threads=2)
+
+    a, b = pyBigWig.open(str(numpy_bw)), pyBigWig.open(str(figwig_bw))
+    for chrom, length in chrom_sizes.items():
+        va = np.nan_to_num(a.values(chrom, 0, length, numpy=True))
+        vb = np.nan_to_num(b.values(chrom, 0, length, numpy=True))
+        assert np.array_equal(va, vb), chrom
+        assert va.sum() == 2 * sum(1 for r in rows if r[0] == chrom)

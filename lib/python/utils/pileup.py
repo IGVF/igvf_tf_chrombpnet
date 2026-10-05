@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import numpy as np
 
-__all__ = ["CutSiteError", "cut_positions", "pileup_runs", "write_bigwig"]
+__all__ = ["CutSiteError", "cut_positions", "figwig_bigwig", "pileup_runs", "write_bigwig"]
 
 # Fragment files can be huge; read them in chunks this size (rows).
 CHUNK_ROWS = 5_000_000
@@ -259,4 +259,65 @@ def write_bigwig(out_path, chrom_sizes: dict[str, int], cuts_by_chrom: dict[str,
             writer.close()
         except Exception:  # noqa: BLE001  # already closed by write() in some versions
             pass
+    return out_path
+
+
+def figwig_bigwig(
+    fragments_path,
+    chrom_sizes_path,
+    out_path,
+    plus_delta: int,
+    minus_delta: int,
+    threads: int = 8,
+):
+    """The same per-base cut counts as ``collect_cuts`` + ``write_bigwig``, via figwig.
+
+    ``figwig bam2bw -f -u`` counts both ends of every fragment, at
+    ``start + ps`` and ``end + ns - 1`` -- exactly ``cut_positions`` with
+    ``ps = plus_delta`` and ``ns = minus_delta`` -- into one unstranded bigWig.
+    Contigs absent from ``chrom_sizes_path`` are dropped, which makes the
+    main-chromosome filter implicit, as it is for ``collect_cuts``. It reads a
+    BGZF fragments file on ``threads`` cores (the numpy path parses it with
+    pandas on one), so on 10x files of several hundred million fragments it is
+    the fast path.
+
+    Two differences from ``write_bigwig``, neither of them in the values:
+    figwig writes single-base (varStep) entries where pybigtools writes merged
+    runs, so the files differ in bytes but decode to the same per-base values
+    (``tests/test_pileup.py`` compares values, never checksums); and a cut that
+    a negative delta would push before base 0 is dropped and reported rather
+    than raised, which no ATAC/DNASE delta from ``shift.shift_deltas`` can
+    produce for well-formed fragments.
+
+    Runs ``python -m figwig`` from the CURRENT interpreter, so it is the
+    figwig of whichever environment the step activated. Returns ``out_path``.
+    """
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    out_path = Path(out_path)
+    # figwig names its output <name>.bw; write beside the target under a
+    # temporary name and rename, so a killed run never leaves a truncated
+    # data_unstranded.bw that the next run would take as finished.
+    partial = out_path.with_name(f".{out_path.stem}.partial")
+    produced = partial.with_name(partial.name + ".bw")
+    produced.unlink(missing_ok=True)
+    cmd = [
+        sys.executable, "-m", "figwig", "bam2bw", str(fragments_path),
+        "-s", str(chrom_sizes_path),
+        "-n", str(partial),
+        "-f", "-u",
+        "-ps", str(int(plus_delta)),
+        "-ns", str(int(minus_delta)),
+        "-p", str(max(1, int(threads))),
+    ]  # fmt: skip
+    # numpy's OpenBLAS otherwise starts a thread per host CPU on import, which
+    # figwig's docs flag for many concurrent bam2bw processes on a large node.
+    env = {**os.environ, "OPENBLAS_NUM_THREADS": "1"}
+    subprocess.run(cmd, check=True, env=env)
+    if not produced.is_file():
+        raise RuntimeError(f"figwig bam2bw wrote no {produced}")
+    os.replace(produced, out_path)
     return out_path

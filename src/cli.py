@@ -18,6 +18,7 @@ as before; converting select_bias_model.py alone is 1152 lines and buys nothing
 until someone needs it.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -36,6 +37,7 @@ from utils import (  # noqa: E402
     log,
     metadata,
     palettes,
+    peakcall,
     pileup,
     plotting,
     qc,
@@ -602,6 +604,22 @@ def filter_fragments(input_path, output_path, chroms, index, metadata_dir, verbo
     show_default=True,
     help="Reads sampled for Tn5 shift detection (only used when detecting).",
 )
+@click.option(
+    "--engine",
+    type=click.Choice(["numpy", "figwig"]),
+    default="numpy",
+    show_default=True,
+    help="Who counts the cut sites. numpy: utils/pileup.py (pandas reader, "
+    "pybigtools writer). figwig: `figwig bam2bw -f -u`, threaded BGZF reading; "
+    "fragments only, same per-base values, no --write-filtered.",
+)
+@click.option(
+    "--threads",
+    type=int,
+    default=8,
+    show_default=True,
+    help="Cores for --engine figwig (its gains end near 8).",
+)
 @click.option("--metadata-dir", default=None, type=click.Path(file_okay=False))
 @verbose_opt
 @quiet_opt
@@ -616,6 +634,8 @@ def prepare_bigwig(
     plus_shift,
     minus_shift,
     num_samples,
+    engine,
+    threads,
     metadata_dir,
     verbose,
     quiet,
@@ -634,6 +654,18 @@ def prepare_bigwig(
     """
     _setup_logging(verbose, quiet)
     import json as _json
+
+    if engine == "figwig":
+        # figwig reads a BED/tsv as chrom/start/end with no strand, which is a
+        # fragments file's meaning but not a tagAlign's; a BAM it would count
+        # per read, but the numpy path already covers BAMs.
+        if signal_type != "fragments":
+            raise click.UsageError("--engine figwig takes fragments only")
+        if write_filtered:
+            raise click.UsageError(
+                "--engine figwig does not write filtered rows; drop --write-filtered "
+                "(set filter_main_chroms: false in the config)"
+            )
 
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -678,34 +710,62 @@ def prepare_bigwig(
         md.add_param("minus_delta", minus_delta)
 
         # ── 2. pileup: ours, not chrombpnet's two external sorts ─────────────
+        md.add_param("engine", engine)
         chromsizes = intervals.read_chromsizes(chrom_sizes)
-        logger.info("filtering to the main chromosomes and counting cut sites (one pass)")
-        if signal_type == "bam":
-            # One cut per mapped read at its own strand's 5' end, as
-            # `bedtools bamtobed` would emit; --write-filtered does not apply.
-            if write_filtered:
-                raise click.UsageError("--write-filtered applies to fragments/tagalign, not BAM")
-            cuts, skipped, kept = pileup.collect_cuts_bam(
-                signal_path, chromsizes, plus_delta, minus_delta
+        if engine == "figwig":
+            # Contigs absent from chrom.sizes are dropped by figwig itself, so
+            # the main-chromosome filter is implicit here too.
+            md.add_param("threads", threads)
+            logger.info("counting cut sites with figwig bam2bw on %d core(s)", threads)
+            pileup.figwig_bigwig(
+                signal_path,
+                chrom_sizes,
+                out / "data_unstranded.bw",
+                plus_delta,
+                minus_delta,
+                threads,
             )
+            # Every fragment on a listed contig gives two cuts, so this total is
+            # 2 x fragments kept: the number to check nothing was dropped.
+            import pyBigWig
+
+            handle = pyBigWig.open(str(out / "data_unstranded.bw"))
+            try:
+                cuts_total = int(round(handle.header()["sumData"]))
+            finally:
+                handle.close()
+            md.add_metric("cuts_total", cuts_total)
+            logger.info("%d cut sites written", cuts_total)
         else:
-            cuts, skipped, kept = pileup.collect_cuts(
-                signal_path, chromsizes, plus_delta, minus_delta, write_filtered=write_filtered
-            )
-        md.add_metric("reads_kept", kept)
-        if write_filtered:
-            # Filtering does not change what the data IS.
-            md.add_output(signal_type, write_filtered)
-            logger.info("filtered reads -> %s", write_filtered)
-        if skipped:
-            logger.warning(
-                "skipped %d read(s) on %d contig(s) absent from chrom.sizes: %s",
-                sum(skipped.values()),
-                len(skipped),
-                ", ".join(sorted(skipped)[:5]),
-            )
-        logger.info("writing %s", out / "data_unstranded.bw")
-        pileup.write_bigwig(out / "data_unstranded.bw", chromsizes, cuts)
+            logger.info("filtering to the main chromosomes and counting cut sites (one pass)")
+            if signal_type == "bam":
+                # One cut per mapped read at its own strand's 5' end, as
+                # `bedtools bamtobed` would emit; --write-filtered does not apply.
+                if write_filtered:
+                    raise click.UsageError(
+                        "--write-filtered applies to fragments/tagalign, not BAM"
+                    )
+                cuts, skipped, kept = pileup.collect_cuts_bam(
+                    signal_path, chromsizes, plus_delta, minus_delta
+                )
+            else:
+                cuts, skipped, kept = pileup.collect_cuts(
+                    signal_path, chromsizes, plus_delta, minus_delta, write_filtered=write_filtered
+                )
+            md.add_metric("reads_kept", kept)
+            if write_filtered:
+                # Filtering does not change what the data IS.
+                md.add_output(signal_type, write_filtered)
+                logger.info("filtered reads -> %s", write_filtered)
+            if skipped:
+                logger.warning(
+                    "skipped %d read(s) on %d contig(s) absent from chrom.sizes: %s",
+                    sum(skipped.values()),
+                    len(skipped),
+                    ", ".join(sorted(skipped)[:5]),
+                )
+            logger.info("writing %s", out / "data_unstranded.bw")
+            pileup.write_bigwig(out / "data_unstranded.bw", chromsizes, cuts)
 
         bw = out / "data_unstranded.bw"
         if not bw.is_file():
@@ -720,7 +780,8 @@ def prepare_bigwig(
             # does not import it, so its absence is not an error.
             "chrombpnet_version": _optional_version("chrombpnet"),
             # Which code produced the pileup, so a record says so.
-            "pileup": "numpy",
+            "pileup": engine,
+            "figwig_version": _optional_version("figwig") if engine == "figwig" else None,
             "shift_detection": "utils.shift (scPrinter)",
             "plus_shift": int(plus_shift),
             "minus_shift": int(minus_shift),
@@ -729,6 +790,224 @@ def prepare_bigwig(
         md.add_output("signal", bw)
         md.add_output("signal", out / "prepared_bigwig.json")
         logger.info("-> %s  (03.0/04.0 pass it to chrombpnet as -bw)", bw)
+
+
+# ── call-peaks ────────────────────────────────────────────────────────────────
+
+
+@cli.command("call-peaks")
+@click.option("--fragments", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--chrom-sizes",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="FULL chrom.sizes: fragments on contigs it lists go to MACS (chrM included, "
+    "as in the pseudobulking pipeline); 00.1 later keeps the main chromosomes.",
+)
+@click.option("--blacklist", required=True, help="Blacklist BED(.gz), path or ENCODE accession.")
+@click.option("--output", required=True, help="Final narrowPeak (.gz -> bgzipped).")
+@click.option("--assay", default="ATAC", type=click.Choice(["ATAC", "DNASE"]))
+@click.option(
+    "--plus-shift",
+    type=int,
+    default=None,
+    help="Tn5 shift already present in the fragments, plus strand (as 00.0).",
+)
+@click.option("--minus-shift", type=int, default=None, help="As --plus-shift, minus strand.")
+@click.option(
+    "--genome",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="FASTA, only to detect the shift when --plus-shift/--minus-shift are not given.",
+)
+@click.option(
+    "--macs-input",
+    type=click.Choice(["bed", "frag"]),
+    default="bed",
+    show_default=True,
+    help="bed: the pseudobulking pipeline's 1-bp insertion records (-f BED). "
+    "frag: 150-bp insertion windows through MACS3 PR #756's fast FRAG parser -- "
+    "faster to read, but NOT the same call (paired-end local lambda); see "
+    "utils/peakcall.py.",
+)
+@click.option("--top-n", type=int, default=peakcall.TOP_N, show_default=True)
+@click.option("--min-overlap", type=float, default=peakcall.MIN_OVERLAP, show_default=True)
+@click.option("--seed", type=int, default=peakcall.SEED, show_default=True)
+@click.option("--bedgraph", is_flag=True, help="Also pass -B --SPMR (bedGraphs; peaks unchanged).")
+@click.option(
+    "--tmp-dir",
+    required=True,
+    type=click.Path(file_okay=False),
+    help="Scratch for the pseudoreplicate files (tens of GB per dataset); removed after.",
+)
+@click.option("--threads", type=int, default=4, show_default=True, help="bgzip -dc threads.")
+@click.option("--metadata-dir", default=None, type=click.Path(file_okay=False))
+@verbose_opt
+@quiet_opt
+def call_peaks(
+    fragments,
+    chrom_sizes,
+    blacklist,
+    output,
+    assay,
+    plus_shift,
+    minus_shift,
+    genome,
+    macs_input,
+    top_n,
+    min_overlap,
+    seed,
+    bedgraph,
+    tmp_dir,
+    threads,
+    metadata_dir,
+    verbose,
+    quiet,
+):
+    """Call peaks with the igvf_pseudobulking_pipeline recipe on MACS3 PR #756.
+
+    Pseudoreplicates -> 3 MACS3 calls -> top-N per rep -> repT rows reproduced
+    in rep1 and rep2 -> blacklist. See utils/peakcall.py for the recipe and
+    the deliberate departures from the original, all recorded in
+    call_peaks.json beside --output.
+    """
+    _setup_logging(verbose, quiet)
+    import shutil
+    import time
+
+    from utils import compression
+
+    out = Path(output)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    reps_dir = out.parent / "reps"
+    reps_dir.mkdir(exist_ok=True)
+    prefix = out.name.split(".")[0]
+    meta_dir = metadata_dir or (out.parent / "metadata")
+
+    with metadata.record("call_peaks", dataset=prefix, out_dir=meta_dir) as md:
+        md.add_input("fragments", fragments)
+        md.add_input("chrom_sizes", chrom_sizes)
+        md.add_param("blacklist_source", references.describe_source(blacklist))
+        for name, value in (
+            ("macs_input", macs_input),
+            ("top_n", top_n),
+            ("min_overlap", min_overlap),
+            ("seed", seed),
+            ("bedgraph", bedgraph),
+        ):
+            md.add_param(name, value)
+
+        # Insertions sit where chrombpnet's bigwig puts them (+4/-4), from the
+        # shift actually in the fragments -- not a fixed +4/-5 on top of it.
+        if plus_shift is None or minus_shift is None:
+            if genome is None:
+                raise click.UsageError(
+                    "give --plus-shift/--minus-shift, or --genome to detect the shift"
+                )
+            logger.info("detecting the Tn5 shift already present in the fragments")
+            plus_shift, minus_shift = shift.detect_shift_raw(fragments, genome)
+        plus_delta, minus_delta = shift.shift_deltas(plus_shift, minus_shift, assay)
+        logger.info(
+            "shift in the fragments %+d/%+d -> insertions at start%+d, end%+d-1",
+            plus_shift, minus_shift, plus_delta, minus_delta,
+        )  # fmt: skip
+        md.add_param("plus_shift", plus_shift)
+        md.add_param("minus_shift", minus_shift)
+
+        scratch = Path(tmp_dir) / f"call_peaks.{prefix}.{os.getpid()}"
+        scratch.mkdir(parents=True, exist_ok=False)
+        try:
+            ext = "frag" if macs_input == "frag" else "bed"
+            rep1, rep2 = scratch / f"rep1.{ext}", scratch / f"rep2.{ext}"
+            t0 = time.monotonic()
+            kept, skipped = peakcall.split_insertions(
+                fragments, chrom_sizes, rep1, rep2, plus_delta, minus_delta,
+                macs_input=macs_input, seed=seed, threads=threads,
+            )  # fmt: skip
+            split_s = round(time.monotonic() - t0, 1)
+            logger.info(
+                "%d fragments -> pseudoreplicates in %.0fs (%d on unlisted contigs dropped)",
+                kept, split_s, skipped,
+            )  # fmt: skip
+            md.add_metric("fragments_kept", kept)
+            md.add_metric("fragments_skipped_contig", skipped)
+            md.add_metric("split_seconds", split_s)
+
+            names = {"rep1": [rep1], "rep2": [rep2], "repT": [rep1, rep2]}
+            commands = {
+                rep: peakcall.macs_command(f"{prefix}.{rep}", files, reps_dir, macs_input, bedgraph)
+                for rep, files in names.items()
+            }
+            logger.info("running 3 macs3 callpeak at once: %s", " ".join(commands["repT"]))
+            macs_stats = peakcall.run_concurrently(commands, reps_dir)
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
+        for rep, st in macs_stats.items():
+            md.add_metric(f"macs_{rep}_seconds", st["wall_s"])
+            md.add_metric(f"macs_{rep}_max_rss_gb", st["max_rss_gb"])
+
+        counts = {}
+        tops = {}
+        for rep in names:
+            raw = peakcall.read_narrowpeak(reps_dir / f"{prefix}.{rep}_peaks.narrowPeak")
+            tops[rep] = peakcall.top_n_by_pvalue(raw, top_n)
+            counts[f"{rep}_raw"] = len(raw)
+            counts[f"{rep}_top"] = len(tops[rep])
+        kept_peaks = peakcall.reproducible(tops["repT"], tops["rep1"], tops["rep2"], min_overlap)
+        counts["reproducible"] = len(kept_peaks)
+        bl = intervals.read_bed3(blacklist)
+        final = peakcall.finalize(kept_peaks, bl, intervals.read_chromsizes(chrom_sizes))
+        counts["final"] = len(final)
+        for name, n in counts.items():
+            md.add_metric(f"peaks_{name}", n)
+        logger.info("peaks: %s", ", ".join(f"{k}={v}" for k, v in counts.items()))
+        if final.empty:
+            raise click.ClickException("no peaks survived; see the counts above")
+
+        # Written under a temporary name that keeps the suffix (write_tsv
+        # bgzips by it), then renamed: a killed run leaves no file that the
+        # step's skip check would take as finished.
+        partial = out.with_name(f".partial.{out.name}")
+        compression.write_tsv(final, partial)
+        os.replace(partial, out)
+        md.add_output("peaks", out)
+
+        sidecar = {
+            "fragments": str(Path(fragments).resolve()),
+            "fragments_md5": metadata.md5sum(fragments),
+            "macs3_version": _optional_version("macs3"),
+            "macs3_source": "jmschrei/MACS@fa52988 (macs3-project/MACS PR #756)",
+            "macs_input": macs_input,
+            "macs_flags": {rep: cmd[cmd.index("-n") + 2 :] for rep, cmd in commands.items()},
+            "plus_shift": int(plus_shift),
+            "minus_shift": int(minus_shift),
+            "insertion": f"start{plus_delta:+d}, end{minus_delta:+d}-1 (chrombpnet +4/-4)",
+            "pseudoreplicate_seed": seed,
+            "top_n": top_n,
+            "min_overlap": min_overlap,
+            "blacklist": references.describe_source(blacklist),
+            "counts": counts,
+            "macs": macs_stats,
+            "recipe": "kundajelab/igvf_pseudobulking_pipeline v2.0.1 (e8774b2)",
+            "deviations_from_igvf_pseudobulking_pipeline": [
+                "insertions follow the shift present in the fragments (+4/-4 like the "
+                "bigwig); the original adds +4/-5 to already-shifted fragments",
+                "pseudoreplicates from one seeded stream (deterministic)",
+                "no -B --SPMR (bedGraph tracks only; peaks unaffected)",
+            ]
+            + (
+                [
+                    "insertions given to MACS as 150-bp FRAG windows with --max-gap 1 "
+                    "--min-length 150, in place of 1-bp -f BED records"
+                ]
+                if macs_input == "frag"
+                else []
+            ),  # fmt: skip
+        }
+        sidecar_path = out.parent / "call_peaks.json"
+        sidecar_path.write_text(_json.dumps(sidecar, indent=2) + "\n")
+        md.add_output("peaks", sidecar_path)
+        logger.info("-> %s (%d peaks)", out, len(final))
 
 
 # ── download-references ───────────────────────────────────────────────────────
