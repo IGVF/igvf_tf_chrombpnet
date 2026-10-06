@@ -40,7 +40,7 @@ fi
 #   (CONDA_OVERRIDE_CUDA lets a login node without a GPU install it; cuda13
 #   needs NVIDIA driver >= 580 at run time, `cuda12` is the fallback.)
 #
-#   preprocess, peaks, finemo, finemo-cu126 and motif-compendium are this repo's
+#   preprocess, peaks, modisco, finemo, finemo-cu126 and motif-compendium are this repo's
 #   own pixi.toml environments: `pixi install -e <name>` from the checkout.
 #
 # Any of these can instead be a plain conda prefix, which activate_env enters
@@ -59,6 +59,8 @@ chrombpnet_env="${CHROMBPNET_ENV:-pixi:${CHROMBPNET_REPO}/pyproject.toml#${CHROM
 preprocess_env="${PREPROCESS_ENV:-pixi:${REPO_ROOT}/pixi.toml#preprocess}"
 # preprocess + MACS3 from PR #756, built from source (00.0.call_peaks only).
 peaks_env="${PEAKS_ENV:-pixi:${REPO_ROOT}/pixi.toml#peaks}"
+# TF-MoDISco with parallel Leiden restarts (08.0 only; 03.3/04.5 use chrombpnet's).
+modisco_env="${MODISCO_ENV:-pixi:${REPO_ROOT}/pixi.toml#modisco}"
 finemo_env="${FINEMO_ENV:-pixi:${REPO_ROOT}/pixi.toml#finemo}"
 motif_compendium_env="${MOTIF_COMPENDIUM_ENV:-pixi:${REPO_ROOT}/pixi.toml#motif-compendium}"
 # Only for an environment given as a conda prefix. `:-` would resolve an

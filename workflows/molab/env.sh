@@ -5,9 +5,9 @@
 #
 # Why so little is set here: every step enters its own environment through
 # activate_env (lib/bash/common.sh), and every default there is a pixi
-# environment -- this repo's pixi.toml for preprocess / finemo /
+# environment -- this repo's pixi.toml for preprocess / modisco / finemo /
 # motif-compendium, and a pinned chrombpnet 2.x checkout for chrombpnet. So
-# CHROMBPNET_ENV, PREPROCESS_ENV, FINEMO_ENV and MOTIF_COMPENDIUM_ENV are
+# CHROMBPNET_ENV, PREPROCESS_ENV, MODISCO_ENV, FINEMO_ENV and MOTIF_COMPENDIUM_ENV are
 # deliberately left UNSET: common.sh's pixi defaults are what molab runs. Only
 # the box-specific values are set below: where the chrombpnet checkout lives,
 # where pixi and the caches live (under /marimo, which survives a new

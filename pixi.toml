@@ -103,6 +103,38 @@ macs3 = { git = "https://github.com/jmschrei/MACS.git", rev = "fa52988d5f3313804
 [feature.peaks.pypi-options]
 no-build-isolation = ["macs3"]
 
+# TF-MoDISco for 08.0 alone: modisco 2.5.2 from NNFC-GMD/tfmodisco's
+# parallel-leiden-seeds branch, which adds `modisco motifs --n_leiden_jobs N`:
+# the Leiden restarts of each clustering call run in parallel processes, with
+# the clustering unchanged (the branch tests it against 2.5.2's function). Every
+# package that computes is pinned to the version chrombpnet's cuda13
+# environment has, where 03.3/04.5 run stock 2.5.2, so 08.0's motifs differ from
+# a stock run by that branch alone. meme: the tomtom `modisco report-simple`
+# calls.
+[feature.modisco]
+platforms = ["linux-64"]
+
+[feature.modisco.dependencies]
+python = "==3.13.15"
+numpy = "==2.5.3"
+libblas = { version = "*", build = "*openblas" }
+meme = "==5.5.9"
+
+[feature.modisco.pypi-dependencies]
+modisco = { git = "https://github.com/NNFC-GMD/tfmodisco.git", rev = "0ec3008e009bf233f02edf0ffb376d303d7c93e8" }
+numba = "==0.67.0"
+llvmlite = "==0.49.0"
+scipy = "==1.18.1"
+scikit-learn = "==1.9.1"
+h5py = "==3.16.0"
+hdf5plugin = "==7.1.0"
+igraph = "==1.0.0"
+leidenalg = "==0.12.0"
+memelite = "==0.4.0"
+pandas = "==3.0.6"
+matplotlib = "==3.11.2"
+logomaker = "==0.8.7"
+
 # Fi-NeMo (steps 10, 11). finemo is pure Python on PyPI; everything it
 # imports at `import finemo` has to be here (pyfaidx, hdf5plugin, numba), and
 # htslib provides the bgzip/tabix that 10.0 compresses hits with. pyBigWig
@@ -173,6 +205,7 @@ preprocess = { features = ["preprocess"], solve-group = "main" }
 # preprocess + MACS3 (PR #756); own solve group so the from-source MACS3 build
 # and its numpy/scipy pins cannot move the main group.
 peaks = { features = ["preprocess", "peaks"], solve-group = "peaks" }
+modisco = { features = ["modisco"], solve-group = "modisco" }
 finemo = { features = ["finemo", "torch-cu130"], solve-group = "finemo" }
 finemo-cu126 = { features = ["finemo", "torch-cu126"], solve-group = "finemo-cu126" }
 motif-compendium = { features = ["motif-compendium"], solve-group = "motif-compendium" }

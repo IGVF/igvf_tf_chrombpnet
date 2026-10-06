@@ -27,20 +27,40 @@
 #   already been run in the 1.x results tree; a chrombpnet 2.x results tree
 #   starts empty.)
 #
-# Settings: TF-MoDISco 2.5.2 (the `modisco` package, tfmodisco-lite) from the
-#   chrombpnet 2.x environment, with chrombpnet 1.x's pattern settings passed
-#   explicitly: `-l 2 -z 20 -f 5 -t 20 -g 5 -j 0`. modisco-lite 2.0.7, which
+# Settings: TF-MoDISco 2.5.2 (the `modisco` package, tfmodisco-lite), with
+#   chrombpnet 1.x's pattern settings passed explicitly:
+#   `-l 2 -z 20 -f 5 -t 20 -g 5 -j 0`. modisco-lite 2.0.7, which
 #   1.x ran, fixed seqlet core 20 / flank 5 / final flank 0 and used trim 20 /
 #   initial flank 5; 2.5.2 defaults to -t 30 -g 10, which makes every pattern
 #   50 bp wide. These are the values chrombpnet 2.x's own
 #   evaluation/modisco/run.py passes. -n 500000 -w 500 is this step's full
 #   seqlet budget (the per-fold QC in 03.3/04.5 uses 5000).
 #
+# Environment: this repo's `modisco` pixi environment, not chrombpnet's. It is
+#   2.5.2 from NNFC-GMD/tfmodisco's parallel-leiden-seeds branch, which adds
+#   `--n_leiden_jobs`, with every package that computes (numpy, numba, scipy,
+#   scikit-learn, h5py, igraph, leidenalg, memelite) pinned to the version in
+#   chrombpnet's cuda13 environment, where 03.3/04.5 run stock 2.5.2.
+#
+# Leiden restarts: 2.5.2 runs the `-l` restarts of every clustering call one
+#   after another on one core (leidenalg holds the GIL), and at this step's
+#   budget they are most of a call: on a 20,000-seqlet affinity with 500
+#   neighbours each restart took ~75 s, against 37 s for the rest of the call.
+#   `--n_leiden_jobs 2` runs the two restarts in two processes. The clustering
+#   is unchanged, since each restart is seeded and the best is still taken in
+#   seed order: the branch tests it against 2.5.2's function, and `modisco
+#   motifs` with this step's flags on a synthetic 8,000-region input wrote a
+#   results file identical to stock 2.5.2's in chrombpnet's environment (1,221
+#   datasets, 17 patterns). The 20,000-seqlet call took 84 s instead of 151 s. Each worker is a fresh process holding its own
+#   copy of the graph, and reads the affinity matrix from TMPDIR (12-16 bytes
+#   per stored entry), so TMPDIR wants node-local space. Calls on fewer than
+#   1,000,000 stored entries stay in process.
+#
 # Report: `modisco report-simple` writes {head}_report/motifs.html with
 #   trimmed_logos/ and the matched motifs' logos -- the report 2.0.7's
 #   `modisco report` wrote; 2.5.2's `modisco report` is a different,
 #   descriptive one. Matches come from MEME's `tomtom` (q-values), which
-#   chrombpnet's linux pixi environments ship; the step checks for it up front
+#   the modisco environment ships; the step checks for it up front
 #   because it is only needed after days of `modisco motifs`. No -s:
 #   report-simple pastes it straight in front of each match-logo file name, so
 #   an absolute path without a trailing slash breaks those links, while the
@@ -78,8 +98,9 @@
 #   sbatch --array=1 08.0.run_modisco.sh    # dataset 1 of ${datasets[@]}
 #
 # Prerequisites: 06.0.average_contrib_scores.sh must have completed; the
-#   chrombpnet 2.x environment (CHROMBPNET_REPO, see lib/bash/common.sh) with
-#   MEME's tomtom; the MotifCompendium database (cli.py download-references).
+#   modisco environment (`pixi install -e modisco`, linux-64 only), which
+#   includes MEME's tomtom; the MotifCompendium database (cli.py
+#   download-references).
 
 # --- bootstrap: locate the repo root (identical block in every workflow step) --
 # sbatch copies the submitted script to a node-local spool dir, so BASH_SOURCE
@@ -117,11 +138,14 @@ score_types=("counts" "profile")  # see the header
 modisco_max_seqlets=500000
 modisco_window=500
 modisco_pattern_args=( -l 2 -z 20 -f 5 -t 20 -g 5 -j 0 )
+# One process per -l restart; the clustering does not depend on it (see the header).
+modisco_leiden_jobs=2
 modisco_dir="${averaged_dir}/${dataset}/modisco"
 
 metadata_start "08.0.run_modisco"
 metadata_params+=( "dataset=${dataset}" "max_seqlets=${modisco_max_seqlets}" "window=${modisco_window}" )
 metadata_params+=( "pattern_args=${modisco_pattern_args[*]}" "threads=${SLURM_CPUS_PER_TASK:-4}" )
+metadata_params+=( "leiden_jobs=${modisco_leiden_jobs}" )
 for score_type in "${score_types[@]}"; do
     metadata_inputs+=( "contributions=${averaged_dir}/${dataset}/${dataset}_average_shaps.${score_type}.h5" )
     metadata_outputs+=( "motifs=${modisco_dir}/modisco_${score_type}_results.h5" )
@@ -137,14 +161,14 @@ for score_type in "${score_types[@]}"; do
     mkdir -p "${modisco_dir}/${score_type}_report"
 done
 
-activate_env "${chrombpnet_env}"
+activate_env "${modisco_env}"
 
 # report-simple shells out to MEME's tomtom; find out now, not after days of
 # `modisco motifs`.
 if ! command -v tomtom >/dev/null 2>&1; then
-    echo "ERROR: MEME's tomtom is not on PATH in ${chrombpnet_env}." >&2
+    echo "ERROR: MEME's tomtom is not on PATH in ${modisco_env}." >&2
     echo "  modisco report-simple needs it to match patterns against ${ref_db_meme}." >&2
-    echo "  chrombpnet's linux pixi environments include MEME; a conda env needs 'meme' installed." >&2
+    echo "  The modisco pixi environment includes MEME; a conda env needs 'meme' installed." >&2
     exit 1
 fi
 
@@ -173,6 +197,7 @@ for score_type in "${score_types[@]}"; do
             -o "${results_h5}" \
             -w "${modisco_window}" \
             "${modisco_pattern_args[@]}" \
+            --n_leiden_jobs "${modisco_leiden_jobs}" \
             -v
         _rc=$?
         # No `set -e` in this step: guard each call and its output explicitly.

@@ -48,7 +48,7 @@ dataset directories exist on the cluster only.
 - `src/` — the atomic Python scripts the steps call, one concern each. Nothing in
   `src/` imports anything from another file in `src/`; shared code goes to `lib/`.
 - `lib/bash/common.sh` — settings and helpers with no `DATASET_DIR`: the environment
-  specs (`chrombpnet_env`, `preprocess_env`, `peaks_env`, `finemo_env`, `motif_compendium_env`)
+  specs (`chrombpnet_env`, `preprocess_env`, `peaks_env`, `modisco_env`, `finemo_env`, `motif_compendium_env`)
   and the chrombpnet pin, algorithm thresholds, and the helpers — `bootstrap_python`,
   `load_bias_sweep`, `activate_env` (with its pixi branch `activate_pixi_env`),
   `gpu_env`, `require_gpu`, `metadata_start`/`metadata_emit`, `set_signal_args`,
@@ -240,7 +240,7 @@ git clone https://github.com/NNFC-GMD/chrombpnet "$CHROMBPNET_REPO"
 CONDA_OVERRIDE_CUDA=13.0 pixi install --locked \
     --manifest-path "$CHROMBPNET_REPO/pyproject.toml" -e cuda13
 
-pixi install --locked -e preprocess          # and finemo, motif-compendium; from this checkout
+pixi install --locked -e preprocess          # and modisco, finemo, motif-compendium; from this checkout
 pixi run -e preprocess python src/cli.py download-references
 
 export DATASET=igvf3_cardiomyocyte
@@ -258,9 +258,10 @@ exactly one place, its `activate_env` line, as `pixi:<manifest>#<environment>`:
 
 | Environment | Steps | Comes from |
 |---|---|---|
-| chrombpnet 2.x, `cuda13` (`chrombpnet_env`) | 01.0, 03.0–04.5, 05.0–08.0 — training, interpretation, predictions, TF-MoDISco (modisco 2.5.2), the QC plots of 03.1/04.1/04.2 | the chrombpnet checkout's `pyproject.toml` + `pixi.lock`, at `CHROMBPNET_REV` |
+| chrombpnet 2.x, `cuda13` (`chrombpnet_env`) | 01.0, 03.0–04.5, 05.0–07.0 — training, interpretation, predictions, per-fold TF-MoDISco (modisco 2.5.2), the QC plots of 03.1/04.1/04.2 | the chrombpnet checkout's `pyproject.toml` + `pixi.lock`, at `CHROMBPNET_REV` |
 | `preprocess` (`preprocess_env`) | 00.0.prepare_signal, 00.1, 02.0, `qc_datasets.sh`, `cli.py download-references` | `pixi.toml` |
 | `peaks` (`peaks_env`) | 00.0.call_peaks — preprocess plus MACS3 built from PR #756 (`jmschrei/MACS@fa52988`), bgzip, mawk; linux-64 only | `pixi.toml` |
+| `modisco` (`modisco_env`) | 08.0 — modisco 2.5.2 from NNFC-GMD/tfmodisco's `parallel-leiden-seeds` branch (`--n_leiden_jobs`), every computing package pinned to chrombpnet's cuda13 versions, MEME for tomtom; linux-64 only | `pixi.toml` |
 | `finemo` (`finemo_env`) | 10.0, 11.0 — Fi-NeMo 0.41 on torch 2.14 (CUDA 13.0 wheel) | `pixi.toml` |
 | `finemo-cu126` | none by default; for 10.0 (and 11.0) on drivers below 580 or GPU_CC 7.0 (`FINEMO_ENV`, see 10.0's header) | `pixi.toml` |
 | `motif-compendium` (`motif_compendium_env`) | 09.0, `deprecated/motif_compendium.sh` — MotifCompendium v1.0.19, CPU only | `pixi.toml` |
@@ -275,7 +276,7 @@ lock file — the one the Keras 3 / JAX port was validated against — rather th
 re-solved here. `activate_env` warns when the checkout is not at `CHROMBPNET_REV`;
 it does not stop, so a newer chrombpnet can be tried on purpose, and the run
 record carries `chrombpnet_commit`. `CHROMBPNET_PIXI_ENV=cuda12` is the fallback
-for drivers below 580. `peaks`, `finemo`, `finemo-cu126` and `motif-compendium` each have
+for drivers below 580. `peaks`, `modisco`, `finemo`, `finemo-cu126` and `motif-compendium` each have
 their own solve group (`default`, `qc` and `preprocess` share `main`), so Fi-NeMo's
 torch and MotifCompendium's stack cannot move each other's pins. Any `*_ENV` may still be a plain conda prefix, which `activate_env`
 enters through `CONDA_INIT`.
@@ -620,8 +621,8 @@ say which of the two kinds of verification a change actually got.
 
 - **Per-fold motif QC (03.3, 04.5) is `src/motif_qc.py`, not chrombpnet's
   modisco: TF-MoDISco 2.5.2 at `-n 5000` on BOTH heads, in the chrombpnet 2.x
-  env** (which ships modisco 2.5.2 and memelite, so there is no separate `motifs`
-  env any more). The changes, each for a measured reason (d0, chrombpnet 1.x bias
+  env** (which ships modisco 2.5.2 and memelite; only 08.0 has its own `modisco`
+  env, see below). The changes, each for a measured reason (d0, chrombpnet 1.x bias
   model, fold 0, bias `_065`, 2026-09-23):
   - *Small budget.* Runtime is dominated by clustering, which grows with the
     seqlet count: 63 min at chrombpnet's `-n 50000` (profile head, modisco-lite
@@ -667,6 +668,25 @@ say which of the two kinds of verification a change actually got.
   actually gets the longer runs some datasets need. Don't "fix" it back to `gpu`.
   03.3 and 04.5 (per-fold TF-MoDISco) use the same partition and QOS for the same
   reason.
+
+- **08.0 runs TF-MoDISco from its own `modisco` environment, so its Leiden
+  restarts run in parallel; 03.3/04.5 stay on chrombpnet's.** 2.5.2 runs the
+  `-l` restarts of each clustering call one after another on one core
+  (leidenalg holds the GIL), and at 08.0's `-n 500000` they dominate a call: on a
+  synthetic 20,000-seqlet, 500-neighbour affinity, two restarts took 151 s of ~190 s.
+  NNFC-GMD/tfmodisco's `parallel-leiden-seeds` branch adds `--n_leiden_jobs`,
+  which runs them in separate processes and still picks the best in seed order,
+  so the clustering is identical (tested against 2.5.2's function, and a
+  synthetic `modisco motifs` run at 08.0's flags wrote the same results file as
+  stock 2.5.2 in chrombpnet's env; the 20,000-seqlet call took 84 s). The environment pins numpy, numba, scipy, scikit-learn, h5py,
+  igraph, leidenalg and memelite to chrombpnet's cuda13 versions, so the branch
+  is the only difference from a stock run. 03.3/04.5 keep chrombpnet's stock
+  2.5.2: the branch was taken up for 08.0 only, where the full budget makes the
+  restarts the long pole (their `-n 5000` graphs, 500 neighbours a seqlet, are
+  above the branch's 1,000,000-entry threshold too). Building the graph with
+  numpy was measured as well and saves 0.3 s a call: python-igraph already
+  converts the edge list in C. Workers read the affinity from TMPDIR (12-16
+  bytes per entry), so keep it node-local.
 
 - **`set -euo pipefail` is the exception, not the rule** — only `00.1`, `01.0` and
   `03.1` use it. `00.1` and `01.0` set it right after sourcing `config.sh`, so they

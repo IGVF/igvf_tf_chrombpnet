@@ -13,8 +13,8 @@
 # system CUDA, no conda and no container -- only an NVIDIA driver new enough
 # for the wheels (>= 580 for cuda13). Every environment is installed with
 # --locked, from a lock file: chrombpnet's own pixi.lock, the one the port was
-# validated with, and this repo's pixi.lock for preprocess / qc / finemo /
-# motif-compendium. A lock file that no longer matches its manifest stops the
+# validated with, and this repo's pixi.lock for preprocess / qc / modisco /
+# finemo / motif-compendium. A lock file that no longer matches its manifest stops the
 # install instead of being re-solved on the box.
 #
 # Why a separate chrombpnet checkout (${CHROMBPNET_REPO}, default
@@ -68,7 +68,7 @@ PIXI_VERSION="${PIXI_VERSION:-0.81.0}"
 CHROMBPNET_URL="${CHROMBPNET_URL:-https://github.com/NNFC-GMD/chrombpnet}"
 # This repo's environments (pixi.toml). finemo-cu126 is left out: pixi.toml
 # keeps it for drivers below 580, and its torch cannot drive Blackwell.
-LOCAL_ENVS=( preprocess qc finemo motif-compendium )
+LOCAL_ENVS=( preprocess qc modisco finemo motif-compendium )
 APT=(env DEBIAN_FRONTEND=noninteractive apt-get -y -qq
      -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
 

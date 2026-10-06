@@ -70,6 +70,7 @@ CONDA_OVERRIDE_CUDA=13.0 pixi install --locked \
 
 # 2. This repo's environments, from the checkout
 pixi install --locked -e preprocess
+pixi install --locked -e modisco           # 08.0; linux-64 only
 pixi install --locked -e finemo
 pixi install --locked -e motif-compendium
 

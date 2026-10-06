@@ -38,7 +38,7 @@ moves its HEAD to the pin, so it must not be `/marimo/chrombpnet` or any other
 checkout someone develops in (setup refuses to move one that is on a branch or
 has local changes).
 
-`env.sh` leaves `CHROMBPNET_ENV`, `PREPROCESS_ENV`, `FINEMO_ENV` and
+`env.sh` leaves `CHROMBPNET_ENV`, `PREPROCESS_ENV`, `MODISCO_ENV`, `FINEMO_ENV` and
 `MOTIF_COMPENDIUM_ENV` unset, so `common.sh`'s pixi defaults are what runs. It only
 says where the chrombpnet checkout is (`CHROMBPNET_REPO`, `CHROMBPNET_PIXI_ENV`).
 
