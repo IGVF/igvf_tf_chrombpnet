@@ -6,7 +6,7 @@
 #SBATCH --gres=gpu:8
 #SBATCH --cpus-per-task=216
 #SBATCH --mem=0
-#SBATCH --time=24:00:00
+#SBATCH --time=7-00:00:00
 #SBATCH --output=%x_%j.log
 #SBATCH --error=%x_%j.log
 
@@ -14,8 +14,11 @@
 # Purpose: one whole DCAI node (the cluster's unit of allocation: 216 cores,
 #   ~2 TB, 8x H100) running workflows/dcai/run_box.sh. --exclusive because the
 #   partition oversubscribes by default; --mem=0 is all of the node's memory.
-#   The time limit is explicit because defq's default is 8 h; the run resumes
-#   if it is cut short.
+#   The time limit is explicit because defq's DEFAULT is 8 h, while its maximum
+#   is unlimited (sinfo -o %l). Billing is the node-time used and the job ends
+#   with its work, so the cap is generous on purpose: a running job's limit
+#   cannot be raised by a user (box 517784, at 24 h, had to hand its work to a
+#   second box). The run resumes if it is cut short.
 #
 # Usage (from the checkout, so the job inherits REPO_ROOT and the paths):
 #   source workflows/dcai/env.sh
