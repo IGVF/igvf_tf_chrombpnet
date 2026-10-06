@@ -35,8 +35,11 @@
 #   BOX_STAGES           wave 1: "prep" or "prep,bias" (default prep,bias)
 #   BOX_BACKFILL         wave 2: "none", "prep" or "prep,bias" (default prep)
 #   BOX_GPU_SLOTS_PER_GPU  concurrent 03.0 trainings per GPU (default 2)
+#   BOX_GPU_STAGGER      seconds between GPU workers' first tasks (default 15), so
+#                        the first compiles fill the cache before the rest need it
 #   BOX_MEM_FRACTION     share of RAM wave 2 may plan to fill (default 0.85)
 #   BOX_BIAS_PRECISION   written into every config as bias_precision (e.g. bf16)
+#   BOX_CHECKS           0 skips checks.sh (they need to pass once per setup, not per box)
 #
 # Output: under ${DATASET_ROOT}/chrombpnet/box/<job id>/: logs/<dataset>/<step>.log,
 #         logs/<dataset>/03.0.<index>.log, status.tsv (dataset, step, exit,
@@ -77,6 +80,20 @@ rm -rf "${scratch_root}/${USER}/box."* 2>/dev/null
 export BOX_SCRATCH="${scratch_root}/${USER}/box.${box_id}"
 mkdir -p "${BOX_SCRATCH}"
 
+# Temporary files on the node, never on the shared filesystem. XLA compiles each
+# GPU kernel by running ptxas on temp files in $TMPDIR; with an inherited TMPDIR
+# on /dcai, 40 trainings compiling at once left ~3,900 ptxas processes blocked
+# listing and unlinking one network directory (box 517771: load 4,300, 7% CPU).
+export TMPDIR="${BOX_SCRATCH}/tmp" TMP="${BOX_SCRATCH}/tmp" TEMP="${BOX_SCRATCH}/tmp"
+mkdir -p "${TMPDIR}"
+# One persistent JAX compilation cache for every training on the node: the sweep
+# compiles the same model at the same shapes many times over, so all but the
+# first compile of each (and its autotuning) become cache reads.
+export JAX_COMPILATION_CACHE_DIR="${BOX_SCRATCH}/jax_cache"
+export JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS=0
+export JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES=0
+mkdir -p "${JAX_COMPILATION_CACHE_DIR}"
+
 mem_used_gb() { awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} END{printf "%d", (t-a)/1048576}' /proc/meminfo; }
 mem_total_gb() { awk '/^MemTotal:/{printf "%d", $2/1048576}' /proc/meminfo; }
 n_gpus="$(nvidia-smi -L 2>/dev/null | grep -c '^GPU' || true)"
@@ -115,8 +132,11 @@ sampler_pid=$!
 trap 'kill "${sampler_pid}" 2>/dev/null; rm -rf "${BOX_SCRATCH}"' EXIT
 
 # ── checks, in the background ─────────────────────────────────────────────────
-bash "${REPO_ROOT}/workflows/dcai/checks.sh" > "${BOX_DIR}/checks.log" 2>&1 &
-checks_pid=$!
+checks_pid=""
+if [[ "${BOX_CHECKS:-1}" == "1" ]]; then
+    bash "${REPO_ROOT}/workflows/dcai/checks.sh" > "${BOX_DIR}/checks.log" 2>&1 &
+    checks_pid=$!
+fi
 
 # ── phase 0: shift, then configs ──────────────────────────────────────────────
 pixi_peaks=( pixi run --frozen --manifest-path "${REPO_ROOT}/pixi.toml" -e peaks )
@@ -168,7 +188,8 @@ pop_task() {
     ) 9> "${BOX_GPU_QUEUE}.lock"
 }
 gpu_worker() {
-    local gpu="$1" task cfg idx name t0 rc
+    local gpu="$1" delay="${2:-0}" task cfg idx name t0 rc
+    sleep "${delay}"
     while true; do
         task="$(pop_task)"
         if [[ -z "${task}" ]]; then
@@ -191,9 +212,10 @@ gpu_worker() {
 }
 worker_pids=()
 if [[ ",${stages},${backfill}," == *",bias,"* ]] && (( n_gpus > 0 )); then
-    for (( g = 0; g < n_gpus; g++ )); do
-        for (( k = 0; k < slots_per_gpu; k++ )); do
-            gpu_worker "${g}" &
+    # Slot-major, so each GPU gets its first worker before any gets a second.
+    for (( k = 0; k < slots_per_gpu; k++ )); do
+        for (( g = 0; g < n_gpus; g++ )); do
+            gpu_worker "${g}" "$(( ${#worker_pids[@]} * ${BOX_GPU_STAGGER:-15} ))" &
             worker_pids+=( $! )
         done
     done
@@ -243,7 +265,7 @@ if (( ${#worker_pids[@]} )); then
     done
 fi
 
-wait "${checks_pid}"
+[[ -n "${checks_pid}" ]] && wait "${checks_pid}"
 
 # ── summary ───────────────────────────────────────────────────────────────────
 failed="$(awk -F'\t' '$3 != 0' "${BOX_STATUS}")"

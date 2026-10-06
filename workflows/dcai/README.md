@@ -43,6 +43,8 @@ BOX_FIRST_N=10 BOX_STAGES=prep,bias BOX_BACKFILL=prep \
 | `BOX_GPU_SLOTS_PER_GPU` | 2 | concurrent 03.0 trainings per GPU |
 | `BOX_MEM_FRACTION` | 0.85 | share of RAM wave 2 may plan to fill |
 | `BOX_BIAS_PRECISION` | unset (full precision) | `bias_precision` in every config: 03.0 sweep models in e.g. bf16, in their own `bias_model_<f>_bf16/` dirs |
+| `BOX_GPU_STAGGER` | 15 | seconds between GPU workers' first tasks |
+| `BOX_CHECKS` | 1 | `0` skips `checks.sh` (run it once per setup, not every box) |
 | `BIAS_FACTORS_FROM_SCAN` | 1 | `0` sweeps the config's factors (0.5–0.8) instead of 02.0's scan, which keeps all 40 on deep libraries |
 
 03.1 runs at the end for every dataset whose sweep ran. It writes
@@ -79,3 +81,10 @@ its peak RSS and wall time, and `call_peaks.json` the per-call MACS numbers.
 GPU tasks are one 03.0 training each, `BOX_GPU_SLOTS_PER_GPU` per device
 (`CUDA_VISIBLE_DEVICES` pinned). chrombpnet disables JAX's memory preallocation,
 so several share an 80 GB H100; `resources.tsv` shows whether more would fit.
+Measured on the AMSC libraries: 35.4 GB host RAM and ~2.5 GB GPU memory per
+bias training, so host RAM, not the GPU, limits how many run at once.
+
+The box keeps `TMPDIR` and a shared JAX compilation cache
+(`JAX_COMPILATION_CACHE_DIR`) in its node-local scratch. XLA compiles every GPU
+kernel through `ptxas` temp files in `$TMPDIR`; with it on `/dcai`, 40 trainings
+compiling at once left ~3,900 `ptxas` processes blocked on one network directory.
