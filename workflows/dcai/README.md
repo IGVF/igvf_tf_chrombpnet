@@ -17,6 +17,7 @@ the steps themselves are the same files.
 | `make_configs.py` | one `config.yaml` per fragments file, shift pinned |
 | `checks.sh` | GPU/driver probe; figwig == numpy bigwig on a full library; MACS3 PR #756 == the 3.0.5 release (and how 3.0.4 differs) |
 | `compare_bigwigs.py` | per-base comparison of two bigWigs |
+| `box_rates.sh` | training it/s of a running box, per GPU and per MPS group, from its task logs (safe on the login node) |
 
 ## Setup, once
 
@@ -45,6 +46,7 @@ BOX_FIRST_N=10 BOX_STAGES=prep,bias BOX_BACKFILL=prep \
 | `BOX_BIAS_PRECISION` | unset (full precision) | `bias_precision` in every config: 03.0 sweep models in e.g. bf16, in their own `bias_model_<f>_bf16/` dirs |
 | `BOX_GPU_STAGGER` | 15 | seconds between GPU workers' first tasks |
 | `BOX_CHECKS` | 1 | `0` skips `checks.sh` (run it once per setup, not every box) |
+| `BOX_MPS` | `off` | NVIDIA MPS for the GPU workers: `all`, or `half` (GPUs 0..n/2-1 with MPS, the rest without) to A/B it on the same tasks |
 | `BIAS_FACTORS_FROM_SCAN` | 1 | `0` sweeps the config's factors (0.5–0.8) instead of 02.0's scan, which keeps all 40 on deep libraries |
 
 03.1 runs at the end for every dataset whose sweep ran. It writes
@@ -88,3 +90,18 @@ The box keeps `TMPDIR` and a shared JAX compilation cache
 (`JAX_COMPILATION_CACHE_DIR`) in its node-local scratch. XLA compiles every GPU
 kernel through `ptxas` temp files in `$TMPDIR`; with it on `/dcai`, 40 trainings
 compiling at once left ~3,900 `ptxas` processes blocked on one network directory.
+
+With several trainings per GPU, the GPU time-slices between their CUDA contexts;
+a batch-64 bias model's kernels are small, so much of each slice is idle.
+`BOX_MPS` starts the box's own MPS daemon (pipe and log in its scratch) so the
+contexts' kernels run side by side; the box first proves a JAX client goes
+through it, and runs without MPS if not. Every 03.0 task log starts with
+`[box] gpu=N mps=on|off`, which `box_rates.sh` groups by:
+
+```bash
+bash workflows/dcai/box_rates.sh "$DATASET_ROOT/chrombpnet/box/<job id>"
+```
+
+Do not run anything heavier than that on the login node: it has 15 GB, most of
+it used by others. Run checks and tests inside a running box with
+`srun --jobid <box> --overlap --cpus-per-task=N --mem=XG ...`.

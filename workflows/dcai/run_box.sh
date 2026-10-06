@@ -40,6 +40,9 @@
 #   BOX_MEM_FRACTION     share of RAM wave 2 may plan to fill (default 0.85)
 #   BOX_BIAS_PRECISION   written into every config as bias_precision (e.g. bf16)
 #   BOX_CHECKS           0 skips checks.sh (they need to pass once per setup, not per box)
+#   BOX_MPS              NVIDIA MPS for the GPU workers: off (default), all, or half --
+#                        GPUs 0..n/2-1 under MPS and the rest without, an A/B on the
+#                        same tasks and node (workflows/dcai/box_rates.sh compares them)
 #
 # Output: under ${DATASET_ROOT}/chrombpnet/box/<job id>/: logs/<dataset>/<step>.log,
 #         logs/<dataset>/03.0.<index>.log, status.tsv (dataset, step, exit,
@@ -129,7 +132,46 @@ sampler() {
 }
 sampler &
 sampler_pid=$!
-trap 'kill "${sampler_pid}" 2>/dev/null; rm -rf "${BOX_SCRATCH}"' EXIT
+# stop_mps — quit this box's MPS daemon, if it started one.
+stop_mps() {
+    [[ -n "${CUDA_MPS_PIPE_DIRECTORY:-}" ]] && echo quit | nvidia-cuda-mps-control > /dev/null 2>&1
+    return 0
+}
+trap 'kill "${sampler_pid}" 2>/dev/null; stop_mps; rm -rf "${BOX_SCRATCH}"' EXIT
+
+# ── NVIDIA MPS ────────────────────────────────────────────────────────────────
+# Several trainings share each GPU (BOX_GPU_SLOTS_PER_GPU). Without MPS the GPU
+# time-slices between their CUDA contexts, and a batch-64 bias model's small
+# kernels leave most of each slice idle; under MPS the contexts' kernels run on
+# the GPU side by side. The box starts its own daemon (pipe and log in its
+# scratch) for the chosen GPUs, proves one JAX client goes through it, and
+# otherwise carries on without MPS rather than failing every task.
+mps_gpus=""
+case "${BOX_MPS:-off}" in
+    all)  (( n_gpus > 0 )) && mps_gpus="$(seq -s, 0 $(( n_gpus - 1 )))" ;;
+    half) (( n_gpus > 1 )) && mps_gpus="$(seq -s, 0 $(( n_gpus / 2 - 1 )))" ;;
+    off) ;;
+    *) echo "ERROR: BOX_MPS must be off, all or half (got '${BOX_MPS}')" >&2; exit 1 ;;
+esac
+if [[ -n "${mps_gpus}" ]]; then
+    export CUDA_MPS_PIPE_DIRECTORY="${BOX_SCRATCH}/mps/pipe" CUDA_MPS_LOG_DIRECTORY="${BOX_SCRATCH}/mps/log"
+    mkdir -p "${CUDA_MPS_PIPE_DIRECTORY}" "${CUDA_MPS_LOG_DIRECTORY}"
+    if CUDA_VISIBLE_DEVICES="${mps_gpus}" nvidia-cuda-mps-control -d \
+        && CUDA_VISIBLE_DEVICES="${mps_gpus%%,*}" pixi run --frozen \
+            --manifest-path "${CHROMBPNET_REPO}/pyproject.toml" -e "${CHROMBPNET_PIXI_ENV}" \
+            python -c 'import jax, jax.numpy as jnp; print(jax.devices(), float(jnp.ones((256, 256)).sum()))' \
+            > "${BOX_DIR}/mps_check.log" 2>&1 \
+        && grep -qi "new client\|starting new server" "${CUDA_MPS_LOG_DIRECTORY}/control.log" 2>/dev/null; then
+        echo "[$(date)] MPS on GPU(s) ${mps_gpus}; the others time-slice as before"
+    else
+        echo "[$(date)] WARNING: MPS did not come up (see ${BOX_DIR}/mps_check.log and" >&2
+        echo "           ${CUDA_MPS_LOG_DIRECTORY}/control.log); running without it" >&2
+        cp -r "${CUDA_MPS_LOG_DIRECTORY}" "${BOX_DIR}/mps_log" 2>/dev/null
+        stop_mps
+        unset CUDA_MPS_PIPE_DIRECTORY CUDA_MPS_LOG_DIRECTORY
+        mps_gpus=""
+    fi
+fi
 
 # ── checks, in the background ─────────────────────────────────────────────────
 checks_pid=""
@@ -188,7 +230,14 @@ pop_task() {
     ) 9> "${BOX_GPU_QUEUE}.lock"
 }
 gpu_worker() {
-    local gpu="$1" delay="${2:-0}" task cfg idx name t0 rc
+    local gpu="$1" delay="${2:-0}" task cfg idx name t0 rc mps=off
+    local -a env_mps=( env -u CUDA_MPS_PIPE_DIRECTORY -u CUDA_MPS_LOG_DIRECTORY )
+    # A GPU outside the daemon's set must not inherit its pipe: without it a
+    # client opens a plain context, as before.
+    if [[ ",${mps_gpus}," == *",${gpu},"* ]]; then
+        mps=on
+        env_mps=( env )
+    fi
     sleep "${delay}"
     while true; do
         task="$(pop_task)"
@@ -201,10 +250,14 @@ gpu_worker() {
         name="$(basename "$(dirname "${cfg}")")"
         mkdir -p "${BOX_LOG_DIR}/${name}"
         t0="$(date +%s)"
-        CUDA_VISIBLE_DEVICES="${gpu}" SLURM_ARRAY_TASK_ID="${idx}" SLURM_CPUS_PER_TASK=4 \
-            DATASET_CONFIG="${cfg}" OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=4 \
-            NUMEXPR_MAX_THREADS=4 NUMBA_NUM_THREADS=4 \
-            bash "${steps_dir}/03.0.train_bias_model.sh" > "${BOX_LOG_DIR}/${name}/03.0.${idx}.log" 2>&1
+        {
+            # First line of every task log: where it ran, for box_rates.sh.
+            echo "[box] gpu=${gpu} mps=${mps}"
+            "${env_mps[@]}" CUDA_VISIBLE_DEVICES="${gpu}" SLURM_ARRAY_TASK_ID="${idx}" SLURM_CPUS_PER_TASK=4 \
+                DATASET_CONFIG="${cfg}" OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=4 \
+                NUMEXPR_MAX_THREADS=4 NUMBA_NUM_THREADS=4 \
+                bash "${steps_dir}/03.0.train_bias_model.sh"
+        } > "${BOX_LOG_DIR}/${name}/03.0.${idx}.log" 2>&1
         rc=$?
         printf '%s\t%s\t%d\t%d\n' "${name}" "03.0.train_bias_model[${idx}]@gpu${gpu}" "${rc}" \
             "$(( $(date +%s) - t0 ))" >> "${BOX_STATUS}"
@@ -219,7 +272,7 @@ if [[ ",${stages},${backfill}," == *",bias,"* ]] && (( n_gpus > 0 )); then
             worker_pids+=( $! )
         done
     done
-    echo "[$(date)] ${#worker_pids[@]} GPU worker(s): ${slots_per_gpu} per GPU on ${n_gpus} GPU(s)"
+    echo "[$(date)] ${#worker_pids[@]} GPU worker(s): ${slots_per_gpu} per GPU on ${n_gpus} GPU(s), MPS on: ${mps_gpus:-none}"
 fi
 
 # ── wave 1 ────────────────────────────────────────────────────────────────────
