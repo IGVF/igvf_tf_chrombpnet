@@ -187,7 +187,21 @@ if [[ -n "${precision}" && "${precision}" != "default" ]]; then
     precision_args=( --precision "${precision}" )
     precision_tag="_${precision}"
 fi
-out_dir="${results_path}/bias_models/bias_model${suffix}${batch_tag}${precision_tag}/${bias_dataset}_${peak_type}_fold_${fold}"
+# Early-stopping patience, the same way again: chrombpnet's default (5) unless
+# the config sets bias_patience or the environment BIAS_PATIENCE. Sweep models
+# only rank factors; on 16 AMSC bias models patience 3 trained 37% fewer epochs
+# for a validation loss within 0.22% of patience 5's best. A model that stopped
+# sooner is a different model, so it is tagged `_p<N>` (bias_model_06_bf16_p3/),
+# and 03.1 selects among the same tag.
+patience="${BIAS_PATIENCE:-${bias_patience:-}}"
+patience_args=()
+patience_tag=""
+if [[ -n "${patience}" && "${patience}" != "5" ]]; then
+    [[ "${patience}" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: bias patience must be a positive integer, got '${patience}'" >&2; exit 1; }
+    patience_args=( -es "${patience}" )
+    patience_tag="_p${patience}"
+fi
+out_dir="${results_path}/bias_models/bias_model${suffix}${batch_tag}${precision_tag}${patience_tag}/${bias_dataset}_${peak_type}_fold_${fold}"
 model_file="${out_dir}/models/${file_prefix}_bias.h5"
 
 
@@ -211,7 +225,7 @@ metadata_outputs+=( "bias_model=${model_file}" )
 # model but fails to score it looks complete in the metadata.
 metrics_json="${out_dir}/evaluation/${file_prefix}_bias_metrics.json"
 metadata_outputs+=( "bias_metrics=${metrics_json}" )
-metadata_params+=( "fold=${fold}" "bias_factor=${bf}" "bias_suffix=${suffix}" "batch_size=${batch_size:-64}" "precision=${precision:-default}" )
+metadata_params+=( "fold=${fold}" "bias_factor=${bf}" "bias_suffix=${suffix}" "batch_size=${batch_size:-64}" "precision=${precision:-default}" "patience=${patience:-5}" )
 echo "[$(date)] [fold ${fold} bias=${bf}] Training bias model"
 echo "  output dir : ${out_dir}"
 
@@ -266,6 +280,7 @@ python "${src_dir}/chrombpnet_train.py" \
     -fp "${file_prefix}" \
     ${batch_args[@]+"${batch_args[@]}"} \
     ${precision_args[@]+"${precision_args[@]}"} \
+    ${patience_args[@]+"${patience_args[@]}"} \
     --device gpu
 _train_status=$?
 if [[ -s "${METADATA_RSS_FILE}" ]]; then

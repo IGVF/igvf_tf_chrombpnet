@@ -159,6 +159,13 @@ bias_suffixes_sweep: ["_05", "_06", "_07", "_08"]
 # fold_bias_suffix then names them (e.g. _07_bf16). BIAS_PRECISION overrides.
 # bias_precision: bf16
 
+# Early-stopping patience of the 03.0 sweep models (default: chrombpnet's 5).
+# On 16 AMSC bias models, 3 trained 37% fewer epochs for a validation loss within
+# 0.22% of patience 5's best. Models go to bias_model<suffix>[_bf16]_p3/, 03.1
+# selects among those, and fold_bias_suffix names them (e.g. _07_bf16_p3).
+# BIAS_PATIENCE overrides.
+# bias_patience: 3
+
 # Cap the full-model training (04.0) for a pipeline TEST. Unset = chrombpnet's
 # default of 50 epochs with early stopping, which takes hours. A capped model
 # is written where the real one would be (04.1/04.3 read it there), and the

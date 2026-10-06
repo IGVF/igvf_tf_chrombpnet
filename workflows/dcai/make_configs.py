@@ -58,7 +58,7 @@ folds: ["0", "1", "2", "3", "4"]
 
 bias_factors: ["0.5", "0.6", "0.7", "0.8"]
 bias_suffixes_sweep: ["_05", "_06", "_07", "_08"]
-{bias_precision_line}
+{bias_precision_line}{bias_patience_line}
 # Filled in by hand after 03.1 writes selected_bias_per_fold.tsv.
 fold_bias_suffix:
   "0": ""
@@ -79,6 +79,11 @@ def main(argv=None) -> int:
     ap.add_argument("--configs-dir", type=Path, default=None,
                     help="default: <dataset-root>/chrombpnet/configs")  # fmt: skip
     ap.add_argument("--prefix", default="amsc_", help="dataset name prefix")
+    ap.add_argument(
+        "--bias-patience",
+        default="",
+        help="bias_patience for the 03.0 sweep (early-stopping patience); empty = chrombpnet's 5",
+    )
     ap.add_argument(
         "--bias-precision",
         default="",
@@ -111,6 +116,12 @@ def main(argv=None) -> int:
                 minus_shift=int(rec["minus_shift"]),
                 regions=args.dataset_root / "peaks" / name / f"{name}.narrowPeak.gz",
                 output_dir=args.dataset_root / "chrombpnet" / name,
+                bias_patience_line=(
+                    "# 03.0 sweep models stop after this many epochs without improvement (own _p<N> dirs).\n"
+                    f"bias_patience: {args.bias_patience}\n"
+                    if args.bias_patience
+                    else ""
+                ),
                 bias_precision_line=(
                     "# 03.0 sweep models in bf16 (own bias_model_<f>_bf16/ dirs); 04.0 stays full precision.\n"
                     f"bias_precision: {args.bias_precision}\n"

@@ -64,9 +64,14 @@ load_bias_sweep
 precision="${BIAS_PRECISION:-${bias_precision:-}}"
 precision_tag=""
 [[ -n "${precision}" && "${precision}" != "default" ]] && precision_tag="_${precision}"
+# bias_patience / BIAS_PATIENCE other than chrombpnet's 5 tags them too, after
+# the precision: bias_model_05_bf16_p3/ -> label "05_bf16_p3".
+patience="${BIAS_PATIENCE:-${bias_patience:-}}"
+patience_tag=""
+[[ -n "${patience}" && "${patience}" != "5" ]] && patience_tag="_p${patience}"
 biases=()
 for s in "${bias_suffixes_sweep[@]}"; do
-    biases+=( "${s#_}${precision_tag}" )
+    biases+=( "${s#_}${precision_tag}${patience_tag}" )
 done
 # AFTER the loop, not before it. Sherlock's bash is 4.2, where ${arr[*]} on an
 # EMPTY array is an unbound-variable error under the `set -u` above -- so with

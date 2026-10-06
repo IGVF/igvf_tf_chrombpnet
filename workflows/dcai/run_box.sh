@@ -39,6 +39,7 @@
 #                        the first compiles fill the cache before the rest need it
 #   BOX_MEM_FRACTION     share of RAM wave 2 may plan to fill (default 0.85)
 #   BOX_BIAS_PRECISION   written into every config as bias_precision (e.g. bf16)
+#   BOX_BIAS_PATIENCE    written into every config as bias_patience (e.g. 3)
 #   BOX_CHECKS           0 skips checks.sh (they need to pass once per setup, not per box)
 #   BOX_MPS              NVIDIA MPS for the GPU workers: off (default), all, or half --
 #                        GPUs 0..n/2-1 under MPS and the rest without, an A/B on the
@@ -203,7 +204,8 @@ fi
 python3 "${REPO_ROOT}/workflows/dcai/make_configs.py" \
     --fragments-dir "${DATASET_ROOT}/fragments" --dataset-root "${DATASET_ROOT}" \
     --shifts "${shifts}" --configs-dir "${configs_dir}" \
-    --bias-precision "${BOX_BIAS_PRECISION:-}" > "${BOX_DIR}/configs.txt" || exit 1
+    --bias-precision "${BOX_BIAS_PRECISION:-}" --bias-patience "${BOX_BIAS_PATIENCE:-}" \
+    > "${BOX_DIR}/configs.txt" || exit 1
 
 # Wave 1: named stems, or the N largest libraries.
 if [[ -n "${BOX_FIRST:-}" ]]; then

@@ -44,6 +44,7 @@ BOX_FIRST_N=10 BOX_STAGES=prep,bias BOX_BACKFILL=prep \
 | `BOX_GPU_SLOTS_PER_GPU` | 2 | concurrent 03.0 trainings per GPU |
 | `BOX_MEM_FRACTION` | 0.85 | share of RAM wave 2 may plan to fill |
 | `BOX_BIAS_PRECISION` | unset (full precision) | `bias_precision` in every config: 03.0 sweep models in e.g. bf16, in their own `bias_model_<f>_bf16/` dirs |
+| `BOX_BIAS_PATIENCE` | unset (chrombpnet's 5) | `bias_patience` in every config: early-stopping patience of the 03.0 sweep models, in their own `_p<N>` dirs |
 | `BOX_GPU_STAGGER` | 15 | seconds between GPU workers' first tasks |
 | `BOX_CHECKS` | 1 | `0` skips `checks.sh` (run it once per setup, not every box) |
 | `BOX_MPS` | `off` | NVIDIA MPS for the GPU workers: `all`, or `half` (GPUs 0..n/2-1 with MPS, the rest without) to A/B it on the same tasks |
