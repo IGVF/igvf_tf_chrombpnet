@@ -54,6 +54,8 @@
 #   sbatch --array=0 04.0.train_full_model.sh  # fold 0 only
 #   FULL_MODEL_EPOCHS=2 sbatch --export=ALL --array=0 04.0.train_full_model.sh
 #                                              # capped test run (see below)
+#   FULL_MODEL_PRECISION=bf16 FULL_MODEL_OPTIMIZER=muon sbatch --export=ALL --array=0 04.0.train_full_model.sh
+#                                              # a training variant, into full_models_bf16_muon/
 #
 # Prerequisites: 03.0.train_bias_model.sh, 03.1.select_bias.sh, and
 #   03.2.qc_selected_bias.sh must have completed for all folds, and the bias
@@ -152,6 +154,25 @@ if [[ -n "${max_epochs}" ]]; then
     epoch_args=( -e "${max_epochs}" )
 fi
 metadata_params+=( "max_epochs=${max_epochs:-50}" )
+
+# Training variant -- precision, optimizer, patience -- set in config.sh, which
+# also tags ${full_model_dir} with it (full_models_bf16_muon/). On the fork's
+# K562 validation (chrombpnet VALIDATION.md 5b) bf16 trained 2.5x faster per
+# step for a counts Pearson about 0.005 lower, and Muon (section 5) reached its
+# best validation loss in about half the epochs with the same final accuracy
+# within seed noise. Unset, chrombpnet's defaults run: TF32, Adam, patience 5.
+variant_args=()
+if [[ -n "${full_model_precision}" ]]; then
+    variant_args+=( --precision "${full_model_precision}" )
+fi
+if [[ -n "${full_model_optimizer}" ]]; then
+    variant_args+=( --optimizer "${full_model_optimizer}" )
+fi
+if [[ -n "${full_model_patience}" ]]; then
+    [[ "${full_model_patience}" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: full-model patience must be a positive integer, got '${full_model_patience}'" >&2; exit 1; }
+    variant_args+=( -es "${full_model_patience}" )
+fi
+metadata_params+=( "precision=${full_model_precision:-default}" "optimizer=${full_model_optimizer:-adam}" "patience=${full_model_patience:-5}" )
 metadata_params+=( "retrain=${RETRAIN:-0}" )
 
 
@@ -214,6 +235,7 @@ for dataset in "${datasets[@]}"; do
         -b "${bias_model}" \
         -o "${out_dir}" \
         ${epoch_args[@]+"${epoch_args[@]}"} \
+        ${variant_args[@]+"${variant_args[@]}"} \
         --skip-interpretation \
         --device gpu
     # No `set -e` here. Guard on BOTH markers, the same pair the skip-check at

@@ -173,6 +173,16 @@ bias_suffixes_sweep: ["_05", "_06", "_07", "_08"]
 # FULL_MODEL_EPOCHS in the environment overrides this.
 # full_model_epochs: 2
 
+# Full-model training variant (04.0). Unset = chrombpnet's defaults: TF32, Adam,
+# patience 5. bf16 trains ~2.5x faster per step (counts Pearson ~0.005 lower on
+# the fork's K562 fold); muon reached its best validation loss in about half the
+# epochs at the same accuracy within seed noise. Anything but the default tags
+# the full-model directory (full_models_bf16_muon/) and every later step reads
+# that one. FULL_MODEL_PRECISION / _OPTIMIZER / _PATIENCE override.
+# full_model_precision: bf16
+# full_model_optimizer: muon
+# full_model_patience: 3
+
 # Motif QC (03.3 bias model, 04.5 full model; src/motif_qc.py; both heads).
 # The central window, in bp, TF-MoDISco runs over (default 400, its own
 # default; chrombpnet's pipeline used 500), and seqlets per metacluster

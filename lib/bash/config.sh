@@ -149,7 +149,28 @@ if [[ ! -d "${folds_dir}" ]]; then
 fi
 
 # Output directories
-full_model_dir="${results_path}/full_models"
+# 04.0's training variant: precision, optimizer and early-stopping patience
+# (config full_model_precision / full_model_optimizer / full_model_patience, or
+# FULL_MODEL_PRECISION / _OPTIMIZER / _PATIENCE, which win). chrombpnet's
+# defaults -- default (TF32), adam, 5 -- leave the directory as it was; anything
+# else tags it (full_models_bf16_muon/), so a variant never overwrites the
+# default model nor is skipped because the default one is finished, and every
+# later step reads the variant the config names. Only this directory is
+# tagged: run a dataset past 04.0 with one variant.
+full_model_precision="${FULL_MODEL_PRECISION:-${full_model_precision:-}}"
+full_model_optimizer="${FULL_MODEL_OPTIMIZER:-${full_model_optimizer:-}}"
+full_model_patience="${FULL_MODEL_PATIENCE:-${full_model_patience:-}}"
+full_model_tag=""
+if [[ -n "${full_model_precision}" && "${full_model_precision}" != "default" ]]; then
+    full_model_tag+="_${full_model_precision}"
+fi
+if [[ -n "${full_model_optimizer}" && "${full_model_optimizer}" != "adam" ]]; then
+    full_model_tag+="_${full_model_optimizer}"
+fi
+if [[ -n "${full_model_patience}" && "${full_model_patience}" != "5" ]]; then
+    full_model_tag+="_p${full_model_patience}"
+fi
+full_model_dir="${results_path}/full_models${full_model_tag}"
 full_model_dir_selected="${full_model_dir}" # alias kept for script compatibility
 predictions_dir="${results_path}/predictions"
 averaged_dir="${results_path}/contrib_scores"
