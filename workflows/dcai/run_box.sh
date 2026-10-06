@@ -10,7 +10,9 @@
 #   phase 0  Tn5 shift of every fragments file (detect_shifts.py: scPrinter's
 #            detector cross-checked against chrombpnet's), then one config per
 #            file (make_configs.py) with that shift pinned. Stops if the two
-#            detectors disagree or a fit is unreliable.
+#            detectors disagree or a fit is unreliable. Only wave 1's configs
+#            are rewritten with this box's BOX_BIAS_* settings; the others are
+#            written only if missing, and a rewrite keeps fold_bias_suffix.
 #   wave 1   run_chain.sh for the BOX_FIRST datasets (default: the 10 largest
 #            libraries), all at once: {00.0.call_peaks || 00.0.prepare_signal}
 #            -> 00.1 -> 01.0 -> 02.0, then, with "bias" in BOX_STAGES, their
@@ -38,8 +40,8 @@
 #   BOX_GPU_STAGGER      seconds between GPU workers' first tasks (default 15), so
 #                        the first compiles fill the cache before the rest need it
 #   BOX_MEM_FRACTION     share of RAM wave 2 may plan to fill (default 0.85)
-#   BOX_BIAS_PRECISION   written into every config as bias_precision (e.g. bf16)
-#   BOX_BIAS_PATIENCE    written into every config as bias_patience (e.g. 3)
+#   BOX_BIAS_PRECISION   written into wave 1's configs as bias_precision (e.g. bf16)
+#   BOX_BIAS_PATIENCE    written into wave 1's configs as bias_patience (e.g. 3)
 #   BOX_CHECKS           0 skips checks.sh (they need to pass once per setup, not per box)
 #   BOX_MPS              NVIDIA MPS for the GPU workers: off (default), all, or half --
 #                        GPUs 0..n/2-1 under MPS and the rest without, an A/B on the
@@ -201,12 +203,6 @@ if [[ ! -s "${shifts}" ]]; then
     mv "${shifts}.partial" "${shifts}"
     echo "[$(date)] shifts: $(python3 -c "import json,collections; d=json.load(open('${shifts}')); print(dict(collections.Counter(f\"{v['plus_shift']:+d}/{v['minus_shift']:+d}\" for v in d.values())))")"
 fi
-python3 "${REPO_ROOT}/workflows/dcai/make_configs.py" \
-    --fragments-dir "${DATASET_ROOT}/fragments" --dataset-root "${DATASET_ROOT}" \
-    --shifts "${shifts}" --configs-dir "${configs_dir}" \
-    --bias-precision "${BOX_BIAS_PRECISION:-}" --bias-patience "${BOX_BIAS_PATIENCE:-}" \
-    > "${BOX_DIR}/configs.txt" || exit 1
-
 # Wave 1: named stems, or the N largest libraries.
 if [[ -n "${BOX_FIRST:-}" ]]; then
     first_stems="${BOX_FIRST}"
@@ -214,6 +210,13 @@ else
     first_stems="$(find "${DATASET_ROOT}/fragments" -maxdepth 1 -name '*.fragments.tsv.gz' -printf '%s %f\n' \
         | sort -rn | head -n "${BOX_FIRST_N:-10}" | awk '{sub(/\.fragments\.tsv\.gz$/, "", $2); print $2}' | tr '\n' ' ')"
 fi
+# Only wave 1 gets this box's sweep settings: another dataset's bias_precision /
+# bias_patience name the directories its 03.0 models are already in.
+python3 "${REPO_ROOT}/workflows/dcai/make_configs.py" \
+    --fragments-dir "${DATASET_ROOT}/fragments" --dataset-root "${DATASET_ROOT}" \
+    --shifts "${shifts}" --configs-dir "${configs_dir}" \
+    --bias-precision "${BOX_BIAS_PRECISION:-}" --bias-patience "${BOX_BIAS_PATIENCE:-}" \
+    --rewrite "${first_stems}" > "${BOX_DIR}/configs.txt" || exit 1
 : > "${BOX_DIR}/wave1.txt"; : > "${BOX_DIR}/wave2.txt"
 while read -r c; do
     stem="$(basename "$(dirname "${c}")")"; stem="${stem#amsc_}"

@@ -11,6 +11,13 @@ thing whatever the environment. Peaks are called by 00.0.call_peaks into
 The Tn5 shift is pinned per file from detect_shifts.py's output (--shifts), so
 no step re-detects it; a file missing from it is an error.
 
+An existing config is only rewritten for a stem in --rewrite (default: every
+stem), and a missing one is always written. A box passes its own sweep datasets
+there, so --bias-precision / --bias-patience reach those and do not move
+another dataset's settings, which name the directories its 03.0 models are in.
+A rewrite keeps the file's fold_bias_suffix, the per-fold picks a person
+copied in after 03.1.
+
     python workflows/dcai/make_configs.py \\
         --fragments-dir /dcai/projects/iu_0109/datasets/amsc/fragments \\
         --dataset-root  /dcai/projects/iu_0109/datasets/amsc \\
@@ -21,6 +28,7 @@ Stdlib only: it runs before any environment is active, like utils/config.py.
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -61,12 +69,19 @@ bias_suffixes_sweep: ["_05", "_06", "_07", "_08"]
 {bias_precision_line}{bias_patience_line}
 # Filled in by hand after 03.1 writes selected_bias_per_fold.tsv.
 fold_bias_suffix:
-  "0": ""
-  "1": ""
-  "2": ""
-  "3": ""
-  "4": ""
-"""
+{fold_bias_suffix}"""
+
+FOLDS = ["0", "1", "2", "3", "4"]
+
+
+def existing_fold_bias_suffix(path: Path) -> dict:
+    """The fold_bias_suffix entries an existing config has, or {}."""
+    if not path.exists():
+        return {}
+    block = re.search(r"^fold_bias_suffix:\n((?:[ \t]+.*\n?)*)", path.read_text(), re.M)
+    if not block:
+        return {}
+    return dict(re.findall(r'^[ \t]+"(\d+)":[ \t]*"([^"]*)"', block.group(1), re.M))
 
 
 def main(argv=None) -> int:
@@ -89,7 +104,14 @@ def main(argv=None) -> int:
         default="",
         help="bias_precision for the 03.0 sweep (bf16, highest); empty = chrombpnet's default",
     )
+    ap.add_argument(
+        "--rewrite",
+        default=None,
+        help="space-separated stems whose existing configs are rewritten; others are only "
+        "written when missing (default: rewrite all)",
+    )
     args = ap.parse_args(argv)
+    rewrite = None if args.rewrite is None else set(args.rewrite.split())
 
     shifts = json.loads(args.shifts.read_text())
     configs_dir = args.configs_dir or args.dataset_root / "chrombpnet" / "configs"
@@ -107,6 +129,10 @@ def main(argv=None) -> int:
         name = f"{args.prefix}{stem}"
         rec = shifts[stem]
         out = configs_dir / name / "config.yaml"
+        if out.exists() and rewrite is not None and stem not in rewrite:
+            print(out)
+            continue
+        picks = existing_fold_bias_suffix(out)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(
             TEMPLATE.format(
@@ -128,6 +154,7 @@ def main(argv=None) -> int:
                     if args.bias_precision
                     else ""
                 ),
+                fold_bias_suffix="".join(f'  "{f}": "{picks.get(f, "")}"\n' for f in FOLDS),
             )
         )
         print(out)

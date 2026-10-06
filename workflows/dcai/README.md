@@ -43,8 +43,8 @@ BOX_FIRST_N=10 BOX_STAGES=prep,bias BOX_BACKFILL=prep \
 | `BOX_BACKFILL` | `prep` | wave 2, the remaining datasets: `none`, `prep` or `prep,bias` |
 | `BOX_GPU_SLOTS_PER_GPU` | 2 | concurrent 03.0 trainings per GPU |
 | `BOX_MEM_FRACTION` | 0.85 | share of RAM wave 2 may plan to fill |
-| `BOX_BIAS_PRECISION` | unset (full precision) | `bias_precision` in every config: 03.0 sweep models in e.g. bf16, in their own `bias_model_<f>_bf16/` dirs |
-| `BOX_BIAS_PATIENCE` | unset (chrombpnet's 5) | `bias_patience` in every config: early-stopping patience of the 03.0 sweep models, in their own `_p<N>` dirs |
+| `BOX_BIAS_PRECISION` | unset (full precision) | `bias_precision` in wave 1's configs: 03.0 sweep models in e.g. bf16, in their own `bias_model_<f>_bf16/` dirs |
+| `BOX_BIAS_PATIENCE` | unset (chrombpnet's 5) | `bias_patience` in wave 1's configs: early-stopping patience of the 03.0 sweep models, in their own `_p<N>` dirs |
 | `BOX_GPU_STAGGER` | 15 | seconds between GPU workers' first tasks |
 | `BOX_CHECKS` | 1 | `0` skips `checks.sh` (run it once per setup, not every box) |
 | `BOX_MPS` | `off` | NVIDIA MPS for the GPU workers: `all`, or `half` (GPUs 0..n/2-1 with MPS, the rest without) to A/B it on the same tasks |
@@ -53,6 +53,12 @@ BOX_FIRST_N=10 BOX_STAGES=prep,bias BOX_BACKFILL=prep \
 03.1 runs at the end for every dataset whose sweep ran. It writes
 `selected_bias_per_fold.tsv`; copying the winners into the config's
 `fold_bias_suffix` is the pipeline's deliberate review point before 03.2/04.0.
+
+A box rewrites only wave 1's configs (`make_configs.py --rewrite`); every other
+dataset keeps its config, written only if missing. Its `bias_precision` /
+`bias_patience` name the directories its 03.0 models are in, so a later box
+with other sweep settings must not change them. A rewrite keeps the
+`fold_bias_suffix` already filled in.
 
 Each fragments file `<stem>.fragments.tsv.gz` under `$DATASET_ROOT/fragments` becomes
 dataset `amsc_<stem>`. Outputs:
