@@ -36,6 +36,7 @@
 #   BOX_BACKFILL         wave 2: "none", "prep" or "prep,bias" (default prep)
 #   BOX_GPU_SLOTS_PER_GPU  concurrent 03.0 trainings per GPU (default 2)
 #   BOX_MEM_FRACTION     share of RAM wave 2 may plan to fill (default 0.85)
+#   BOX_BIAS_PRECISION   written into every config as bias_precision (e.g. bf16)
 #
 # Output: under ${DATASET_ROOT}/chrombpnet/box/<job id>/: logs/<dataset>/<step>.log,
 #         logs/<dataset>/03.0.<index>.log, status.tsv (dataset, step, exit,
@@ -139,7 +140,8 @@ if [[ ! -s "${shifts}" ]]; then
 fi
 python3 "${REPO_ROOT}/workflows/dcai/make_configs.py" \
     --fragments-dir "${DATASET_ROOT}/fragments" --dataset-root "${DATASET_ROOT}" \
-    --shifts "${shifts}" --configs-dir "${configs_dir}" > "${BOX_DIR}/configs.txt" || exit 1
+    --shifts "${shifts}" --configs-dir "${configs_dir}" \
+    --bias-precision "${BOX_BIAS_PRECISION:-}" > "${BOX_DIR}/configs.txt" || exit 1
 
 # Wave 1: named stems, or the N largest libraries.
 if [[ -n "${BOX_FIRST:-}" ]]; then

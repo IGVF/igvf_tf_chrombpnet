@@ -58,7 +58,7 @@ folds: ["0", "1", "2", "3", "4"]
 
 bias_factors: ["0.5", "0.6", "0.7", "0.8"]
 bias_suffixes_sweep: ["_05", "_06", "_07", "_08"]
-
+{bias_precision_line}
 # Filled in by hand after 03.1 writes selected_bias_per_fold.tsv.
 fold_bias_suffix:
   "0": ""
@@ -79,6 +79,11 @@ def main(argv=None) -> int:
     ap.add_argument("--configs-dir", type=Path, default=None,
                     help="default: <dataset-root>/chrombpnet/configs")  # fmt: skip
     ap.add_argument("--prefix", default="amsc_", help="dataset name prefix")
+    ap.add_argument(
+        "--bias-precision",
+        default="",
+        help="bias_precision for the 03.0 sweep (bf16, highest); empty = chrombpnet's default",
+    )
     args = ap.parse_args(argv)
 
     shifts = json.loads(args.shifts.read_text())
@@ -106,6 +111,12 @@ def main(argv=None) -> int:
                 minus_shift=int(rec["minus_shift"]),
                 regions=args.dataset_root / "peaks" / name / f"{name}.narrowPeak.gz",
                 output_dir=args.dataset_root / "chrombpnet" / name,
+                bias_precision_line=(
+                    "# 03.0 sweep models in bf16 (own bias_model_<f>_bf16/ dirs); 04.0 stays full precision.\n"
+                    f"bias_precision: {args.bias_precision}\n"
+                    if args.bias_precision
+                    else ""
+                ),
             )
         )
         print(out)

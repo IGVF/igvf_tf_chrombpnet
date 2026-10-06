@@ -42,6 +42,8 @@ BOX_FIRST_N=10 BOX_STAGES=prep,bias BOX_BACKFILL=prep \
 | `BOX_BACKFILL` | `prep` | wave 2, the remaining datasets: `none`, `prep` or `prep,bias` |
 | `BOX_GPU_SLOTS_PER_GPU` | 2 | concurrent 03.0 trainings per GPU |
 | `BOX_MEM_FRACTION` | 0.85 | share of RAM wave 2 may plan to fill |
+| `BOX_BIAS_PRECISION` | unset (full precision) | `bias_precision` in every config: 03.0 sweep models in e.g. bf16, in their own `bias_model_<f>_bf16/` dirs |
+| `BIAS_FACTORS_FROM_SCAN` | 1 | `0` sweeps the config's factors (0.5–0.8) instead of 02.0's scan, which keeps all 40 on deep libraries |
 
 03.1 runs at the end for every dataset whose sweep ran. It writes
 `selected_bias_per_fold.tsv`; copying the winners into the config's

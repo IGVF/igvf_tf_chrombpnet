@@ -153,6 +153,12 @@ bias_suffixes_sweep: ["_05", "_06", "_07", "_08"]
 # BIAS_BATCH_SIZE in the environment overrides this for a one-off test.
 # bias_batch_size: 128
 
+# Precision of the 03.0 sweep models (default: chrombpnet's TF32). bf16 is ~2.5x
+# faster per step at ~0.005 lower counts Pearson -- fine for choosing a factor.
+# Its models go to bias_model<suffix>_bf16/, 03.1 selects among those, and
+# fold_bias_suffix then names them (e.g. _07_bf16). BIAS_PRECISION overrides.
+# bias_precision: bf16
+
 # Cap the full-model training (04.0) for a pipeline TEST. Unset = chrombpnet's
 # default of 50 epochs with early stopping, which takes hours. A capped model
 # is written where the real one would be (04.1/04.3 read it there), and the

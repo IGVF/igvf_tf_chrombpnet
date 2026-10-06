@@ -57,10 +57,16 @@ set -euo pipefail
 # winner from whichever single model happened to overlap the two lists.
 load_bias_sweep
 
-# Bias labels, from the suffixes ("_05" -> "05").
+# Bias labels, from the suffixes ("_05" -> "05"). With bias_precision /
+# BIAS_PRECISION set, 03.0 wrote its models under a `_<precision>` tag
+# (bias_model_05_bf16/), so select among those: the label becomes "05_bf16"
+# and the suffix to copy into fold_bias_suffix "_05_bf16".
+precision="${BIAS_PRECISION:-${bias_precision:-}}"
+precision_tag=""
+[[ -n "${precision}" && "${precision}" != "default" ]] && precision_tag="_${precision}"
 biases=()
 for s in "${bias_suffixes_sweep[@]}"; do
-    biases+=( "${s#_}" )
+    biases+=( "${s#_}${precision_tag}" )
 done
 # AFTER the loop, not before it. Sherlock's bash is 4.2, where ${arr[*]} on an
 # EMPTY array is an unbound-variable error under the `set -u` above -- so with

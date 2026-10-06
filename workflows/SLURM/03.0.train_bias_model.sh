@@ -168,7 +168,26 @@ if [[ -n "${batch_size}" ]]; then
     batch_args=( -bs "${batch_size}" )
     batch_tag="_bs${batch_size}"
 fi
-out_dir="${results_path}/bias_models/bias_model${suffix}${batch_tag}/${bias_dataset}_${peak_type}_fold_${fold}"
+# Training precision, the same way: chrombpnet's default (TF32 matmuls on GPUs
+# that have them) unless the config sets bias_precision or the environment
+# BIAS_PRECISION. bf16 is ~2.5x faster per step in the chrombpnet fork's own
+# validation, at a small accuracy cost (counts Pearson ~0.005 lower) -- fine
+# for picking a bias factor, which is all a sweep model is for. A bf16 model is
+# a different model, so it gets its own directory tag, `_bf16` after the
+# factor (and batch) suffix; 03.1 selects among the tagged models when the same
+# knob is set, and fold_bias_suffix then names them (e.g. _07_bf16).
+precision="${BIAS_PRECISION:-${bias_precision:-}}"
+precision_args=()
+precision_tag=""
+if [[ -n "${precision}" && "${precision}" != "default" ]]; then
+    case "${precision}" in
+        bf16|highest) ;;
+        *) echo "ERROR: bias precision must be default, highest or bf16, got '${precision}'" >&2; exit 1 ;;
+    esac
+    precision_args=( --precision "${precision}" )
+    precision_tag="_${precision}"
+fi
+out_dir="${results_path}/bias_models/bias_model${suffix}${batch_tag}${precision_tag}/${bias_dataset}_${peak_type}_fold_${fold}"
 model_file="${out_dir}/models/${file_prefix}_bias.h5"
 
 
@@ -192,7 +211,7 @@ metadata_outputs+=( "bias_model=${model_file}" )
 # model but fails to score it looks complete in the metadata.
 metrics_json="${out_dir}/evaluation/${file_prefix}_bias_metrics.json"
 metadata_outputs+=( "bias_metrics=${metrics_json}" )
-metadata_params+=( "fold=${fold}" "bias_factor=${bf}" "bias_suffix=${suffix}" "batch_size=${batch_size:-64}" )
+metadata_params+=( "fold=${fold}" "bias_factor=${bf}" "bias_suffix=${suffix}" "batch_size=${batch_size:-64}" "precision=${precision:-default}" )
 echo "[$(date)] [fold ${fold} bias=${bf}] Training bias model"
 echo "  output dir : ${out_dir}"
 
@@ -246,6 +265,7 @@ python "${src_dir}/chrombpnet_train.py" \
     -o "${out_dir}" \
     -fp "${file_prefix}" \
     ${batch_args[@]+"${batch_args[@]}"} \
+    ${precision_args[@]+"${precision_args[@]}"} \
     --device gpu
 _train_status=$?
 if [[ -s "${METADATA_RSS_FILE}" ]]; then
