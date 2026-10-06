@@ -13,6 +13,13 @@ Sharing the node: while 03.0 trainings are running, each GPU gets at most
 the trainings' loaders; once no training is left the limits rise to
 --gpu-slots-idle / --cpu-jobs-idle.
 
+Threads: every job runs under a CPU mask (taskset) -- 16 cores for 03.2,
+--modisco-threads for 03.3 -- because XLA sizes its thread pools to the cores a
+process may use: an unmasked JAX process holds ~750 threads on a 224-core node,
+masked to 16 it holds 75, and the box's trainings already hold ~445 each against
+a per-user limit of 32768 (ulimit -u, threads included). A job that cannot
+start (EAGAIN) goes back in the queue instead of stopping this.
+
 Keeping the box: the box's workers exit once the queue is empty and
 <box>/.chains_done exists. This removes that file at start, so the box stays up
 for the QC, and puts it back when every fold is done or failed and a grace
@@ -72,8 +79,34 @@ def targets(config: Path) -> list[dict]:
 
 
 def trainings_running() -> int:
-    r = subprocess.run(["pgrep", "-fc", "03.0.train_bias_model.sh"], capture_output=True, text=True)
+    try:
+        r = subprocess.run(
+            ["pgrep", "-fc", "03.0.train_bias_model.sh"], capture_output=True, text=True
+        )
+    except OSError:  # no thread to spare for pgrep: assume the trainings are still there
+        return 1
     return int(r.stdout.strip() or 0)
+
+
+ALLOWED = sorted(os.sched_getaffinity(0))
+
+
+def cpu_mask(offset: int, n: int) -> str:
+    return ",".join(str(ALLOWED[(offset + i) % len(ALLOWED)]) for i in range(n))
+
+
+def launch(script: str, mask: str, env: dict, log: Path):
+    """The step under a CPU mask, or None when no process can be created now."""
+    log.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(log, "w") as fh:
+            return subprocess.Popen(["taskset", "-c", mask, "bash", str(REPO / "workflows/SLURM" / script)],
+                                    cwd=REPO, env=env, stdout=fh, stderr=subprocess.STDOUT)  # fmt: skip
+    except OSError as e:
+        print(
+            f"[{time.strftime('%F %T')}] could not start {script}: {e}; retrying later", flush=True
+        )
+        return None
 
 
 def main(argv=None) -> int:
@@ -120,6 +153,7 @@ def main(argv=None) -> int:
 
     gpu_jobs, cpu_jobs = {}, {}  # Popen -> (target, gpu, t0) / (target, t0)
     waiting_cpu = []
+    n_started = 0
     while todo or gpu_jobs or cpu_jobs or waiting_cpu:
         busy = trainings_running() > 0
         # finished jobs
@@ -141,14 +175,20 @@ def main(argv=None) -> int:
                     )
         # start 03.3 runs
         while waiting_cpu and len(cpu_jobs) < (args.cpu_jobs_busy if busy else args.cpu_jobs_idle):
-            t = waiting_cpu.pop(0)
-            log = box / "logs" / t["name"] / f"03.3.{t['fold']}.log"
-            log.parent.mkdir(parents=True, exist_ok=True)
+            t = waiting_cpu[0]
             e = dict(env, DATASET_CONFIG=str(t["config"]), SLURM_ARRAY_TASK_ID=str(t["index"]),
                      SLURM_CPUS_PER_TASK=str(args.modisco_threads), CUDA_VISIBLE_DEVICES="")  # fmt: skip
-            with open(log, "w") as fh:
-                p = subprocess.Popen(["bash", str(REPO / "workflows/SLURM/03.3.modisco_selected_bias.sh")],
-                                     cwd=REPO, env=e, stdout=fh, stderr=subprocess.STDOUT)  # fmt: skip
+            mask = cpu_mask(args.modisco_threads * n_started, args.modisco_threads)
+            p = launch(
+                "03.3.modisco_selected_bias.sh",
+                mask,
+                e,
+                box / "logs" / t["name"] / f"03.3.{t['fold']}.log",
+            )
+            if p is None:
+                break
+            waiting_cpu.pop(0)
+            n_started += 1
             cpu_jobs[p] = (t, time.time())
         # start 03.2 runs on the least-loaded GPU
         limit = args.gpu_slots_busy if busy else args.gpu_slots_idle
@@ -159,15 +199,15 @@ def main(argv=None) -> int:
             gpu = min(load, key=load.get)
             if load[gpu] >= limit:
                 break
-            todo.remove(t)
-            log = box / "logs" / t["name"] / f"03.2.{t['fold']}.log"
-            log.parent.mkdir(parents=True, exist_ok=True)
             e = dict(env, DATASET_CONFIG=str(t["config"]), SLURM_ARRAY_TASK_ID=str(t["index"]),
                      SLURM_CPUS_PER_TASK="8", OMP_NUM_THREADS="8", NUMBA_NUM_THREADS="8",
                      CUDA_VISIBLE_DEVICES=str(gpu))  # fmt: skip
-            with open(log, "w") as fh:
-                p = subprocess.Popen(["bash", str(REPO / "workflows/SLURM/03.2.qc_selected_bias.sh")],
-                                     cwd=REPO, env=e, stdout=fh, stderr=subprocess.STDOUT)  # fmt: skip
+            p = launch("03.2.qc_selected_bias.sh", cpu_mask(16 * n_started, 16), e,
+                       box / "logs" / t["name"] / f"03.2.{t['fold']}.log")  # fmt: skip
+            if p is None:
+                break
+            todo.remove(t)
+            n_started += 1
             gpu_jobs[p] = (t, gpu, time.time())
         # a model that can no longer appear: its 03.0 queue is empty and nothing trains
         if todo and not busy and not (box / "gpu_queue.tsv").stat().st_size and not gpu_jobs:

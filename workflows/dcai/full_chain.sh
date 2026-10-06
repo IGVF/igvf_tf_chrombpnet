@@ -21,6 +21,15 @@
 # .chains_done back if no other .hold* file is left and bias_qc_box.py is not
 # running (that one releases the box itself when it finishes).
 #
+# Threads: every step runs under a CPU mask (taskset) of as many cores as its
+#   threads -- 16 for a GPU step. XLA sizes its thread pools to the cores a
+#   process may use, and on a 224-core node one unmasked JAX process holds ~750
+#   threads; with the box's 40 trainings at ~445 each, five unmasked 04.0 runs
+#   hit the per-user limit (ulimit -u 32768, threads included) and died
+#   creating threads (EAGAIN). Masked to 16 cores the same process holds 75.
+#   The limit is not raised on purpose: the box's own trainings keep it, so
+#   going past it here would make THEIR next start fail instead.
+#
 # Steps skip finished outputs, so a rerun resumes.
 #
 # Input:  $1 = the dataset's config.yaml; $2 = the GPUs for its folds, in fold
@@ -68,14 +77,25 @@ release() {
 }
 trap release EXIT
 
-# step <script> <array index> <log> <threads> <gpu or ""> -- one step, recorded.
+# CPUs this step may use, in order; slices of them become each step's mask.
+mapfile -t allowed < <(python3 -c 'import os; print("\n".join(map(str, sorted(os.sched_getaffinity(0)))))')
+# cpu_slice <offset> <n> -- n of the allowed CPUs from offset (wrapping), comma-separated.
+cpu_slice() {
+    local i out=()
+    for (( i = 0; i < $2; i++ )); do out+=( "${allowed[$(( ($1 + i) % ${#allowed[@]} ))]}" ); done
+    local IFS=,
+    echo "${out[*]}"
+}
+
+# step <script> <array index> <log> <threads> <gpu or ""> <cpu offset> -- one step, recorded.
 step() {
-    local script="$1" idx="$2" log="$3" threads="$4" gpu="$5" t0 rc
+    local script="$1" idx="$2" log="$3" threads="$4" gpu="$5" cpus t0 rc
+    cpus="$(cpu_slice "$6" "$(( threads > 16 ? threads : 16 ))")"
     t0="$(date +%s)"
     DATASET_CONFIG="${config}" SLURM_ARRAY_TASK_ID="${idx}" SLURM_CPUS_PER_TASK="${threads}" \
         CUDA_VISIBLE_DEVICES="${gpu}" OMP_NUM_THREADS="${threads}" NUMBA_NUM_THREADS="${threads}" \
         MKL_NUM_THREADS="${threads}" OPENBLAS_NUM_THREADS="${threads}" \
-        bash "${steps_dir}/${script}.sh" > "${log_dir}/${log}.log" 2>&1
+        taskset -c "${cpus}" bash "${steps_dir}/${script}.sh" > "${log_dir}/${log}.log" 2>&1
     rc=$?
     printf '%s\t%s\t%d\t%d\n' "${name}" "${log}" "${rc}" "$(( $(date +%s) - t0 ))" >> "${record}"
     echo "[$(date)] ${name} ${log}: exit ${rc}"
@@ -85,12 +105,13 @@ step() {
 # Per fold: 04.0 -> 05.0 -> 04.4 on its GPU, 04.5 after 04.4.
 fold_chain() {
     local i="$1" f="${folds[$1]}" g="${gpus[$1]}"
-    step 04.0.train_full_model "${i}" "04.0.${f}" 8 "${g}" || return 1
+    local o=$(( 16 * $1 ))
+    step 04.0.train_full_model "${i}" "04.0.${f}" 8 "${g}" "${o}" || return 1
     touch "${scratch}/${name}.04.0.${f}.ok"
-    step 05.0.get_contrib_scores "${i}" "05.0.${f}" 8 "${g}" || return 1
+    step 05.0.get_contrib_scores "${i}" "05.0.${f}" 8 "${g}" "${o}" || return 1
     touch "${scratch}/${name}.05.0.${f}.ok"
-    step 04.4.qc_full_model_interpret "${i}" "04.4.${f}" 8 "${g}" \
-        && step 04.5.modisco_full_model "${i}" "04.5.${f}" "${CHAIN_MODISCO_THREADS:-32}" ""
+    step 04.4.qc_full_model_interpret "${i}" "04.4.${f}" 8 "${g}" "${o}" \
+        && step 04.5.modisco_full_model "${i}" "04.5.${f}" "${CHAIN_MODISCO_THREADS:-32}" "" "$(( 96 + 32 * $1 ))"
 }
 pids=()
 for i in "${!folds[@]}"; do
@@ -104,13 +125,13 @@ fold_chains_running() { local p; for p in "${pids[@]}"; do kill -0 "${p}" 2> /de
 
 until all_ok 04.0 || ! fold_chains_running; do sleep 60; done
 if all_ok 04.0; then
-    step 04.1.qc_run_full_model 0 04.1 8 "" &
-    step 04.3.generate_predictions 0 04.3 8 "${gpus[0]}" &
+    step 04.1.qc_run_full_model 0 04.1 8 "" 80 &
+    step 04.3.generate_predictions 0 04.3 8 "${gpus[0]}" 96 &
 fi
 until all_ok 05.0 || ! fold_chains_running; do sleep 60; done
 if all_ok 05.0; then
-    step 06.0.average_contrib_scores 0 06.0 16 "" \
-        && { step 07.0.contribs_to_bigwig 0 07.0 16 "" & step 08.0.run_modisco 0 08.0 "${CHAIN_08_THREADS:-64}" ""; wait; }
+    step 06.0.average_contrib_scores 0 06.0 16 "" 0 \
+        && { step 07.0.contribs_to_bigwig 0 07.0 16 "" 16 & step 08.0.run_modisco 0 08.0 "${CHAIN_08_THREADS:-64}" "" 32; wait; }
 else
     echo "[$(date)] ${name}: a fold did not reach 05.0; 06.0-08.0 not run" >&2
 fi
