@@ -18,6 +18,11 @@ whose sweep-fold models have all finished it:
   3. records the pick, its status and whether it sits at an end of the sweep
      in --record.
 
+--max-factor caps the pick: only factors up to it are candidates, because
+03.1's score cannot see a bias model that has learned TF motifs. On
+amsc_village4_d14_LG_1 the folds where 03.1 picked 0.8 learned NFI and AP-1 in
+the counts head while the 0.7 folds stayed Tn5/DNase (03.3's motif QC).
+
 A sweep-fold task that failed (a non-zero exit in the box's status.tsv) counts
 as finished: the winner is chosen from the models that exist, and the record
 says how many that was. 03.1 still runs at the end and fold_bias_suffix stays
@@ -71,6 +76,7 @@ def sweep_of(config: Path) -> dict:
         "peak_type": yaml_scalar(text, "peak_type") or "all",
         "folds": yaml_list(text, "folds"),
         "labels": [s.lstrip("_") + tag for s in yaml_list(text, "bias_suffixes_sweep")],
+        "factors": [float(f) for f in yaml_list(text, "bias_factors")],
     }
 
 
@@ -109,6 +115,9 @@ def main(argv=None) -> int:
     ap.add_argument("--record", type=Path, required=True, help="TSV of the picks, appended")
     ap.add_argument("--sweep-fold", default="0")
     ap.add_argument("--interval", type=int, default=120)
+    ap.add_argument(
+        "--max-factor", type=float, default=None, help="pick only among factors up to this one"
+    )
     log.add_logging_args(ap)
     args = ap.parse_args(argv)
     log.setup_from_args(args)
@@ -118,7 +127,9 @@ def main(argv=None) -> int:
     if args.record.exists():
         done = {line.split("\t")[0] for line in args.record.read_text().splitlines()[1:]}
     else:
-        args.record.write_text("dataset\tsweep_fold\twinner\tstatus\tedge\tmodels\ttime\n")
+        args.record.write_text(
+            "dataset\tsweep_fold\twinner\tstatus\tedge\tmodels\tmax_factor\ttime\n"
+        )
     pending = {sweep_of(c)["name"]: c for c in args.configs} if args.configs else {}
     pending = {n: c for n, c in pending.items() if n not in done}
     logger.info("%d dataset(s) waiting for their fold-%s sweep", len(pending), args.sweep_fold)
@@ -131,7 +142,9 @@ def main(argv=None) -> int:
             sweep_idx = {fold_idx * n + j for j in range(n)}
             if not sweep_idx <= finished_indices(status, name):
                 continue
-            df = sbm.load_metrics(s["labels"], name, s["peak_type"], [args.sweep_fold],
+            allowed = [lab for lab, f in zip(s["labels"], s["factors"])
+                       if args.max_factor is None or f <= args.max_factor + 1e-9]  # fmt: skip
+            df = sbm.load_metrics(allowed, name, s["peak_type"], [args.sweep_fold],
                                   bias_models_dir=s["output_dir"] / "bias_models")  # fmt: skip
             if df.empty:
                 logger.error(
@@ -142,9 +155,7 @@ def main(argv=None) -> int:
                 df["status"] = df.apply(sbm.classify_row, axis=1)
                 pick = sbm.select_best(df)
                 row_status = df.set_index("bias").loc[pick, "status"]
-                edge = (
-                    "low" if pick == s["labels"][0] else "high" if pick == s["labels"][-1] else ""
-                )
+                edge = "low" if pick == allowed[0] else "high" if pick == allowed[-1] else ""
                 j = s["labels"].index(pick)
                 lines = [
                     f"{config}\t{k * n + j}\n"
@@ -155,8 +166,9 @@ def main(argv=None) -> int:
                 logger.info("%s: fold %s picks %s (%s%s); queued %d task(s)", name, args.sweep_fold, pick,
                             row_status, f", {edge} edge" if edge else "", len(lines))  # fmt: skip
             with open(args.record, "a") as rec:
-                rec.write(f"{name}\t{args.sweep_fold}\t{pick}\t{row_status}\t{edge}\t{len(df)}/{n}\t"
-                          f"{time.strftime('%Y-%m-%dT%H:%M:%S')}\n")  # fmt: skip
+                cap = "" if args.max_factor is None else args.max_factor
+                rec.write(f"{name}\t{args.sweep_fold}\t{pick}\t{row_status}\t{edge}\t{len(df)}/{len(allowed)}\t"
+                          f"{cap}\t{time.strftime('%Y-%m-%dT%H:%M:%S')}\n")  # fmt: skip
             del pending[name]
         if pending:
             time.sleep(args.interval)
