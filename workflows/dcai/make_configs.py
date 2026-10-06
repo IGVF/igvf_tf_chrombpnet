@@ -64,14 +64,19 @@ output_dir: "{output_dir}"
 peak_type: all
 folds: ["0", "1", "2", "3", "4"]
 
-bias_factors: ["0.5", "0.6", "0.7", "0.8"]
-bias_suffixes_sweep: ["_05", "_06", "_07", "_08"]
+bias_factors: [{bias_factors}]
+bias_suffixes_sweep: [{bias_suffixes}]
 {bias_precision_line}{bias_patience_line}
 # Filled in by hand after 03.1 writes selected_bias_per_fold.tsv.
 fold_bias_suffix:
 {fold_bias_suffix}"""
 
 FOLDS = ["0", "1", "2", "3", "4"]
+
+
+def suffix_of(factor: str) -> str:
+    """chrombpnet's directory suffix for a bias factor: 0.5 -> _05, 0.65 -> _065."""
+    return "_" + factor.replace(".", "")
 
 
 def existing_fold_bias_suffix(path: Path) -> dict:
@@ -105,6 +110,12 @@ def main(argv=None) -> int:
         help="bias_precision for the 03.0 sweep (bf16, highest); empty = chrombpnet's default",
     )
     ap.add_argument(
+        "--bias-factors",
+        default="0.5 0.6 0.7 0.8",
+        help="space-separated bias threshold factors for the 03.0 sweep, in sweep order "
+        "(03.0's task index is fold * n_factors + factor)",
+    )
+    ap.add_argument(
         "--rewrite",
         default=None,
         help="space-separated stems whose existing configs are rewritten; others are only "
@@ -112,6 +123,7 @@ def main(argv=None) -> int:
     )
     args = ap.parse_args(argv)
     rewrite = None if args.rewrite is None else set(args.rewrite.split())
+    factors = args.bias_factors.split()
 
     shifts = json.loads(args.shifts.read_text())
     configs_dir = args.configs_dir or args.dataset_root / "chrombpnet" / "configs"
@@ -154,6 +166,8 @@ def main(argv=None) -> int:
                     if args.bias_precision
                     else ""
                 ),
+                bias_factors=", ".join(f'"{f}"' for f in factors),
+                bias_suffixes=", ".join(f'"{suffix_of(f)}"' for f in factors),
                 fold_bias_suffix="".join(f'  "{f}": "{picks.get(f, "")}"\n' for f in FOLDS),
             )
         )
