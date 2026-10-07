@@ -189,6 +189,11 @@ bias_suffixes_sweep: ["_05", "_06", "_07", "_08"]
 # separated) overrides.
 # contrib_heads: ["counts"]
 
+# 08.0's TF-MoDISco seqlet budget per metacluster on the fold-averaged scores
+# (default 500000). Runtime grows faster than linearly with it; a lower budget
+# keeps fewer instances of each pattern. MODISCO_MAX_SEQLETS overrides.
+# modisco_max_seqlets: 250000
+
 # Motif QC (03.3 bias model, 04.5 full model; src/motif_qc.py; both heads).
 # The central window, in bp, TF-MoDISco runs over (default 400, its own
 # default; chrombpnet's pipeline used 500), and seqlets per metacluster

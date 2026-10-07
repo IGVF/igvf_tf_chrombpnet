@@ -34,8 +34,11 @@
 #   1.x ran, fixed seqlet core 20 / flank 5 / final flank 0 and used trim 20 /
 #   initial flank 5; 2.5.2 defaults to -t 30 -g 10, which makes every pattern
 #   50 bp wide. These are the values chrombpnet 2.x's own
-#   evaluation/modisco/run.py passes. -n 500000 -w 500 is this step's full
-#   seqlet budget (the per-fold QC in 03.3/04.5 uses 5000).
+#   evaluation/modisco/run.py passes. -w 500, and -n 500000 by default: the
+#   seqlet budget per metacluster, modisco_max_seqlets in config.yaml or
+#   MODISCO_MAX_SEQLETS (wins). Runtime grows faster than linearly with it; a
+#   lower budget keeps fewer instances of each pattern, so rare patterns are
+#   the first to go (the per-fold QC in 03.3/04.5 uses 5000).
 #
 # Environment: this repo's `modisco` pixi environment, not chrombpnet's. It is
 #   2.5.2 from NNFC-GMD/tfmodisco's parallel-leiden-seeds branch, which adds
@@ -136,7 +139,8 @@ score_types=( "${contrib_heads[@]}" )  # see the header; contrib_heads, config.s
 
 # TF-MoDISco settings -- see the header. The pattern flags reproduce what
 # chrombpnet 1.x's modisco-lite 2.0.7 did; 2.5.2's defaults differ.
-modisco_max_seqlets=500000
+modisco_max_seqlets="${MODISCO_MAX_SEQLETS:-${modisco_max_seqlets:-500000}}"
+[[ "${modisco_max_seqlets}" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: modisco_max_seqlets must be a positive integer, got '${modisco_max_seqlets}'" >&2; exit 1; }
 modisco_window=500
 modisco_pattern_args=( -l 2 -z 20 -f 5 -t 20 -g 5 -j 0 )
 # One process per -l restart; the clustering does not depend on it (see the header).

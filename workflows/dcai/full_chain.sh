@@ -21,6 +21,14 @@
 # .chains_done back if no other .hold* file is left and bias_qc_box.py is not
 # running (that one releases the box itself when it finishes).
 #
+# GPUs: each GPU step (04.0, 05.0, 04.4, 04.3) runs on the GPU with the fewest
+#   such steps at the moment it starts, not on a fixed GPU per fold: chains of
+#   different lengths left one GPU idle while others ran two (box 517917). The
+#   pick is made under a lock, and the step holds a claim file in the box's
+#   scratch while it runs; GPU steps without a claim (started by an older
+#   full_chain.sh, or by hand) are counted from their CUDA_VISIBLE_DEVICES. The
+#   GPU list argument is still accepted; it no longer pins anything.
+#
 # Threads: every step runs under a CPU mask (taskset) of as many cores as its
 #   threads -- 16 for a GPU step. XLA sizes its thread pools to the cores a
 #   process may use, and on a 224-core node one unmasked JAX process holds ~750
@@ -87,16 +95,53 @@ cpu_slice() {
     echo "${out[*]}"
 }
 
+claims="${scratch}/gpu_claims"
+mkdir -p "${claims}"
+n_gpus_node="$(nvidia-smi -L 2>/dev/null | wc -l)"
+gpu_steps_re='SLURM/(03\.0\.train_bias_model|03\.2\.qc_selected_bias|04\.0\.train_full_model|04\.3\.generate_predictions|04\.4\.qc_full_model_interpret|05\.0\.get_contrib_scores)\.sh'
+# claim_gpu -- under the lock, the least-loaded GPU; prints the claim file made for it.
+claim_gpu() {
+    (
+        flock 8
+        local g p env_g best=0 file
+        local -a load=()
+        for (( g = 0; g < n_gpus_node; g++ )); do load[g]=0; done
+        for file in "${claims}"/*.claim; do
+            [[ -e "${file}" ]] || continue
+            g="${file##*/}"; g="${g%%.*}"
+            load[g]=$(( load[g] + 1 ))
+        done
+        for p in $(pgrep -f "${gpu_steps_re}"); do
+            tr '\0' '\n' < "/proc/${p}/environ" 2>/dev/null | grep -qx 'GPU_CLAIM=1' && continue
+            env_g="$(tr '\0' '\n' < "/proc/${p}/environ" 2>/dev/null | sed -n 's/^CUDA_VISIBLE_DEVICES=//p')"
+            [[ "${env_g}" =~ ^[0-9]+$ ]] && (( env_g < n_gpus_node )) && load[env_g]=$(( load[env_g] + 1 ))
+        done
+        for (( g = 1; g < n_gpus_node; g++ )); do
+            (( load[g] < load[best] )) && best="${g}"
+        done
+        file="${claims}/${best}.${BASHPID}.${RANDOM}.claim"
+        touch "${file}"
+        echo "${file}"
+    ) 8> "${claims}/.lock"
+}
+
 # step <script> <array index> <log> <threads> <gpu or ""> <cpu offset> -- one step, recorded.
+# A non-empty GPU argument means "this step needs a GPU"; which one is claim_gpu's choice.
 step() {
-    local script="$1" idx="$2" log="$3" threads="$4" gpu="$5" cpus t0 rc
+    local script="$1" idx="$2" log="$3" threads="$4" gpu="$5" cpus t0 rc claim=""
     cpus="$(cpu_slice "$6" "$(( threads > 16 ? threads : 16 ))")"
+    if [[ -n "${gpu}" && "${n_gpus_node}" -gt 0 ]]; then
+        claim="$(claim_gpu)"
+        gpu="${claim##*/}"; gpu="${gpu%%.*}"
+    fi
     t0="$(date +%s)"
+    echo "[$(date)] ${name} ${log}: start${claim:+ on GPU ${gpu}}"
     DATASET_CONFIG="${config}" SLURM_ARRAY_TASK_ID="${idx}" SLURM_CPUS_PER_TASK="${threads}" \
         CUDA_VISIBLE_DEVICES="${gpu}" OMP_NUM_THREADS="${threads}" NUMBA_NUM_THREADS="${threads}" \
-        MKL_NUM_THREADS="${threads}" OPENBLAS_NUM_THREADS="${threads}" \
+        MKL_NUM_THREADS="${threads}" OPENBLAS_NUM_THREADS="${threads}" GPU_CLAIM="${claim:+1}" \
         taskset -c "${cpus}" bash "${steps_dir}/${script}.sh" > "${log_dir}/${log}.log" 2>&1
     rc=$?
+    [[ -n "${claim}" ]] && rm -f "${claim}"
     printf '%s\t%s\t%d\t%d\n' "${name}" "${log}" "${rc}" "$(( $(date +%s) - t0 ))" >> "${record}"
     echo "[$(date)] ${name} ${log}: exit ${rc}"
     return "${rc}"
