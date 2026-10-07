@@ -10,8 +10,8 @@
 #SBATCH --error=%x_%j.log
 
 # 05.0.get_contrib_scores.sh
-# Purpose: DeepSHAP contribution scores for BOTH heads (counts and profile) on
-#          all of a dataset's filtered peaks, with each fold's bias-corrected
+# Purpose: DeepSHAP contribution scores for the heads in contrib_heads (both by
+#          default; config.sh) on all of a dataset's filtered peaks, with each fold's bias-corrected
 #          chrombpnet_nobias model: `chrombpnet contribs_bw` from chrombpnet
 #          2.x. One SLURM array job per fold; each job processes all datasets.
 #          These are the analysis-grade scores 06.0 averages across folds
@@ -29,10 +29,15 @@
 #   node where JAX sees no GPU, DeepSHAP on every peak would run on the CPU
 #   until the time limit. require_gpu stops the job before that.
 #
-# Skip rule: a dataset is skipped when both score h5s AND
-#   interpretation.profile_scores.bw exist. contribs_bw writes, in order:
-#   interpret.args.json, interpreted_regions.bed, the counts and profile h5s,
-#   counts_scores.bw, profile_scores.bw -- so that bigwig is the last file.
+# Heads: contrib_heads (config list, or CONTRIB_HEADS) goes to contribs_bw as
+#   -pc. ["counts"] halves this step -- on the AMSC libraries' ~290k peaks it
+#   took 5.4 h a fold with both heads, two runs per H100 -- and 09.0/10.0 read
+#   the counts scores only; the profile scores are for reading.
+#
+# Skip rule: a dataset is skipped when the h5 of every head asked for AND the
+#   last head's bigwig exist. contribs_bw writes, in order: interpret.args.json,
+#   interpreted_regions.bed, the h5s, counts_scores.bw, profile_scores.bw -- so
+#   the last bigwig is profile's, or counts' when only counts is asked for.
 #   The h5s are written as *.partial and renamed on completion, so a killed job
 #   never leaves one under its final name. The bigwigs are written in place: a
 #   job killed while writing profile_scores.bw leaves a truncated file that
@@ -106,7 +111,7 @@ for _ds in "${datasets[@]}"; do
     _prefix="${_dir}/interpretation/interpretation"
     _peaks="${peaks_dir}/${_ds}_${peak_type}_peaks_no_blacklist.narrowPeak"
     metadata_inputs+=( "model=${_dir}/models/chrombpnet_nobias.h5" "peaks=${_peaks}" )
-    for _head in counts profile; do
+    for _head in "${contrib_heads[@]}"; do
         metadata_outputs+=( "contributions=${_prefix}.${_head}_scores.h5" "contributions=${_prefix}.${_head}_scores.bw" )
     done
     metadata_outputs+=( "peaks=${_prefix}.interpreted_regions.bed" "interpretation_settings=${_prefix}.interpret.args.json" )
@@ -126,19 +131,28 @@ activate_env "${chrombpnet_env}"
 gpu_env
 require_gpu jax
 
-echo "[$(date)] Fold ${fold}: DeepSHAP (counts + profile, --shap-seed ${shap_seed}) for datasets [${datasets[*]}]"
+metadata_params+=( "heads=${contrib_heads[*]}" )
+# contribs_bw writes the counts files, then the profile ones: the last bigwig of
+# the heads asked for is the completion marker.
+last_head="counts"
+[[ " ${contrib_heads[*]} " == *" profile "* ]] && last_head="profile"
+echo "[$(date)] Fold ${fold}: DeepSHAP (${contrib_heads[*]}, --shap-seed ${shap_seed}) for datasets [${datasets[*]}]"
 for dataset in "${datasets[@]}"; do
     model_file="${full_model_dir}/${dataset}_${peak_type}_fold_${fold}/models/chrombpnet_nobias.h5"
     interp_dir="${full_model_dir}/${dataset}_${peak_type}_fold_${fold}/interpretation"
     peaks_file="${peaks_dir}/${dataset}_${peak_type}_peaks_no_blacklist.narrowPeak"
     prefix="${interp_dir}/interpretation"
-    last_output="${prefix}.profile_scores.bw"   # the last file contribs_bw writes
+    last_output="${prefix}.${last_head}_scores.bw"   # the last file contribs_bw writes
 
     echo "[$(date)] [${dataset} fold ${fold}] Computing contribution scores"
     echo "  model : ${model_file}"
     echo "  output: ${interp_dir}/"
 
-    if [[ -f "${prefix}.counts_scores.h5" && -f "${prefix}.profile_scores.h5" && -f "${last_output}" ]]; then
+    _done=1
+    for _head in "${contrib_heads[@]}"; do
+        [[ -f "${prefix}.${_head}_scores.h5" ]] || _done=0
+    done
+    if (( _done )) && [[ -f "${last_output}" ]]; then
         echo "  Already done, skipping."
         continue
     fi
@@ -151,6 +165,7 @@ for dataset in "${datasets[@]}"; do
         -g "${genome_fa}" \
         -c "${chrom_sizes}" \
         -op "${prefix}" \
+        -pc "${contrib_heads[@]}" \
         --shap-seed "${shap_seed}"
     _rc=$?
     # No `set -e` in this step: guard the call and its last output explicitly,

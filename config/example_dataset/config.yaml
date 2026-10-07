@@ -183,6 +183,12 @@ bias_suffixes_sweep: ["_05", "_06", "_07", "_08"]
 # full_model_optimizer: muon
 # full_model_patience: 3
 
+# Heads 05.0 scores (DeepSHAP on every peak) and 06.0-08.0 average, convert
+# and cluster. Unset = both. 09.0 and 10.0 read counts only, so ["counts"]
+# halves 05.0, the longest GPU step; counts is required. CONTRIB_HEADS (space-
+# separated) overrides.
+# contrib_heads: ["counts"]
+
 # Motif QC (03.3 bias model, 04.5 full model; src/motif_qc.py; both heads).
 # The central window, in bp, TF-MoDISco runs over (default 400, its own
 # default; chrombpnet's pipeline used 500), and seqlets per metacluster

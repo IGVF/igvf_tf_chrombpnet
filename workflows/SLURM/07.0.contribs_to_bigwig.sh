@@ -14,7 +14,7 @@
 #          per dataset. src/contribs_to_bigwig.py uses chrombpnet's own
 #          bigwig_helper, so it runs in the chrombpnet 2.x environment.
 #
-# score_types: both heads, mirroring 06.0. contribs_to_bigwig.py skips a head
+# score_types: contrib_heads (config.sh), mirroring 06.0. contribs_to_bigwig.py skips a head
 #   whose bigwig already exists, so a rerun only fills in what is missing.
 #
 # Regions: interpretation.interpreted_regions.bed from fold ${folds[0]} (the
@@ -64,7 +64,7 @@ source "${REPO_ROOT}/lib/bash/config.sh" || exit 1
 dataset="${datasets[${SLURM_ARRAY_TASK_ID}]}"
 [[ -z "${dataset}" ]] && { echo "No dataset at array index ${SLURM_ARRAY_TASK_ID}, exiting."; exit 0; }
 
-score_types=("counts" "profile")  # see the header
+score_types=( "${contrib_heads[@]}" )  # see the header; contrib_heads, config.sh
 
 
 metadata_start "07.0.contribs_to_bigwig"

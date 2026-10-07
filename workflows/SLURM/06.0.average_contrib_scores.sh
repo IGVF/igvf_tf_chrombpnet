@@ -20,7 +20,8 @@
 #      05.0 also gives each fold its own DeepSHAP reference seed, so the
 #      average smooths over reference noise too.
 #
-# score_types: both heads. 09.0 and 10.0 consume the counts average only;
+# score_types: contrib_heads (config.sh), both heads by default -- whatever
+#   05.0 scored. 09.0 and 10.0 consume the counts average only;
 #   profile feeds 07.0's profile bigwig and 08.0's profile TF-MoDISco. (Counts
 #   used to be left out here because it had already been averaged in the 1.x
 #   results tree; a chrombpnet 2.x results tree starts empty.)
@@ -69,7 +70,7 @@ source "${REPO_ROOT}/lib/bash/config.sh" || exit 1
 dataset="${datasets[${SLURM_ARRAY_TASK_ID}]}"
 [[ -z "${dataset}" ]] && { echo "No dataset at array index ${SLURM_ARRAY_TASK_ID}, exiting."; exit 0; }
 
-score_types=("counts" "profile")  # see the header
+score_types=( "${contrib_heads[@]}" )  # see the header; contrib_heads, config.sh
 
 out_dir="${averaged_dir}/${dataset}"
 mkdir -p "${out_dir}" "${log_dir}"

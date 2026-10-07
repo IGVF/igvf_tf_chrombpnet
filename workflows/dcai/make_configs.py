@@ -66,7 +66,7 @@ folds: ["0", "1", "2", "3", "4"]
 
 bias_factors: [{bias_factors}]
 bias_suffixes_sweep: [{bias_suffixes}]
-{bias_precision_line}{bias_patience_line}
+{bias_precision_line}{bias_patience_line}{contrib_heads_line}
 # Filled in by hand after 03.1 writes selected_bias_per_fold.tsv.
 fold_bias_suffix:
 {fold_bias_suffix}"""
@@ -108,6 +108,11 @@ def main(argv=None) -> int:
         "--bias-precision",
         default="",
         help="bias_precision for the 03.0 sweep (bf16, highest); empty = chrombpnet's default",
+    )
+    ap.add_argument(
+        "--contrib-heads",
+        default="",
+        help="space-separated heads for 05.0-08.0 (e.g. counts); empty = both",
     )
     ap.add_argument(
         "--bias-factors",
@@ -164,6 +169,12 @@ def main(argv=None) -> int:
                     "# 03.0 sweep models in bf16 (own bias_model_<f>_bf16/ dirs); 04.0 stays full precision.\n"
                     f"bias_precision: {args.bias_precision}\n"
                     if args.bias_precision
+                    else ""
+                ),
+                contrib_heads_line=(
+                    "# Heads 05.0 scores and 06.0-08.0 use; 09.0/10.0 read counts only.\n"
+                    f"contrib_heads: [{', '.join(repr(h).replace(chr(39), chr(34)) for h in args.contrib_heads.split())}]\n"
+                    if args.contrib_heads
                     else ""
                 ),
                 bias_factors=", ".join(f'"{f}"' for f in factors),

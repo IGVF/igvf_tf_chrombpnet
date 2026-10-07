@@ -171,6 +171,29 @@ if [[ -n "${full_model_patience}" && "${full_model_patience}" != "5" ]]; then
     full_model_tag+="_p${full_model_patience}"
 fi
 full_model_dir="${results_path}/full_models${full_model_tag}"
+# Which heads 05.0 scores and 06.0-08.0 average, convert and cluster: config
+# contrib_heads (a list) or CONTRIB_HEADS (space-separated, wins). Both by
+# default; 09.0 and 10.0 read the counts head only, so ["counts"] halves 05.0
+# (DeepSHAP on every peak, the longest GPU step) and drops the profile half of
+# 06.0-08.0.
+if [[ -n "${CONTRIB_HEADS:-}" ]]; then
+    read -r -a contrib_heads <<< "${CONTRIB_HEADS}"
+fi
+contrib_heads=( ${contrib_heads[@]+"${contrib_heads[@]}"} )
+if [[ ${#contrib_heads[@]} -eq 0 ]]; then
+    contrib_heads=( counts profile )
+fi
+for _h in "${contrib_heads[@]}"; do
+    if [[ "${_h}" != "counts" && "${_h}" != "profile" ]]; then
+        echo "ERROR: contrib_heads may only list counts and profile, got '${_h}'" >&2
+        return 1
+    fi
+done
+unset _h
+if [[ " ${contrib_heads[*]} " != *" counts "* ]]; then
+    echo "ERROR: contrib_heads must include counts: 09.0 and 10.0 read the counts scores" >&2
+    return 1
+fi
 full_model_dir_selected="${full_model_dir}" # alias kept for script compatibility
 predictions_dir="${results_path}/predictions"
 averaged_dir="${results_path}/contrib_scores"

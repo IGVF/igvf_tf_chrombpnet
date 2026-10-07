@@ -519,14 +519,17 @@ say which of the two kinds of verification a change actually got.
   before the swap. `d0` (the molab test dataset) still appears in the usage
   examples of `predict_and_avg.py`, `run_full_model_qc.py` and `motif_qc.py`.
 
-- **Steps 06/07/08 run both heads; steps 09/10 consume `counts` only.**
-  `score_types=("counts" "profile")` in 06, 07 and 08. Counts used to be left out
+- **Steps 06/07/08 run both heads by default; steps 09/10 consume `counts` only.**
+  `score_types` in 06, 07 and 08 is `contrib_heads` (config list, or
+  `CONTRIB_HEADS`; `config.sh`), which also sets 05.0's `contribs_bw -pc`;
+  `["counts"]` halves 05.0, the longest GPU step (5.4 h a fold with both heads on
+  ~290k AMSC peaks), and `config.sh` refuses a list without counts. Counts used to be left out
   because the 1.x results tree already had it, but a 2.x results tree starts
   empty, and counts is the head downstream needs: `09.0.cross_dataset_compendium.sh`
   hardcodes `modisco_counts_results.h5` and `10.0.run_finemo_unified.sh` hardcodes
   `_average_shaps.counts.h5`. 06/07's helpers and 08.0 skip a head whose output
-  exists, so a rerun only fills in what is missing. Dropping `"counts"` from
-  `score_types` again — assuming the downstream steps follow it — is not safe.
+  exists, so a rerun only fills in what is missing. Dropping `"counts"` again —
+  assuming the downstream steps follow it — is not safe.
 
 - **The GPU compute-capability constraint is not uniform.** `03.0`, `03.2`, `04.0`,
   `04.3` and `04.4` pin `--constraint="GPU_CC:8.0|GPU_CC:8.6"`: the only classes the

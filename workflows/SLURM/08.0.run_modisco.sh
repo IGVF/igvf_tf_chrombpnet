@@ -21,7 +21,8 @@
 #   and biologically meaningful. This is the standard approach in the
 #   Greenleaf lab ChromBPNet pipeline.
 #
-# score_types: both heads, one after the other. 09.0 builds the compendium
+# score_types: contrib_heads (config.sh; both heads by default), one after the
+#   other. 09.0 builds the compendium
 #   from the counts results only (modisco_counts_results.h5); the profile
 #   results are for reading. (Counts used to be left out here because it had
 #   already been run in the 1.x results tree; a chrombpnet 2.x results tree
@@ -131,7 +132,7 @@ source "${REPO_ROOT}/lib/bash/config.sh" || exit 1
 dataset="${datasets[${SLURM_ARRAY_TASK_ID}]}"
 [[ -z "${dataset}" ]] && { echo "No dataset at array index ${SLURM_ARRAY_TASK_ID}, exiting."; exit 0; }
 
-score_types=("counts" "profile")  # see the header
+score_types=( "${contrib_heads[@]}" )  # see the header; contrib_heads, config.sh
 
 # TF-MoDISco settings -- see the header. The pattern flags reproduce what
 # chrombpnet 1.x's modisco-lite 2.0.7 did; 2.5.2's defaults differ.
