@@ -271,8 +271,9 @@ exactly one place, its `activate_env` line, as `pixi:<manifest>#<environment>`:
 **chrombpnet stays out of this repo's `pixi.toml` on purpose.** It is installed
 from a pinned checkout of the NNFC-GMD fork (branch `stable-modern-gpu-support`,
 its default branch: PR kundajelab/chrombpnet#284 plus `-bw` on the training
-commands, `pipeline --skip-interpretation`, the lookup-table one-hot encoder and a
-leaner, faster training loader with identical batches), from that repo's own
+commands, `pipeline --skip-interpretation`, the lookup-table one-hot encoder, a
+leaner, faster training loader with identical batches, and a bias hyperparameter
+pass that reads only the counts it needs), from that repo's own
 lock file — the one the Keras 3 / JAX port was validated against — rather than
 re-solved here. `activate_env` warns when the checkout is not at `CHROMBPNET_REV`;
 it does not stop, so a newer chrombpnet can be tried on purpose, and the run

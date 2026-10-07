@@ -121,7 +121,7 @@ MOTIF_DB_MD5 = "b54441e0bfb9623345b6802763472d3c"
 #: cannot move, and pinned by md5. The file has not changed since: it is
 #: byte-identical to chrombpnet/data/motifs.meme.txt as packaged by the
 #: chrombpnet 2.x the pipeline runs (NNFC-GMD/chrombpnet at 7dfb285, compared
-#: with cmp, 2026-09-24; unchanged at the current pin c913b65).
+#: with cmp, 2026-09-24; unchanged at c913b65 and at the current pin 05f5748).
 CHROMBPNET_MOTIFS_URL = (
     "https://raw.githubusercontent.com/kundajelab/chrombpnet/v1.0.1/chrombpnet/data/motifs.meme.txt"
 )

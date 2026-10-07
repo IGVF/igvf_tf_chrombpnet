@@ -51,9 +51,11 @@ CHROMBPNET_REPO="${CHROMBPNET_REPO:-}"
 # kundajelab/chrombpnet#284 plus -bw on the training commands, `pipeline
 # --skip-interpretation`, the lookup-table one-hot encoder, and a leaner, faster
 # training loader (identical batches) with asynchronous batch callbacks, validated
-# on ENCODE K562. Same pyproject.toml / pixi.lock as the previous pin (7dfb285,
-# pipeline-hooks). activate_env warns when the checkout is elsewhere.
-CHROMBPNET_REV="${CHROMBPNET_REV:-c913b65991a2792372f4dca0c32fb7cf70d04e1a}"
+# on ENCODE K562, and a bias hyperparameter pass that reads only the counts it
+# uses (identical hyperparameters, about half the set-up time of a bias
+# training). Same pyproject.toml / pixi.lock as the previous pins (c913b65,
+# 7dfb285). activate_env warns when the checkout is elsewhere.
+CHROMBPNET_REV="${CHROMBPNET_REV:-05f5748f7fae32c30eb3ba4451d97668856627d1}"
 CHROMBPNET_PIXI_ENV="${CHROMBPNET_PIXI_ENV:-cuda13}"
 chrombpnet_env="${CHROMBPNET_ENV:-pixi:${CHROMBPNET_REPO}/pyproject.toml#${CHROMBPNET_PIXI_ENV}}"
 preprocess_env="${PREPROCESS_ENV:-pixi:${REPO_ROOT}/pixi.toml#preprocess}"
