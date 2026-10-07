@@ -124,6 +124,7 @@ sbatch 03.0.train_bias_model.sh
 bash   03.1.select_bias.sh             # not a batch job; copy the winners into config.yaml after
 sbatch 03.2.qc_selected_bias.sh        # GPU: predictions + DeepSHAP of the selected bias model
 sbatch 03.3.modisco_selected_bias.sh   # CPU: its per-fold motif QC
+bash   03.4.bias_motif_leakage.sh       # TF motifs in the selected bias models (again after 04.5)
 sbatch 04.0.train_full_model.sh
 sbatch 04.1.qc_run_full_model.sh
 sbatch 04.2.qc_combined_boxplot.sh     # no DATASET needed; run once all datasets finish 04.1

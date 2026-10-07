@@ -68,20 +68,29 @@ report 02.0.qc_training_data          "${results_path}/plots/signal_qc/${d}_sign
 report 03.0.train_bias_model          "${results_path}/bias_models"
 report 03.1.select_bias               "${results_path}/plots/bias_model_selection/${bias_dataset}/selected_bias_per_fold.tsv"
 report 03.2.qc_selected_bias          "${results_path}/bias_models"
+report 03.4.bias_motif_leakage        "${results_path}/plots/bias_motif_leakage/bias_motif_leakage.tsv"
 report 04.0.train_full_model          "${full_model_dir}/${d}_${peak_type}_fold_${fold0}/models/chrombpnet_nobias.h5" \
                                       "${full_model_dir}/${d}_${peak_type}_fold_${fold0}/auxiliary/chrombpnet_nobias_footprints.h5"
 report 04.1.qc_run_full_model         "${results_path}/plots/full_model_qc/model_metrics.tsv"
 report 04.3.generate_predictions      "${predictions_dir}/${d}_${peak_type}/${d}_avg_chrombpnet_nobias.bw" \
                                       "${predictions_dir}/${d}_${peak_type}/${d}_avg_chrombpnet_uncorrected.bw"
-report 05.0.get_contrib_scores        "${full_model_dir}/${d}_${peak_type}_fold_${fold0}/interpretation/interpretation.counts_scores.h5" \
-                                      "${full_model_dir}/${d}_${peak_type}_fold_${fold0}/interpretation/interpretation.profile_scores.h5" \
-                                      "${full_model_dir}/${d}_${peak_type}_fold_${fold0}/interpretation/interpretation.profile_scores.bw"
-report 06.0.average_contrib_scores    "${averaged_dir}/${d}/${d}_average_shaps.counts.h5" \
-                                      "${averaged_dir}/${d}/${d}_average_shaps.profile.h5"
-report 07.0.contribs_to_bigwig        "${averaged_dir}/${d}/${d}_average_shaps.counts.bw" \
-                                      "${averaged_dir}/${d}/${d}_average_shaps.profile.bw"
-report 08.0.run_modisco               "${averaged_dir}/${d}/modisco/modisco_counts_results.h5" \
-                                      "${averaged_dir}/${d}/modisco/modisco_profile_results.h5"
+# 05.0-08.0 produce one set of outputs per head in contrib_heads (config.sh);
+# 05.0's last file is the last head's bigwig (profile's when it is scored).
+_interp="${full_model_dir}/${d}_${peak_type}_fold_${fold0}/interpretation/interpretation"
+_last_head="counts"
+[[ " ${contrib_heads[*]} " == *" profile "* ]] && _last_head="profile"
+m05=(); m06=(); m07=(); m08=()
+for _h in "${contrib_heads[@]}"; do
+    m05+=( "${_interp}.${_h}_scores.h5" )
+    m06+=( "${averaged_dir}/${d}/${d}_average_shaps.${_h}.h5" )
+    m07+=( "${averaged_dir}/${d}/${d}_average_shaps.${_h}.bw" )
+    m08+=( "${averaged_dir}/${d}/modisco/modisco_${_h}_results.h5" )
+done
+m05+=( "${_interp}.${_last_head}_scores.bw" )
+report 05.0.get_contrib_scores        "${m05[@]}"
+report 06.0.average_contrib_scores    "${m06[@]}"
+report 07.0.contribs_to_bigwig        "${m07[@]}"
+report 08.0.run_modisco               "${m08[@]}"
 report 09.0.cross_dataset_compendium  "${REPO_ROOT}/results/compendium/modisco_compiled/modisco_compiled.h5"
 report 10.0.run_finemo_unified        "${finemo_unified_dir}/${d}_${peak_type}/hits.bed.gz"
 report 11.0.postprocess_finemo        "${finemo_unified_dir}/${d}_${peak_type}/finemo_report/motif_report.tsv"

@@ -171,6 +171,7 @@ Dataset-specific things (signal path, reference overrides, `bias_factors`,
 | `03.1.select_bias.sh` | no SBATCH header — run with `bash` | yes |
 | `03.2.qc_selected_bias.sh` | fold | yes |
 | `03.3.modisco_selected_bias.sh` | fold | yes |
+| `03.4.bias_motif_leakage.sh` | no SBATCH header — run with `bash` | yes |
 | `04.0.train_full_model.sh` | fold | yes |
 | `04.1.qc_run_full_model.sh` | — | yes |
 | `04.2.qc_combined_boxplot.sh` | — | no (discovers `config/*/config.yaml` plus `DATASET_CONFIG`) |
@@ -191,7 +192,7 @@ All step scripts live in `workflows/SLURM/`. The Python they call lives in `src/
 and is referenced as `${src_dir}/<name>.py`, never by a relative path:
 `cli.py` (00.0 `prepare-bigwig` and `call-peaks`, 00.1 `preprocess-peaks`, 02.0
 `qc-signal`, and `download-references`), `predict_bias_metrics.py` (03.0),
-`select_bias_model.py` (03.1), `run_bias_qc.py` (03.2), `motif_qc.py` (03.3, 04.5), `chrombpnet_train.py`
+`select_bias_model.py` (03.1), `run_bias_qc.py` (03.2), `motif_qc.py` (03.3, 04.5), `bias_motif_leakage.py` (03.4), `chrombpnet_train.py`
 (03.0, 04.0), `qc_full_model.py` (04.1 and 04.2-combined), `predict_and_avg.py` (04.3),
 `run_full_model_qc.py` (04.4), `average_contrib_scores.py` (06),
 `contribs_to_bigwig.py` (07), `motif_compendium.py` (09 and
@@ -752,6 +753,22 @@ say which of the two kinds of verification a change actually got.
   the dataset's `config.yaml`; `03.2` and `04.0` read that map and fail loudly if a fold is
   missing. The loop is intentionally not closed automatically — the plots are meant to
   be reviewed.
+
+- **`03.1` cannot see a bias model that has learned TF motifs; `03.4` looks.**
+  Its score (the profile head's normalised JSD) rewards a bias model that has
+  absorbed TF signal as readily as a clean one, and it leans to the top of the
+  factor sweep, where that happens most. `03.4` (`src/bias_motif_leakage.py`)
+  reads 03.3's TF-MoDISco results for every fold's selected bias model and
+  reports, per head, the share of positive seqlets in patterns whose consensus
+  carries a real TF site (AP-1, NFI, CEBP, CTCF, TEAD) on either strand; a clean
+  bias model is at 0. It tests the sequence on purpose: tomtom-lite's labels
+  (03.3's report) put TF names on GC-rich stretches, Alu fragments and poly-A
+  runs, so a label screen makes most counts heads look contaminated. Rerun after
+  04.5 and it also compares the full models' TF-site shares on folds with a leaky
+  bias model against folds with a clean one -- whether the leakage reached what
+  the pipeline interprets. Advisory: it never fails on what it finds. NFI is
+  matched as a full palindrome, which full models often learn only as half-sites,
+  so a 0 for NFI in the full models says nothing.
 
 - **`03.1` flags a winner at an end of the swept range** (`sweep_edge` in
   `selected_bias_per_fold.tsv`, plus a log warning and a section in

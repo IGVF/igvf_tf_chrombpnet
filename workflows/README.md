@@ -37,7 +37,7 @@ index.
 ```
 Call peaks (optional) || prepare signal; QC     00.0 call_peaks || 00.0 prepare_signal
                                                   -> 00.1 -> 01.0 -> 02.0 (QC)
-Train bias models, select, QC the selection       03.0 -> 03.1 -> 03.2 -> 03.3
+Train bias models, select, QC the selection       03.0 -> 03.1 -> 03.2 -> 03.3 -> 03.4
 Train full model with selected bias, QC           04.0 -> 04.1 (04.2 across datasets)
 Predictions; per-fold interpretation QC           04.3; 04.4 -> 04.5
 Contribution scores on all peaks                  05.0
