@@ -679,7 +679,13 @@ say which of the two kinds of verification a change actually got.
   synthetic 20,000-seqlet, 500-neighbour affinity, two restarts took 151 s of ~190 s.
   NNFC-GMD/tfmodisco's `parallel-leiden-seeds` branch adds `--n_leiden_jobs`,
   which runs them in separate processes and still picks the best in seed order,
-  so the clustering is identical (tested against 2.5.2's function, and a
+  and (91367a9) replaces 2.5.2's all-pairs neighbour search with an inverted
+  index, sorts the seqlet-score distribution with numpy instead of `sorted()`,
+  and threads pattern merging's AUROCs (`--n_merge_threads`, 08.0 passes 16):
+  on AMSC scores `-n 25000` went from 42.9 to 17.6 min and `-n 50000`'s search
+  from 30.8 to 3.0 min, results identical bit for bit. Before it, the search
+  was quadratic in the seqlet count and an `-n 500000` run took over a day;
+  the clustering is identical (tested against 2.5.2's function, and a
   synthetic `modisco motifs` run at 08.0's flags wrote the same results file as
   stock 2.5.2 in chrombpnet's env; the 20,000-seqlet call took 84 s). The environment pins numpy, numba, scipy, scikit-learn, h5py,
   igraph, leidenalg and memelite to chrombpnet's cuda13 versions, so the branch

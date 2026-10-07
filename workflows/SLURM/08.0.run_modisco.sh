@@ -42,7 +42,10 @@
 #
 # Environment: this repo's `modisco` pixi environment, not chrombpnet's. It is
 #   2.5.2 from NNFC-GMD/tfmodisco's parallel-leiden-seeds branch, which adds
-#   `--n_leiden_jobs`, with every package that computes (numpy, numba, scipy,
+#   `--n_leiden_jobs` and `--n_merge_threads` and replaces 2.5.2's all-pairs
+#   neighbour search with an inverted index, all with bit-identical output
+#   (91367a9: -n 25000 on 291,194 regions of AMSC scores, 42.9 -> 17.6 min,
+#   results h5 identical dataset by dataset), with every package that computes (numpy, numba, scipy,
 #   scikit-learn, h5py, igraph, leidenalg, memelite) pinned to the version in
 #   chrombpnet's cuda13 environment, where 03.3/04.5 run stock 2.5.2.
 #
@@ -145,12 +148,15 @@ modisco_window=500
 modisco_pattern_args=( -l 2 -z 20 -f 5 -t 20 -g 5 -j 0 )
 # One process per -l restart; the clustering does not depend on it (see the header).
 modisco_leiden_jobs=2
+# Threads for pattern merging's AUROCs (the merges do not depend on it); config
+# modisco_merge_threads or MODISCO_MERGE_THREADS.
+modisco_merge_threads="${MODISCO_MERGE_THREADS:-${modisco_merge_threads:-16}}"
 modisco_dir="${averaged_dir}/${dataset}/modisco"
 
 metadata_start "08.0.run_modisco"
 metadata_params+=( "dataset=${dataset}" "max_seqlets=${modisco_max_seqlets}" "window=${modisco_window}" )
 metadata_params+=( "pattern_args=${modisco_pattern_args[*]}" "threads=${SLURM_CPUS_PER_TASK:-4}" )
-metadata_params+=( "leiden_jobs=${modisco_leiden_jobs}" )
+metadata_params+=( "leiden_jobs=${modisco_leiden_jobs}" "merge_threads=${modisco_merge_threads}" )
 for score_type in "${score_types[@]}"; do
     metadata_inputs+=( "contributions=${averaged_dir}/${dataset}/${dataset}_average_shaps.${score_type}.h5" )
     metadata_outputs+=( "motifs=${modisco_dir}/modisco_${score_type}_results.h5" )
@@ -203,6 +209,7 @@ for score_type in "${score_types[@]}"; do
             -w "${modisco_window}" \
             "${modisco_pattern_args[@]}" \
             --n_leiden_jobs "${modisco_leiden_jobs}" \
+            --n_merge_threads "${modisco_merge_threads}" \
             -v
         _rc=$?
         # No `set -e` in this step: guard each call and its output explicitly.

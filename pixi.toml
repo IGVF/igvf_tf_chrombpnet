@@ -121,7 +121,7 @@ libblas = { version = "*", build = "*openblas" }
 meme = "==5.5.9"
 
 [feature.modisco.pypi-dependencies]
-modisco = { git = "https://github.com/NNFC-GMD/tfmodisco.git", rev = "0ec3008e009bf233f02edf0ffb376d303d7c93e8" }
+modisco = { git = "https://github.com/NNFC-GMD/tfmodisco.git", rev = "91367a96799c127e27979a9d544538a4b55c1161" }
 numba = "==0.67.0"
 llvmlite = "==0.49.0"
 scipy = "==1.18.1"
