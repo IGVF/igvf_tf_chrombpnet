@@ -9,7 +9,8 @@
 # for 04.0/04.4/04.5/05.0, the dataset for 04.3/06.0/07.0/08.0, the only one
 # in a generated config).
 #
-#   per fold, on its own GPU:  04.0 -> 05.0 -> 04.4, and 04.5 (CPU) after 04.4.
+#   per fold, on its own GPU:  04.0 -> 05.0 -> 04.4, and 04.5 (CPU) after 04.4
+#     (04.0 only, for a dataset outside the attribution list below).
 #     05.0 goes before 04.4 because 06.0-08.0 wait on it and 08.0 is the long
 #     pole; 04.4/04.5 are per-fold QC that nothing downstream reads.
 #   once every fold's 04.0 is done:  04.1 (CPU), 04.3 (GPU of the first fold).
@@ -37,6 +38,15 @@
 #   creating threads (EAGAIN). Masked to 16 cores the same process holds 75.
 #   The limit is not raised on purpose: the box's own trainings keep it, so
 #   going past it here would make THEIR next start fail instead.
+#
+# Attribution scope: when <box>/attribution_datasets.txt exists (or the file
+#   CHAIN_ATTRIBUTION_LIST names), only the datasets it lists (one dataset_name
+#   per line) run the attribution half of the chain -- 05.0 -> 06.0 -> 07.0/08.0,
+#   04.3's prediction tracks and the per-fold interpretation QC 04.4/04.5. Every
+#   other dataset trains its full models (04.0) and gets 04.1's QC, and stops:
+#   contribution scores on every peak cost about as much GPU time as training
+#   itself, so a campaign can train every dataset and interpret a chosen few.
+#   With no list, every dataset runs the whole chain, as before.
 #
 # Steps skip finished outputs, so a rerun resumes.
 #
@@ -73,6 +83,12 @@ export JAX_COMPILATION_CACHE_DIR="${scratch}/jax_cache" XLA_PYTHON_CLIENT_PREALL
 export JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS=0 JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES=0
 mkdir -p "${TMPDIR}" "${JAX_COMPILATION_CACHE_DIR}"
 
+attribution_list="${CHAIN_ATTRIBUTION_LIST:-${BOX_DIR}/attribution_datasets.txt}"
+attribution=1
+if [[ -f "${attribution_list}" ]] && ! grep -qxF "${name}" "${attribution_list}"; then
+    attribution=0
+    echo "[$(date)] ${name}: not in ${attribution_list}; 04.0 and 04.1 only"
+fi
 hold="${BOX_DIR}/.hold.${name}"
 touch "${hold}"
 rm -f "${BOX_DIR}/.chains_done"
@@ -153,6 +169,7 @@ fold_chain() {
     local o=$(( 16 * $1 ))
     step 04.0.train_full_model "${i}" "04.0.${f}" 8 "${g}" "${o}" || return 1
     touch "${scratch}/${name}.04.0.${f}.ok"
+    (( attribution )) || return 0
     step 05.0.get_contrib_scores "${i}" "05.0.${f}" 8 "${g}" "${o}" || return 1
     touch "${scratch}/${name}.05.0.${f}.ok"
     step 04.4.qc_full_model_interpret "${i}" "04.4.${f}" 8 "${g}" "${o}" \
@@ -171,14 +188,18 @@ fold_chains_running() { local p; for p in "${pids[@]}"; do kill -0 "${p}" 2> /de
 until all_ok 04.0 || ! fold_chains_running; do sleep 60; done
 if all_ok 04.0; then
     step 04.1.qc_run_full_model 0 04.1 8 "" 80 &
-    step 04.3.generate_predictions 0 04.3 8 "${gpus[0]}" 96 &
+    if (( attribution )); then
+        step 04.3.generate_predictions 0 04.3 8 "${gpus[0]}" 96 &
+    fi
 fi
-until all_ok 05.0 || ! fold_chains_running; do sleep 60; done
-if all_ok 05.0; then
-    step 06.0.average_contrib_scores 0 06.0 16 "" 0 \
-        && { step 07.0.contribs_to_bigwig 0 07.0 16 "" 16 & step 08.0.run_modisco 0 08.0 "${CHAIN_08_THREADS:-64}" "" 32; wait; }
-else
-    echo "[$(date)] ${name}: a fold did not reach 05.0; 06.0-08.0 not run" >&2
+if (( attribution )); then
+    until all_ok 05.0 || ! fold_chains_running; do sleep 60; done
+    if all_ok 05.0; then
+        step 06.0.average_contrib_scores 0 06.0 16 "" 0 \
+            && { step 07.0.contribs_to_bigwig 0 07.0 16 "" 16 & step 08.0.run_modisco 0 08.0 "${CHAIN_08_THREADS:-64}" "" 32; wait; }
+    else
+        echo "[$(date)] ${name}: a fold did not reach 05.0; 06.0-08.0 not run" >&2
+    fi
 fi
 wait
 echo "[$(date)] ${name}: chain finished"
